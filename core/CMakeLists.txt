@@ -1,6 +1,6 @@
 # BASH! core — plain C++17, no JUCE. Shared by every plugin format, the iPad app and the tests.
 add_library(bash_core STATIC
-    src/AcidVoice.cpp
+    src/MachineSynth.cpp
     src/Engine.cpp
     src/Scale.cpp
     src/Sequencer.cpp

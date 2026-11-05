@@ -6,6 +6,7 @@
 #include "PluginProcessor.h"
 #include "UiCommon.h"
 #include "SamplerPanel.h"
+#include "SynthPanel.h"
 
 namespace bashui
 {
@@ -78,10 +79,11 @@ private:
     juce::ComboBox engineBox, algoBox, cycleBox, directionBox, rateBox;
     juce::Label engineLabel, algoLabel, cycleLabel, directionLabel, rateLabel;
     bashui::SamplerPanel samplerPanel;
+    bashui::SynthPanel synthPanel;
     bash::EngineType shownEngine = bash::EngineType::Synth;
     void updateEnginePanel();
-    std::vector<std::unique_ptr<bashui::Knob>> seqKnobs, voiceKnobs;
-    std::vector<juce::String> seqKnobIds, voiceKnobIds;
+    std::vector<std::unique_ptr<bashui::Knob>> seqKnobs;
+    std::vector<juce::String> seqKnobIds;
     std::vector<std::unique_ptr<SliderAttachment>> knobAtts;
     std::vector<std::unique_ptr<ComboAttachment>>  comboAtts;
     std::vector<std::unique_ptr<ButtonAttachment>> buttonAtts;

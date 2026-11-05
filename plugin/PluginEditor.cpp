@@ -242,7 +242,7 @@ void StepView::mouseUp (const juce::MouseEvent& e)
 
 // ============================================================================
 BashEditor::BashEditor (BashProcessor& p)
-    : AudioProcessorEditor (&p), proc (p), stepView (p), samplerPanel (p)
+    : AudioProcessorEditor (&p), proc (p), stepView (p), samplerPanel (p), synthPanel (p)
 {
     setLookAndFeel (&lnf);
     auto& apvts = proc.apvts;
@@ -299,10 +299,6 @@ BashEditor::BashEditor (BashProcessor& p)
     const std::vector<std::pair<const char*, const char*>> seqDefs {
         { "type", "TYPE" }, { "density", "DENSITY" }, { "steps", "STEPS" }, { "offset", "OFFSET" },
         { "accent", "ACCENT" }, { "gate", "GATE" }, { "octave", "OCTAVE" } };
-    const std::vector<std::pair<const char*, const char*>> voiceDefs {
-        { "wave", "WAVE" }, { "cutoff", "CUTOFF" }, { "reso", "RESO" }, { "envmod", "ENV MOD" },
-        { "decay", "DECAY" }, { "drive", "DRIVE" }, { "glide", "GLIDE" }, { "level", "LEVEL" }, { "pan", "PAN" } };
-
     for (auto& [id, name] : seqDefs)
     {
         auto k = std::make_unique<Knob>();
@@ -310,13 +306,7 @@ BashEditor::BashEditor (BashProcessor& p)
         addAndMakeVisible (k->slider); addAndMakeVisible (k->label);
         seqKnobs.push_back (std::move (k)); seqKnobIds.push_back (id);
     }
-    for (auto& [id, name] : voiceDefs)
-    {
-        auto k = std::make_unique<Knob>();
-        styleKnob (*k, name);
-        addAndMakeVisible (k->slider); addAndMakeVisible (k->label);
-        voiceKnobs.push_back (std::move (k)); voiceKnobIds.push_back (id);
-    }
+    addChildComponent (synthPanel);
 
     selectTrack (0);
     setSize (editorW, editorH);
@@ -337,6 +327,7 @@ void BashEditor::selectTrack (int t)
     bindTrack();
     stepView.setTrack (t);
     samplerPanel.setTrack (t);
+    synthPanel.setTrack (t);
     updateEnginePanel();
 }
 
@@ -362,8 +353,6 @@ void BashEditor::bindTrack()
 
     for (size_t i = 0; i < seqKnobs.size(); ++i)
         knobAtts.push_back (std::make_unique<SliderAttachment> (apvts, id (seqKnobIds[i].toRawUTF8()), seqKnobs[i]->slider));
-    for (size_t i = 0; i < voiceKnobs.size(); ++i)
-        knobAtts.push_back (std::make_unique<SliderAttachment> (apvts, id (voiceKnobIds[i].toRawUTF8()), voiceKnobs[i]->slider));
 }
 
 void BashEditor::updateEnginePanel()
@@ -371,7 +360,7 @@ void BashEditor::updateEnginePanel()
     shownEngine = proc.engineType (currentTrack);
     const bool slicer = shownEngine == bash::EngineType::Slicer;
     samplerPanel.setVisible (slicer);
-    for (auto& k : voiceKnobs) { k->slider.setVisible (! slicer); k->label.setVisible (! slicer); }
+    synthPanel.setVisible (! slicer);
     repaint();
 }
 
@@ -381,6 +370,8 @@ void BashEditor::timerCallback()
         updateEnginePanel();
     if (samplerPanel.isVisible())
         samplerPanel.refresh();
+    if (synthPanel.isVisible())
+        synthPanel.refresh();
     stepView.refresh();
     for (int t = 0; t < bash::numTracks; ++t)
     {
@@ -401,7 +392,7 @@ void BashEditor::paint (juce::Graphics& g)
     g.setFont (juce::FontOptions (13.0f));
     g.drawText ("an all-in-one kalabash solution", margin + 2, 52, 260, 18, juce::Justification::centredLeft);
 
-    for (auto [r, title] : { std::pair { seqPanel, "SEQUENCER" }, std::pair { voicePanel, shownEngine == bash::EngineType::Slicer ? "SLICE SAMPLER" : "VOICE  (acid test synth)" } })
+    for (auto [r, title] : { std::pair { seqPanel, "SEQUENCER" }, std::pair { voicePanel, shownEngine == bash::EngineType::Slicer ? "SLICE SAMPLER" : "MACHINE SYNTH" } })
     {
         g.setColour (colour::panel);
         g.fillRoundedRectangle (r.toFloat(), 14.0f);
@@ -477,6 +468,5 @@ void BashEditor::resized()
     area.removeFromTop (12);
     voicePanel = area.removeFromTop (278);
     samplerPanel.setBounds (voicePanel.reduced (16).withTrimmedTop (22));
-    auto vInner = voicePanel.reduced (16).withTrimmedTop (18).withHeight (100);
-    for (auto& k : voiceKnobs) { placeKnob (*k, vInner.removeFromLeft (84)); vInner.removeFromLeft (8); }
+    synthPanel.setBounds (voicePanel.reduced (16).withTrimmedTop (22));
 }

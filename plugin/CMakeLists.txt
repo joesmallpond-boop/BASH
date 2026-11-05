@@ -27,7 +27,8 @@ juce_add_plugin(BASH
 target_sources(BASH PRIVATE
     PluginProcessor.cpp
     PluginEditor.cpp
-    SamplerPanel.cpp)
+    SamplerPanel.cpp
+    SynthPanel.cpp)
 
 target_compile_definitions(BASH PUBLIC
     JUCE_WEB_BROWSER=0

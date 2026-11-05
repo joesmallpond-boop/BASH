@@ -36,6 +36,9 @@ namespace bash
         /** Nearest in-scale MIDI note (ties resolve downward). */
         int quantize (int midiNote) const noexcept;
 
+        /** The in-scale note `degrees` scale steps above (or below) midiNote. */
+        int stepFrom (int midiNote, int degrees) const noexcept;
+
     private:
         int rootNote = 0, scaleIdx = 0;
         std::vector<int> steps;

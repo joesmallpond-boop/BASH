@@ -9,6 +9,7 @@
 #include "bash/Rng.h"
 #include "bash/Scale.h"
 
+#include <array>
 #include <atomic>
 #include <cstdint>
 #include <map>
@@ -21,9 +22,9 @@ namespace bash
     {
         CoreAcidV1 = 0,   // legacy acid generator
         CoreAcidV2,       // harmonic constraints tuned for low end
-        Counterpoint,     // milestone 5 — currently falls back to V1
-        Arpeggiator,      // milestone 5 — currently falls back to V1
-        DedicatedBass,    // milestone 5 — currently falls back to V2
+        Counterpoint,     // chords (stream A) + complementary bass (stream B)
+        Arpeggiator,      // only the notes currently held on MIDI input
+        DedicatedBass,    // rhythmically locked, driving low end
         count
     };
 
@@ -56,7 +57,13 @@ namespace bash
         SliceMode sliceMode   = SliceMode::Window;
         uint32_t  windowStart = 0;
         uint32_t  windowSize  = 4;
+
+        // arpeggiator input: notes currently held on MIDI in (ascending)
+        std::array<int, 16> held {};
+        int       heldCount   = 0;
     };
+
+    constexpr int maxChordNotes = 4;
 
     struct StepData
     {
@@ -67,6 +74,12 @@ namespace bash
         bool    slide    = false;
         float   gate     = 0.5f;    // in steps
         int     slice    = 0;       // slicer tracks: which slice plays
+
+        // Counterpoint: extra chord tones above `note` (stream A) and a bass line (stream B)
+        std::array<int, maxChordNotes - 1> chord {};
+        int     chordExtra = 0;
+        bool    bassActive = false;
+        int     bassNote   = 0;
     };
 
     namespace lockbit
@@ -141,6 +154,7 @@ namespace bash
         bool legato       = false;  // note-on that should glide from the held note (303 slide)
         bool accent       = false;
         int  slice        = 0;
+        int  stream       = 0;      // 0 = main / chords, 1 = Counterpoint bass
     };
 
     class TrackPlayer
@@ -160,6 +174,11 @@ namespace bash
         uint32_t currentIndex() const noexcept { return lastIndex; }
 
     private:
+        struct PolyHeld { int note; double offPos; int stream; };
+        void releasePoly (double upTo, double posStart, double stepsPerSample, int numSamples,
+                          std::vector<NoteEvent>& out, int forStream = -1, int atSample = -1);
+        std::vector<PolyHeld> polyHeld;
+
         bool     started     = false;
         int64_t  lastBoundary = 0;
         double   expectedPos = 0.0;

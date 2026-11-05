@@ -27,7 +27,14 @@ Full spec: *BASH! — Software Requirements Specification* (Claude doc).
 - Pitch follow (sequencer notes repitch slices), Tune, Attack, Release, Reverse; click-free retriggers
 - Slice choices can be locked per step; samples and slices save with the session
 
-Next: machine synth → drum grid → remaining algorithms → modulation, Life, Roll the Dice, mixer + FX → MIDI import/export → iPad → Max for Live companion.
+**Milestone 3 — machine synth + all four algorithms** ✅
+
+- Machines: Acid (saw↔square + sub), SID (pulse width + bit-crush), FM+ (2-op with feedback), SuperWave (7 detuned saws), VO (vowel formants), Pulse-Interval, Noise (resonant pitched noise)
+- Character and Timbre knobs change meaning per machine; 24 dB low/band/high-pass filter, filter envelope, accent, drive, glide, ADSR amp envelope; 4-voice polyphony for chords
+- Algorithms: Core Acid V1/V2, Counterpoint (bar-wise harmony → in-key chords on the track's channel, complementary bass on channel + 8), Arpeggiator (plays only the notes you hold on MIDI in), Dedicated Bass (grid-locked driving low end)
+- MIDI CC 102/103 set Key/Scale (used by the Ableton key-lock device)
+
+Next: drum grid → modulation, Life, Roll the Dice, mixer + FX → MIDI import/export → iPad → Max for Live companion.
 
 ## Getting builds
 

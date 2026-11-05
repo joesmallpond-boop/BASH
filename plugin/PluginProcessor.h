@@ -85,6 +85,7 @@ private:
         std::atomic<float> *on, *algo, *type, *density, *steps, *cycle, *offset, *direction, *rate,
                            *accent, *gate, *octave, *scaleLock,
                            *wave, *cutoff, *reso, *envMod, *decay, *drive, *glide, *level, *pan,
+                           *machine, *timbre, *ftype, *aAtk, *aDec, *aSus, *aRel,
                            *engine, *sliceMode, *winStart, *winSize, *pitchFollow, *tune, *sAttack, *sRelease, *reverse;
     };
     std::array<TrackParams, bash::numTracks> tp {};

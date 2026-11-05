@@ -4,7 +4,7 @@
 // and the global key/scale. Pure C++ with no JUCE dependency, so it runs the
 // same in every plugin format, on iPad, and in unit tests.
 
-#include "bash/AcidVoice.h"
+#include "bash/MachineSynth.h"
 #include "bash/Scale.h"
 #include "bash/Sequencer.h"
 #include "bash/Slices.h"
@@ -37,7 +37,7 @@ namespace bash
         EngineType        engine  = EngineType::Synth;
         SequencerParams   seq;
         int               rateIndex = 1;
-        AcidVoice::Params voice;
+        MachineVoice::Params voice;
         SlicerSettings    slicer;
         float             level = 0.8f;
         float             pan   = 0.0f;   // -1..1
@@ -64,7 +64,7 @@ namespace bash
     struct MidiOut
     {
         int  sampleOffset;
-        int  channel;     // 1..16
+        int  channel;     // 1..16 (track n on channel n; Counterpoint bass on n + 8)
         bool noteOn;
         int  note;
         int  velocity;
@@ -76,6 +76,11 @@ namespace bash
         Engine();
 
         void prepare (double sampleRate, int maxBlockSize);
+
+        /** Live MIDI input (audio thread, before process): feeds the arpeggiator. velocity 0 = note off. */
+        void midiNoteIn (int note, int velocity);
+        void allInputNotesOff()              { heldInCount = 0; }
+        int  heldInputCount() const          { return heldInCount; }
 
         /** Writes (overwrites) stereo output and appends generated MIDI. */
         void process (float* left, float* right, int numSamples,
@@ -130,7 +135,7 @@ namespace bash
         std::array<TrackSettings, numTracks> tracks;
         std::array<Pattern,       numTracks> patterns;
         std::array<TrackPlayer,   numTracks> players;
-        std::array<AcidVoice,     numTracks> synths;
+        std::array<MachineSynth,  numTracks> synths;
         std::array<SliceVoice,    numTracks> slicers;
         std::array<SliceStore,    numTracks> sliceStores;
         std::array<std::atomic<const SampleData*>, numTracks> samples {};
@@ -147,6 +152,9 @@ namespace bash
         int    scaleRoot = -1, scaleIdx = -1;
         double internalPpq = 0.0;
         bool   wasRunning = false;
+
+        std::array<int, 16> heldIn {};
+        int heldInCount = 0;
 
         std::vector<float>     bufL, bufR;
         std::vector<NoteEvent> events;

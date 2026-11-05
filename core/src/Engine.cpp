@@ -53,6 +53,25 @@ namespace bash
         for (auto& p : players) p.reset();
     }
 
+    void Engine::midiNoteIn (int note, int velocity)
+    {
+        // keep held notes sorted ascending, no duplicates, max 16
+        int pos = 0;
+        while (pos < heldInCount && heldIn[(size_t) pos] < note) ++pos;
+        const bool present = pos < heldInCount && heldIn[(size_t) pos] == note;
+        if (velocity > 0 && ! present && heldInCount < (int) heldIn.size())
+        {
+            for (int i = heldInCount; i > pos; --i) heldIn[(size_t) i] = heldIn[(size_t) i - 1];
+            heldIn[(size_t) pos] = note;
+            ++heldInCount;
+        }
+        else if (velocity == 0 && present)
+        {
+            for (int i = pos; i < heldInCount - 1; ++i) heldIn[(size_t) i] = heldIn[(size_t) i + 1];
+            --heldInCount;
+        }
+    }
+
     void Engine::refreshScale()
     {
         if (globals.root != scaleRoot || globals.scaleIndex != scaleIdx)
@@ -190,6 +209,7 @@ namespace bash
             default:
             {
                 auto& v = synths[(size_t) t];
+                v.setPolyphonic (ts.seq.algorithm == Algorithm::Counterpoint);
                 if (e.noteOn) v.noteOn (e.note, e.velocity, e.accent, e.legato);
                 else          v.noteOff (e.note);
                 return;
@@ -220,6 +240,8 @@ namespace bash
             {
                 ts.seq.sliceCount = 0;
             }
+            ts.seq.heldCount = heldInCount;
+            ts.seq.held = heldIn;
 
             if (run && ts.enabled)
             {
@@ -265,7 +287,8 @@ namespace bash
             {
                 if (e.sampleOffset > pos) { renderRange (pos, e.sampleOffset - pos); pos = e.sampleOffset; }
                 handleEvent (t, e);
-                midiOut.push_back ({ offsetInBlock + e.sampleOffset, t + 1, e.noteOn, e.note, e.noteOn ? e.velocity : 0 });
+                midiOut.push_back ({ offsetInBlock + e.sampleOffset, t + 1 + (e.stream == 1 ? 8 : 0),
+                                     e.noteOn, e.note, e.noteOn ? e.velocity : 0 });
             }
             renderRange (pos, n - pos);
 

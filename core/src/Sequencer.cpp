@@ -43,7 +43,6 @@ namespace bash
 
         int64_t floorMod (int64_t a, int64_t b) { int64_t m = a % b; return m < 0 ? m + b : m; }
 
-        bool isV2Family (Algorithm a) { return a == Algorithm::CoreAcidV2 || a == Algorithm::DedicatedBass; }
 
         int velocityFor (bool accent, float accentAmount)
         {
@@ -59,52 +58,170 @@ namespace bash
         seed = mix64 (seed + salt::reseed);
     }
 
-    StepData Pattern::generate (uint32_t i, const SequencerParams& p, const Scale& scale) const noexcept
+    namespace
     {
-        const float t = std::clamp (p.type, 0.0f, 1.0f);
-        const bool v2 = isV2Family (p.algorithm);
-        StepData s;
+        // Driving bass: 8ths first, then the 16th pushes.
+        constexpr float bassGrid[16] = {
+            0.00f, 0.70f, 0.20f, 0.75f, 0.05f, 0.70f, 0.25f, 0.75f,
+            0.02f, 0.70f, 0.20f, 0.75f, 0.08f, 0.70f, 0.30f, 0.80f
+        };
+        // Counterpoint chord stabs: syncopated, sparse.
+        constexpr float chordGrid[16] = {
+            0.05f, 0.90f, 0.60f, 0.35f, 0.85f, 0.80f, 0.25f, 0.90f,
+            0.15f, 0.90f, 0.30f, 0.50f, 0.85f, 0.80f, 0.40f, 0.95f
+        };
+        // Counterpoint bass: on the beats, filling where chords rest.
+        constexpr float cpBassGrid[16] = {
+            0.00f, 0.85f, 0.45f, 0.80f, 0.20f, 0.85f, 0.50f, 0.80f,
+            0.10f, 0.85f, 0.50f, 0.80f, 0.25f, 0.85f, 0.55f, 0.90f
+        };
+        constexpr WeightedTarget bassPool[]  = { { 0, 10 }, { 12, 3 }, { 7, 2 }, { 10, 1 } };
+        constexpr WeightedTarget bassWild[]  = { { 0, 2 }, { 3, 1 }, { 5, 1 }, { 7, 2 }, { 10, 1 }, { 12, 2 }, { -5, 1 } };
+        struct DegreeWeight { int degree; int weight; };
+        constexpr DegreeWeight progression[] = { { 0, 4 }, { 5, 2 }, { 3, 2 }, { 4, 2 }, { 1, 1 }, { 2, 1 } };
 
-        // Rhythm: a fixed priority per step, compared against Density. Because
-        // the priority never depends on Density, raising Density only ever adds
-        // notes and never changes the ones already playing.
-        const float jitter     = unitFloat (seed, i, salt::rhythmJitter);
-        const float structured = std::clamp (gridPriority[i % 16] + (jitter - 0.5f) * 0.35f, 0.0f, 0.999f);
-        const float chaotic    = unitFloat (seed, i, salt::rhythm);
-        const float priority   = structured * (1.0f - t) + chaotic * t;
-        s.active = priority < std::clamp (p.density, 0.0f, 1.0f);
-
-        // Pitch: weighted structured pick, replaced by wild picks as Type rises.
-        int semis = v2 ? pickWeighted (poolV2, unitFloat (seed, i, salt::pitchPick))
-                       : pickWeighted (poolV1, unitFloat (seed, i, salt::pitchPick));
-        semis = scale.quantize (p.baseNote + semis) - p.baseNote;
-
-        if (unitFloat (seed, i, salt::pitchChaos) < t)
-            semis = v2 ? -5 + (int) uniformInt (seed, i, salt::pitchChaosRange, 18)    // -5..+12
-                       : -12 + (int) uniformInt (seed, i, salt::pitchChaosRange, 37);  // -12..+24
-
-        if (! v2 && unitFloat (seed, i, salt::chromatic) < t * 0.5f)
+        float rhythmPriority (const float (&grid)[16], uint64_t seed, uint32_t i, float t, float jitterAmt, uint64_t saltA, uint64_t saltB)
         {
-            const int amount = 1 + (int) uniformInt (seed, i, salt::chromaticAmount, 6);
-            semis += (uniformInt (seed, i, salt::chromaticAmount + 99, 2) == 0) ? amount : -amount;
+            const float jitter     = unitFloat (seed, i, saltA);
+            const float structured = std::clamp (grid[i % 16] + (jitter - 0.5f) * jitterAmt, 0.0f, 0.999f);
+            const float chaotic    = unitFloat (seed, i, saltB);
+            return structured * (1.0f - t) + chaotic * t;
         }
 
-        const float upChance = v2 ? 0.06f : 0.12f + 0.2f * t;
-        if (unitFloat (seed, i, salt::octaveUp) < upChance) semis += 12;
-        if (! v2 && unitFloat (seed, i, salt::octaveDown) < 0.05f + 0.1f * t) semis -= 12;
+        int pickDegree (float u)
+        {
+            int total = 0;
+            for (auto& d : progression) total += d.weight;
+            int x = (int) (u * (float) total);
+            for (auto& d : progression) { if (x < d.weight) return d.degree; x -= d.weight; }
+            return 0;
+        }
+    }
 
-        int note = p.baseNote + semis;
-        if (p.scaleLock) note = scale.quantize (note);
-        s.note = std::clamp (note, 0, 127);
+    StepData Pattern::generate (uint32_t i, const SequencerParams& p, const Scale& scale) const noexcept
+    {
+        const float t       = std::clamp (p.type, 0.0f, 1.0f);
+        const float density = std::clamp (p.density, 0.0f, 1.0f);
+        StepData s;
 
-        // Articulation
-        s.accent = unitFloat (seed, i, salt::accent) < 0.22f + 0.2f * t;
-        s.slide  = unitFloat (seed, i, salt::slide)  < (v2 ? 0.12f : 0.18f) + 0.15f * t;
-        const float gv = (unitFloat (seed, i, salt::gateVar) - 0.5f) * t;
-        s.gate = std::clamp (p.gate * (1.0f + gv), 0.05f, 2.0f);
+        switch (p.algorithm)
+        {
+            case Algorithm::DedicatedBass:
+            {
+                // Rhythm stays locked to the grid: chaos only loosens it halfway.
+                s.active = rhythmPriority (bassGrid, seed, i, t * 0.5f, 0.15f, salt::rhythmJitter, salt::rhythm) < density;
+                int semis = pickWeighted (bassPool, unitFloat (seed, i, salt::pitchPick));
+                if (unitFloat (seed, i, salt::pitchChaos) < t * 0.6f)
+                    semis = pickWeighted (bassWild, unitFloat (seed, i, salt::pitchChaosRange));
+                s.note = scale.quantize (p.baseNote + semis);
+                s.accent = unitFloat (seed, i, salt::accent) < (i % 4 == 0 ? 0.5f : 0.1f) + 0.2f * t;
+                s.slide  = unitFloat (seed, i, salt::slide)  < 0.05f + 0.1f * t;
+                s.gate   = std::clamp (p.gate, 0.05f, 2.0f);
+                break;
+            }
+
+            case Algorithm::Arpeggiator:
+            {
+                s.active = p.heldCount > 0
+                        && rhythmPriority (gridPriority, seed, i, t, 0.35f, salt::rhythmJitter, salt::rhythm) < density;
+                if (p.heldCount > 0)
+                {
+                    const int n = std::min (p.heldCount, (int) p.held.size());
+                    int k = (int) (i % (uint32_t) n);                          // straight up
+                    if (t > 0.33f && ((i / (uint32_t) n) % 2) == 1) k = n - 1 - k;   // up-down
+                    if (unitFloat (seed, i, salt::arpChaos) < t) k = (int) uniformInt (seed, i, salt::arpPick, (uint32_t) n);
+                    s.note = p.held[(size_t) k];
+                }
+                else
+                {
+                    s.note = p.baseNote;
+                }
+                s.accent = unitFloat (seed, i, salt::accent) < 0.22f + 0.2f * t;
+                s.slide  = unitFloat (seed, i, salt::slide)  < 0.12f + 0.15f * t;
+                s.gate   = std::clamp (p.gate * (1.0f + (unitFloat (seed, i, salt::gateVar) - 0.5f) * t), 0.05f, 2.0f);
+                break;   // held notes are used exactly: no scale quantise
+            }
+
+            case Algorithm::Counterpoint:
+            {
+                // Harmony changes per bar (or per half bar as Type rises).
+                const uint32_t bar  = i / 16u;
+                const uint32_t half = i / 8u;
+                const bool fast = unitFloat (seed, half, salt::harmonyChaos) < t * 0.5f;
+                const int degree = pickDegree (unitFloat (seed, fast ? half + 0x10000u : bar, salt::harmony));
+                const int root = scale.stepFrom (p.baseNote + 12, degree);
+
+                s.note = root;
+                s.chord[0] = scale.stepFrom (root, 2);
+                s.chord[1] = scale.stepFrom (root, 4);
+                s.chordExtra = 2;
+                if (unitFloat (seed, bar, salt::chordExtra) < 0.15f + 0.5f * t)
+                {
+                    s.chord[2] = scale.stepFrom (root, 6);   // 7th
+                    s.chordExtra = 3;
+                }
+                s.active = rhythmPriority (chordGrid, seed, i, t, 0.3f, salt::chordRhythm, salt::rhythm) < density;
+
+                const bool bassBeat = rhythmPriority (cpBassGrid, seed, i, t, 0.3f, salt::bassRhythm, salt::rhythm + 77) < density;
+                s.bassActive = bassBeat && (! s.active || unitFloat (seed, i, salt::bassPick + 5) < 0.25f + t * 0.5f);
+                int bass = scale.stepFrom (p.baseNote, degree);
+                if (bass > p.baseNote + 7) bass -= 12;
+                if (unitFloat (seed, i, salt::bassPick) < 0.12f + 0.3f * t) bass = scale.stepFrom (bass, 4);   // fifth
+                s.bassNote = bass;
+
+                s.accent = unitFloat (seed, i, salt::accent) < 0.15f + 0.2f * t;
+                s.slide  = false;
+                s.gate   = std::clamp (p.gate * 1.5f, 0.05f, 2.0f);
+                break;
+            }
+
+            case Algorithm::CoreAcidV1:
+            case Algorithm::CoreAcidV2:
+            default:
+            {
+                const bool v2 = p.algorithm == Algorithm::CoreAcidV2;
+                // Rhythm: a fixed priority per step compared against Density, so
+                // raising Density only ever adds notes and never changes the motif.
+                s.active = rhythmPriority (gridPriority, seed, i, t, 0.35f, salt::rhythmJitter, salt::rhythm) < density;
+
+                int semis = v2 ? pickWeighted (poolV2, unitFloat (seed, i, salt::pitchPick))
+                               : pickWeighted (poolV1, unitFloat (seed, i, salt::pitchPick));
+                semis = scale.quantize (p.baseNote + semis) - p.baseNote;
+
+                if (unitFloat (seed, i, salt::pitchChaos) < t)
+                    semis = v2 ? -5 + (int) uniformInt (seed, i, salt::pitchChaosRange, 18)    // -5..+12
+                               : -12 + (int) uniformInt (seed, i, salt::pitchChaosRange, 37);  // -12..+24
+
+                if (! v2 && unitFloat (seed, i, salt::chromatic) < t * 0.5f)
+                {
+                    const int amount = 1 + (int) uniformInt (seed, i, salt::chromaticAmount, 6);
+                    semis += (uniformInt (seed, i, salt::chromaticAmount + 99, 2) == 0) ? amount : -amount;
+                }
+
+                const float upChance = v2 ? 0.06f : 0.12f + 0.2f * t;
+                if (unitFloat (seed, i, salt::octaveUp) < upChance) semis += 12;
+                if (! v2 && unitFloat (seed, i, salt::octaveDown) < 0.05f + 0.1f * t) semis -= 12;
+
+                s.note   = p.baseNote + semis;
+                s.accent = unitFloat (seed, i, salt::accent) < 0.22f + 0.2f * t;
+                s.slide  = unitFloat (seed, i, salt::slide)  < (v2 ? 0.12f : 0.18f) + 0.15f * t;
+                const float gv = (unitFloat (seed, i, salt::gateVar) - 0.5f) * t;
+                s.gate = std::clamp (p.gate * (1.0f + gv), 0.05f, 2.0f);
+                break;
+            }
+        }
+
+        if (p.scaleLock && p.algorithm != Algorithm::Arpeggiator)
+        {
+            s.note = scale.quantize (s.note);
+            s.bassNote = scale.quantize (s.bassNote);
+        }
+        s.note     = std::clamp (s.note, 0, 127);
+        s.bassNote = std::clamp (s.bassNote, 0, 127);
+        for (auto& c : s.chord) c = std::clamp (c, 0, 127);
         s.velocity = velocityFor (s.accent, p.accentAmount);
 
-        // Slice choice (sampler tracks)
+        // Slice choice (sampler and drum tracks)
         if (p.sliceCount > 0)
         {
             const uint32_t n = p.sliceCount;
@@ -138,7 +255,16 @@ namespace bash
         {
             const auto& l = it->second;
             if (l.mask & lockbit::active) s.active = l.value.active;
-            if (l.mask & lockbit::pitch)  s.note   = p.scaleLock ? scale.quantize (l.value.note) : l.value.note;
+            if (l.mask & lockbit::pitch)
+            {
+                s.note = p.scaleLock ? scale.quantize (l.value.note) : l.value.note;
+                if (p.algorithm == Algorithm::Counterpoint)
+                {
+                    s.chord[0] = scale.stepFrom (s.note, 2);
+                    s.chord[1] = scale.stepFrom (s.note, 4);
+                    s.chord[2] = scale.stepFrom (s.note, 6);
+                }
+            }
             if (l.mask & lockbit::accent) s.accent = l.value.accent;
             if (l.mask & lockbit::slide)  s.slide  = l.value.slide;
             if (l.mask & lockbit::gate)   s.gate   = l.value.gate;
@@ -242,9 +368,35 @@ namespace bash
     {
         if (out != nullptr && heldNote >= 0)
             out->push_back ({ sampleOffset, false, heldNote, 0, false, false });
+        if (out != nullptr)
+            for (auto& h : polyHeld)
+                out->push_back ({ sampleOffset, false, h.note, 0, false, false, 0, h.stream });
+        polyHeld.clear();
         heldNote = -1;
         heldSlides = false;
         started = false;
+    }
+
+    void TrackPlayer::releasePoly (double upTo, double posStart, double stepsPerSample, int numSamples,
+                                   std::vector<NoteEvent>& out, int forStream, int atSample)
+    {
+        std::sort (polyHeld.begin(), polyHeld.end(), [] (const PolyHeld& a, const PolyHeld& b) { return a.offPos < b.offPos; });
+        for (auto it = polyHeld.begin(); it != polyHeld.end();)
+        {
+            const bool streamMatch = forStream < 0 || it->stream == forStream;
+            if (streamMatch && (atSample >= 0 || it->offPos <= upTo))
+            {
+                int at = atSample;
+                if (at < 0)
+                    at = std::clamp ((int) std::floor ((it->offPos - posStart) / stepsPerSample + 1.0e-6), 0, numSamples - 1);
+                out.push_back ({ at, false, it->note, 0, false, false, 0, it->stream });
+                it = polyHeld.erase (it);
+            }
+            else
+            {
+                ++it;
+            }
+        }
     }
 
     void TrackPlayer::process (double posStart, double stepsPerSample, int numSamples,
@@ -274,7 +426,8 @@ namespace bash
 
         for (int64_t b = lastBoundary + 1; (double) b < posEnd - 1e-9; ++b)
         {
-            // Release a note whose gate ended before this step.
+            // Release notes whose gate ended before this step.
+            releasePoly ((double) b, posStart, stepsPerSample, numSamples, out);
             if (heldNote >= 0 && heldOffPos <= (double) b)
             {
                 out.push_back ({ offsetAt (heldOffPos), false, heldNote, 0, false, false });
@@ -286,6 +439,37 @@ namespace bash
             const StepData s = pattern.step (idx, p, scale);
             lastIndex = idx;
             lastBoundary = b;
+
+            if (p.algorithm == Algorithm::Counterpoint)
+            {
+                const int at = offsetAt ((double) b);
+                if (heldNote >= 0) { out.push_back ({ at, false, heldNote, 0, false, false }); heldNote = -1; heldSlides = false; }
+                if (s.active)
+                {
+                    releasePoly (0.0, posStart, stepsPerSample, numSamples, out, 0, at);
+                    out.push_back ({ at, true, s.note, s.velocity, false, s.accent, s.slice, 0 });
+                    polyHeld.push_back ({ s.note, (double) b + s.gate, 0 });
+                    for (int c = 0; c < s.chordExtra; ++c)
+                    {
+                        const int cn = s.chord[(size_t) c];
+                        bool dup = cn == s.note;
+                        for (int d = 0; d < c; ++d) dup = dup || s.chord[(size_t) d] == cn;
+                        if (dup) continue;
+                        out.push_back ({ at, true, cn, std::max (1, s.velocity - 12), false, s.accent, s.slice, 0 });
+                        polyHeld.push_back ({ cn, (double) b + s.gate, 0 });
+                    }
+                }
+                if (s.bassActive)
+                {
+                    releasePoly (0.0, posStart, stepsPerSample, numSamples, out, 1, at);
+                    out.push_back ({ at, true, s.bassNote, s.velocity, false, s.accent, s.slice, 1 });
+                    polyHeld.push_back ({ s.bassNote, (double) b + std::min (s.gate, 0.9f), 1 });
+                }
+                continue;
+            }
+
+            if (! polyHeld.empty())   // switched away from Counterpoint
+                releasePoly (0.0, posStart, stepsPerSample, numSamples, out, -1, offsetAt ((double) b));
 
             if (! s.active)
                 continue;
@@ -323,6 +507,12 @@ namespace bash
                 heldSlides = false;
                 heldOffPos = (double) b + s.gate;
             }
+        }
+
+        {
+            // poly notes ending inside this block (but not past the next step)
+            const double limit = std::min (posEnd - 1e-9, (double) (lastBoundary + 1));
+            releasePoly (limit, posStart, stepsPerSample, numSamples, out);
         }
 
         if (heldNote >= 0 && heldOffPos < posEnd && heldOffPos <= (double) (lastBoundary + 1))

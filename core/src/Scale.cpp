@@ -63,6 +63,17 @@ namespace bash
         return midiNote;
     }
 
+    int Scale::stepFrom (int midiNote, int degrees) const noexcept
+    {
+        const int q   = quantize (midiNote);
+        const int rel = q - rootNote;
+        const int oct = floorDiv (rel, 12);
+        const int pc  = posMod (rel, 12);
+        int idx = 0;
+        for (int i = 0; i < size(); ++i) if (steps[(size_t) i] == pc) { idx = i; break; }
+        return rootNote + oct * 12 + degreeToSemitone (idx + degrees);
+    }
+
     const char* noteName (int pc)
     {
         static const char* names[] = { "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B" };

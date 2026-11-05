@@ -42,6 +42,20 @@ namespace
         return s;
     }
 
+    juce::StringArray machineNames()
+    {
+        juce::StringArray s;
+        for (int i = 0; i < (int) bash::Machine::count; ++i) s.add (bash::machineName ((bash::Machine) i));
+        return s;
+    }
+
+    juce::StringArray filterNames()
+    {
+        juce::StringArray s;
+        for (int i = 0; i < (int) bash::FilterType::count; ++i) s.add (bash::filterTypeName ((bash::FilterType) i));
+        return s;
+    }
+
     juce::StringArray sliceModeNames()
     {
         juce::StringArray s;
@@ -124,13 +138,20 @@ APVTS::ParameterLayout BashProcessor::createLayout()
         g->addChild (std::make_unique<AudioParameterInt>    (id ("octave"),    n + "Octave",  0, 6, 2));
         g->addChild (std::make_unique<AudioParameterBool>   (id ("scalelock"), n + "Scale Lock", true));
 
-        g->addChild (floatParam (id ("wave"),      n + "Wave",      NormalisableRange<float> (0.0f, 1.0f), t % 2 ? 1.0f : 0.0f, 2));
+        g->addChild (std::make_unique<AudioParameterChoice> (id ("machine"), n + "Machine", machineNames(), 0));
+        g->addChild (floatParam (id ("wave"),      n + "Character", NormalisableRange<float> (0.0f, 1.0f), t % 2 ? 1.0f : 0.0f, 2));
+        g->addChild (floatParam (id ("timbre"),    n + "Timbre",    NormalisableRange<float> (0.0f, 1.0f), 0.5f, 2));
+        g->addChild (std::make_unique<AudioParameterChoice> (id ("ftype"), n + "Filter Type", filterNames(), 0));
         g->addChild (floatParam (id ("cutoff"),    n + "Cutoff",    skewed (30.0f, 8000.0f, 500.0f), 380.0f, 0, " Hz"));
         g->addChild (floatParam (id ("reso"),      n + "Resonance", NormalisableRange<float> (0.0f, 1.0f), 0.72f, 2));
         g->addChild (floatParam (id ("envmod"),    n + "Env Mod",   NormalisableRange<float> (0.0f, 1.0f), 0.55f, 2));
         g->addChild (floatParam (id ("decay"),     n + "Decay",     skewed (0.02f, 2.0f, 0.3f), 0.3f, 3, " s"));
         g->addChild (floatParam (id ("drive"),     n + "Drive",     NormalisableRange<float> (0.0f, 1.0f), 0.35f, 2));
         g->addChild (floatParam (id ("glide"),     n + "Glide",     skewed (0.005f, 0.5f, 0.06f), 0.06f, 3, " s"));
+        g->addChild (floatParam (id ("aatk"),      n + "Amp Attack",  skewed (0.0005f, 2.0f, 0.05f), 0.001f, 3, " s"));
+        g->addChild (floatParam (id ("adec"),      n + "Amp Decay",   skewed (0.01f, 4.0f, 0.4f), 0.5f, 2, " s"));
+        g->addChild (floatParam (id ("asus"),      n + "Amp Sustain", NormalisableRange<float> (0.0f, 1.0f), 1.0f, 2));
+        g->addChild (floatParam (id ("arel"),      n + "Amp Release", skewed (0.002f, 4.0f, 0.2f), 0.01f, 3, " s"));
         // slicer
         g->addChild (std::make_unique<AudioParameterChoice> (id ("slicemode"), n + "Slice Mode",   sliceModeNames(), 0));
         g->addChild (std::make_unique<AudioParameterInt>    (id ("winstart"),  n + "Window Start", 1, 256, 1));
@@ -173,6 +194,8 @@ BashProcessor::BashProcessor()
         p.scaleLock = get ("scalelock"); p.wave = get ("wave"); p.cutoff = get ("cutoff"); p.reso = get ("reso");
         p.envMod = get ("envmod"); p.decay = get ("decay"); p.drive = get ("drive"); p.glide = get ("glide");
         p.level = get ("level"); p.pan = get ("pan");
+        p.machine = get ("machine"); p.timbre = get ("timbre"); p.ftype = get ("ftype");
+        p.aAtk = get ("aatk"); p.aDec = get ("adec"); p.aSus = get ("asus"); p.aRel = get ("arel");
         p.engine = get ("engine"); p.sliceMode = get ("slicemode"); p.winStart = get ("winstart");
         p.winSize = get ("winsize"); p.pitchFollow = get ("pitchfollow"); p.tune = get ("tune");
         p.sAttack = get ("sattack"); p.sRelease = get ("srelease"); p.reverse = get ("reverse");
@@ -243,7 +266,14 @@ void BashProcessor::pullParameters()
         ts.slicer.voice.reverse = load (p.reverse) > 0.5f;
         ts.seq       = seqParams (t);
         ts.rateIndex = (int) load (p.rate);
-        ts.voice.wave      = load (p.wave);
+        ts.voice.machine    = (bash::Machine) juce::jlimit (0, (int) bash::Machine::count - 1, (int) load (p.machine));
+        ts.voice.character  = load (p.wave);
+        ts.voice.timbre     = load (p.timbre);
+        ts.voice.filterType = (bash::FilterType) juce::jlimit (0, (int) bash::FilterType::count - 1, (int) load (p.ftype));
+        ts.voice.attack     = load (p.aAtk);
+        ts.voice.ampDecay   = load (p.aDec);
+        ts.voice.sustain    = load (p.aSus);
+        ts.voice.release    = load (p.aRel);
         ts.voice.cutoff    = load (p.cutoff);
         ts.voice.resonance = load (p.reso);
         ts.voice.envMod    = load (p.envMod);
@@ -282,6 +312,25 @@ void BashProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBu
 
     float* left  = buffer.getWritePointer (0);
     float* right = buffer.getNumChannels() > 1 ? buffer.getWritePointer (1) : scratch.getWritePointer (0);
+
+    // MIDI in: held notes feed the arpeggiator; CC 102 / 103 set key / scale
+    // (sent by the BASH! Key Lock device in Ableton so BASH! follows the set's key).
+    for (const auto meta : midi)
+    {
+        const auto msg = meta.getMessage();
+        if (msg.isNoteOn())        engine.midiNoteIn (msg.getNoteNumber(), msg.getVelocity());
+        else if (msg.isNoteOff())  engine.midiNoteIn (msg.getNoteNumber(), 0);
+        else if (msg.isAllNotesOff() || msg.isAllSoundOff()) engine.allInputNotesOff();
+        else if (msg.isController() && (msg.getControllerNumber() == 102 || msg.getControllerNumber() == 103))
+        {
+            auto* param = apvts.getParameter (msg.getControllerNumber() == 102 ? "root" : "scale");
+            const int value = msg.getControllerValue();
+            const int count = msg.getControllerNumber() == 102 ? 12 : (int) bash::allScales().size();
+            const float norm = param->convertTo0to1 ((float) juce::jlimit (0, count - 1, value % (msg.getControllerNumber() == 102 ? 12 : 128)));
+            if (std::abs (param->getValue() - norm) > 1.0e-4f)
+                param->setValueNotifyingHost (norm);
+        }
+    }
 
     midiOut.clear();
     engine.process (left, right, n, transport, midiOut);

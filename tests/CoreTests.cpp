@@ -3,6 +3,7 @@
 #include "bash/Scale.h"
 #include "bash/Sequencer.h"
 #include "bash/Slices.h"
+#include "bash/MachineSynth.h"
 
 #include <cmath>
 #include <cstdio>
@@ -411,6 +412,148 @@ static void testSlicerEngine()
     CHECK (peak < 1.0e-6f);
 }
 
+// ---------------------------------------------------------------------------
+// Algorithms and machines
+
+static void testScaleSteps()
+{
+    Scale cMaj (0, 1);
+    CHECK (cMaj.stepFrom (60, 2) == 64 && cMaj.stepFrom (60, 4) == 67 && cMaj.stepFrom (60, 7) == 72);
+    CHECK (cMaj.stepFrom (62, 2) == 65 && cMaj.stepFrom (60, -1) == 59);
+    CHECK (cMaj.stepFrom (61, 0) == 60);   // off-scale input quantises first
+}
+
+static void testAlgorithms()
+{
+    Scale aMin (9, 0);
+    Pattern pat (2024);
+
+    // Dedicated bass: low register, in key, beat 1 always plays at moderate density
+    SequencerParams bass; bass.algorithm = Algorithm::DedicatedBass; bass.baseNote = 33; bass.density = 0.4f;
+    for (float t : { 0.0f, 1.0f })
+    {
+        bass.type = t;
+        for (uint32_t i = 0; i < 512; ++i)
+        {
+            auto s = pat.step (i, bass, aMin);
+            CHECK (s.note >= 33 - 5 && s.note <= 33 + 12 && aMin.contains (s.note));
+            if (t == 0.0f && i % 16 == 0) CHECK (s.active);
+        }
+    }
+
+    // Arpeggiator: only held notes, silent with nothing held
+    SequencerParams arp; arp.algorithm = Algorithm::Arpeggiator; arp.density = 1.0f; arp.type = 0.0f;
+    for (uint32_t i = 0; i < 32; ++i) CHECK (! pat.step (i, arp, aMin).active);
+    arp.held = { 61, 64, 68 }; arp.heldCount = 3;   // C# E G# — not even in A minor: used exactly
+    for (float t : { 0.0f, 0.5f, 1.0f })
+    {
+        arp.type = t;
+        std::set<int> seen;
+        for (uint32_t i = 0; i < 300; ++i)
+        {
+            auto s = pat.step (i, arp, aMin);
+            CHECK (s.note == 61 || s.note == 64 || s.note == 68);
+            seen.insert (s.note);
+        }
+        CHECK (seen.size() == 3);
+    }
+    arp.type = 0.0f;
+    CHECK (pat.step (0, arp, aMin).note == 61 && pat.step (1, arp, aMin).note == 64 && pat.step (2, arp, aMin).note == 68);
+
+    // Counterpoint: in-key triads, bass below the chord, both streams appear
+    SequencerParams cp; cp.algorithm = Algorithm::Counterpoint; cp.baseNote = 33; cp.density = 0.6f;
+    int chords = 0, basses = 0;
+    for (uint32_t i = 0; i < 256; ++i)
+    {
+        auto s = pat.step (i, cp, aMin);
+        CHECK (aMin.contains (s.note) && aMin.contains (s.chord[0]) && aMin.contains (s.chord[1]) && aMin.contains (s.bassNote));
+        CHECK (s.chord[0] > s.note && s.chord[1] > s.chord[0]);
+        CHECK (s.bassNote < s.note);
+        if (s.active) ++chords;
+        if (s.bassActive) ++basses;
+        if (i % 16 != 0) CHECK (s.note == pat.step (i - i % 16, cp, aMin).note);   // harmony per bar at Type 0
+    }
+    CHECK (chords > 20 && basses > 20);
+
+    // Player: chord notes on stream 0, bass on stream 1, everything released
+    TrackPlayer pl; std::vector<NoteEvent> ev;
+    for (int blk = 0; blk < 64; ++blk) pl.process (blk * 1.0, 0.01, 100, pat, cp, aMin, ev);
+    pl.reset (&ev, 0);
+    int held0 = 0, held1 = 0, maxHeld0 = 0, ons1 = 0;
+    for (auto& e : ev)
+    {
+        int& h = e.stream == 1 ? held1 : held0;
+        h += e.noteOn ? 1 : -1;
+        CHECK (h >= 0);
+        maxHeld0 = std::max (maxHeld0, held0);
+        if (e.noteOn && e.stream == 1) ++ons1;
+    }
+    CHECK (held0 == 0 && held1 == 0 && maxHeld0 >= 3 && ons1 > 5);
+}
+
+static void testMachines()
+{
+    for (int m = 0; m < (int) Machine::count; ++m)
+        for (int f = 0; f < (int) FilterType::count; ++f)
+        {
+            MachineSynth syn; syn.prepare (48000.0);
+            MachineVoice::Params p; p.machine = (Machine) m; p.filterType = (FilterType) f;
+            p.cutoff = 1200.0f; p.character = 0.6f; p.timbre = 0.7f; p.resonance = 0.9f;
+            std::vector<float> out (24000, 0.0f);
+            syn.noteOn (45, 110, true, false);
+            syn.render (out.data(), 0, 12000, p);
+            syn.noteOff (45);
+            syn.render (out.data(), 12000, 12000, p);
+            double rms = 0.0; float peak = 0.0f; bool finite = true;
+            for (int i = 0; i < 12000; ++i) { rms += out[i] * out[i]; peak = std::max (peak, std::abs (out[i])); finite = finite && std::isfinite (out[i]); }
+            rms = std::sqrt (rms / 12000.0);
+            CHECK (finite);
+            CHECK (rms > 0.005);
+            CHECK (peak < 2.0f);
+            CHECK (std::abs (out[23999]) < 1.0e-3f);   // released to silence
+            CHECK (syn.isSilent());
+            if (! (rms > 0.005)) std::printf ("  silent machine %s filter %d\n", machineName ((Machine) m), f);
+        }
+
+    // poly: three notes sound together, a fourth/fifth steal politely
+    MachineSynth syn; syn.prepare (48000.0); syn.setPolyphonic (true);
+    MachineVoice::Params p;
+    std::vector<float> out (4800, 0.0f);
+    for (int n : { 57, 60, 64, 67, 71 }) syn.noteOn (n, 100, false, false);
+    syn.render (out.data(), 0, 4800, p);
+    for (int n : { 57, 60, 64, 67, 71 }) syn.noteOff (n);
+    std::vector<float> tail (24000, 0.0f);
+    syn.render (tail.data(), 0, 24000, p);
+    CHECK (syn.isSilent());
+}
+
+static void testEngineMidiIn()
+{
+    Engine eng; eng.prepare (48000.0, 256);
+    eng.track (0).seq.algorithm = Algorithm::Arpeggiator;
+    eng.track (0).seq.density = 1.0f;
+    Transport tp; tp.hostAvailable = true; tp.hostPlaying = true; tp.hostBpm = 120.0;
+    std::vector<float> l (480), r (480);
+    std::vector<MidiOut> midi;
+    for (int b = 0; b < 50; ++b) { eng.process (l.data(), r.data(), 480, tp, midi); tp.hostPpq += 0.02; }
+    CHECK (midi.empty());   // arp with nothing held is silent
+    eng.midiNoteIn (64, 100); eng.midiNoteIn (60, 100); eng.midiNoteIn (67, 100); eng.midiNoteIn (60, 90);
+    CHECK (eng.heldInputCount() == 3);
+    for (int b = 0; b < 100; ++b) { eng.process (l.data(), r.data(), 480, tp, midi); tp.hostPpq += 0.02; }
+    std::set<int> notes; for (auto& m : midi) if (m.noteOn) notes.insert (m.note);
+    CHECK ((notes == std::set<int> { 60, 64, 67 }));
+    eng.midiNoteIn (64, 0);
+    CHECK (eng.heldInputCount() == 2);
+
+    // Counterpoint bass goes out on channel track + 8
+    eng.track (0).seq.algorithm = Algorithm::Counterpoint;
+    midi.clear();
+    for (int b = 0; b < 200; ++b) { eng.process (l.data(), r.data(), 480, tp, midi); tp.hostPpq += 0.02; }
+    bool ch1 = false, ch9 = false;
+    for (auto& m : midi) { ch1 |= m.channel == 1; ch9 |= m.channel == 9; }
+    CHECK (ch1 && ch9);
+}
+
 int main()
 {
     testDeterminism();
@@ -425,6 +568,10 @@ int main()
     testSlicePicking();
     testSliceVoice();
     testSlicerEngine();
+    testScaleSteps();
+    testAlgorithms();
+    testMachines();
+    testEngineMidiIn();
     std::printf ("%d checks, %d failures\n", checks, failures);
     return failures == 0 ? 0 : 1;
 }
