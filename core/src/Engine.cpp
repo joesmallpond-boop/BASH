@@ -30,6 +30,7 @@ namespace bash
         for (int t = 0; t < numTracks; ++t)
         {
             patterns[(size_t) t].setSeed (mix64 (0xBA54ull + (uint64_t) t));
+            lifes[(size_t) t].setSeed (mix64 (0x11FE0000ull + (uint64_t) t));
             playIdx[(size_t) t].store (0);
             sliceNow[(size_t) t].store (-1);
             framePos[(size_t) t].store (-1.0);
@@ -208,7 +209,7 @@ namespace bash
 
     void Engine::handleEvent (int t, const NoteEvent& e)
     {
-        auto& ts = tracks[(size_t) t];
+        auto& ts = live[(size_t) t];
         switch (ts.engine)
         {
             case EngineType::Slicer:
@@ -280,9 +281,23 @@ namespace bash
         anySolo = false;
         for (auto& tr : tracks) anySolo = anySolo || tr.solo;
 
+        // modulation sources advance once per chunk
+        const double chunkSeconds = n / sr;
+        const float l1 = lfos[0].advance (globals.lfo[0], chunkSeconds, ppq, run);
+        const float l2 = lfos[1].advance (globals.lfo[1], chunkSeconds, ppq, run);
+        lfoPhaseUi[0].store (lfos[0].phase()); lfoPhaseUi[1].store (lfos[1].phase());
+        expression[(size_t) ModSource::Lfo1] = l1;
+        expression[(size_t) ModSource::Lfo2] = l2;
         for (int t = 0; t < numTracks; ++t)
         {
-            auto& ts     = tracks[(size_t) t];
+            lifes[(size_t) t].advance (chunkSeconds, tracks[(size_t) t].lifeRate);
+            live[(size_t) t] = tracks[(size_t) t];
+            applyModulation (t);
+        }
+
+        for (int t = 0; t < numTracks; ++t)
+        {
+            auto& ts     = live[(size_t) t];
             auto& player = players[(size_t) t];
             events.clear();
 
@@ -405,7 +420,7 @@ namespace bash
 
     void Engine::mixTrack (int t, float* l, float* r, int n, int offsetInBlock, double bpm)
     {
-        auto& ts = tracks[(size_t) t];
+        auto& ts = live[(size_t) t];
         for (int k = 0; k < 2; ++k)
             trackFx[(size_t) t][(size_t) k].process (bufL.data(), bufR.data(), n, ts.inserts[(size_t) k], bpm);
 
@@ -432,5 +447,71 @@ namespace bash
             peak = std::max (peak, std::max (std::abs (yl), std::abs (yr)));
         }
         trackPeak[(size_t) t].store (std::max (peak, trackPeak[(size_t) t].load() * 0.9f));
+    }
+}
+
+namespace bash
+{
+    float Engine::sourceValue (int t, ModSource s) const
+    {
+        return sourceUi[(size_t) (t * numModSources + (int) s)].load (std::memory_order_relaxed);
+    }
+
+    void Engine::applyModulation (int t)
+    {
+        float src[numModSources];
+        for (int s = 0; s < numModSources; ++s) src[s] = expression[(size_t) s];
+        src[(int) ModSource::Life] = lifes[(size_t) t].value();
+        for (int s = 0; s < numModSources; ++s) sourceUi[(size_t) (t * numModSources + s)].store (src[s], std::memory_order_relaxed);
+
+        const auto& m = matrices[(size_t) t];
+        float sum[numModDests];
+        bool anyRoute = false;
+        for (int d = 0; d < numModDests; ++d)
+        {
+            float acc = 0.0f;
+            for (int s = 0; s < numModSources; ++s)
+            {
+                const float a = m.amount[(size_t) d][(size_t) s].load (std::memory_order_relaxed);
+                if (a != 0.0f) { acc += a * src[s]; anyRoute = true; }
+            }
+            sum[d] = acc;
+        }
+        if (! anyRoute) return;
+
+        auto& L = live[(size_t) t];
+        auto unit = [] (float v) { return std::clamp (v, 0.0f, 1.0f); };
+        auto d = [&] (ModDest x) { return sum[(int) x]; };
+
+        L.seq.type    = unit (L.seq.type + d (ModDest::Type));
+        L.seq.density = unit (L.seq.density + d (ModDest::Density));
+        if (d (ModDest::Steps) != 0.0f)
+            L.seq.length = (uint32_t) std::clamp ((int64_t) L.seq.length + (int64_t) std::lround (d (ModDest::Steps) * 64.0f), (int64_t) 1, (int64_t) 0xFFFFFFFF);
+        if (d (ModDest::Offset) != 0.0f)
+            L.seq.offset = (uint32_t) std::max<int64_t> (0, (int64_t) L.seq.offset + std::lround (d (ModDest::Offset) * 32.0f));
+        L.seq.accentAmount = unit (L.seq.accentAmount + d (ModDest::Accent));
+        L.seq.gate = std::clamp (L.seq.gate + d (ModDest::Gate) * 1.5f, 0.05f, 2.0f);
+
+        L.voice.cutoff    = std::clamp (L.voice.cutoff * std::pow (2.0f, d (ModDest::Cutoff) * 5.0f), 20.0f, 20000.0f);
+        L.voice.resonance = unit (L.voice.resonance + d (ModDest::Resonance));
+        L.voice.character = unit (L.voice.character + d (ModDest::Character));
+        L.voice.timbre    = unit (L.voice.timbre + d (ModDest::Timbre));
+        L.voice.envMod    = unit (L.voice.envMod + d (ModDest::EnvMod));
+        L.voice.decay     = std::clamp (L.voice.decay * std::pow (2.0f, d (ModDest::Decay) * 3.0f), 0.01f, 8.0f);
+        L.voice.drive     = unit (L.voice.drive + d (ModDest::Drive));
+        if (d (ModDest::Tune) != 0.0f)
+        {
+            L.slicer.tune += d (ModDest::Tune) * 24.0f;
+            if (L.engine == EngineType::Synth)
+                L.seq.baseNote = std::clamp (L.seq.baseNote + (int) std::lround (d (ModDest::Tune) * 24.0f), 0, 127);
+        }
+        if (d (ModDest::WindowStart) != 0.0f)
+            L.seq.windowStart = (uint32_t) std::max<int64_t> (0, (int64_t) L.seq.windowStart + std::lround (d (ModDest::WindowStart) * 32.0f));
+        L.level = unit (L.level + d (ModDest::Level));
+        L.pan   = std::clamp (L.pan + d (ModDest::Pan), -1.0f, 1.0f);
+        L.sendA = unit (L.sendA + d (ModDest::SendA));
+        L.sendB = unit (L.sendB + d (ModDest::SendB));
+        L.inserts[0].gnarl = unit (L.inserts[0].gnarl + d (ModDest::Fx1Gnarl));
+        L.inserts[1].gnarl = unit (L.inserts[1].gnarl + d (ModDest::Fx2Gnarl));
     }
 }

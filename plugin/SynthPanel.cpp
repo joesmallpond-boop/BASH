@@ -81,3 +81,13 @@ void SynthPanel::resized()
         row2.removeFromLeft (4);
     }
 }
+
+void SynthPanel::forEachKnob (const std::function<void (Knob&, const juce::String&)>& f)
+{
+    const std::pair<Knob*, const char*> knobs[] = {
+        { &character, "wave" }, { &timbre, "timbre" }, { &cutoff, "cutoff" }, { &reso, "reso" },
+        { &envMod, "envmod" }, { &decay, "decay" }, { &drive, "drive" }, { &glide, "glide" },
+        { &attack, "aatk" }, { &ampDecay, "adec" }, { &sustain, "asus" }, { &release, "arel" },
+        { &level, "level" }, { &pan, "pan" } };
+    for (auto& [k, id] : knobs) f (*k, BashProcessor::pid (track, id));
+}

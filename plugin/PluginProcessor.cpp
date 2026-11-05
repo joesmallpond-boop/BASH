@@ -73,6 +73,20 @@ namespace
     /** type, a, b, gnarl, mix for one effect slot, ids prefixed with `prefix`. */
     void addFxParams (juce::AudioProcessorParameterGroup& g, const juce::String& prefix, const juce::String& name, int defType, float defA, float defB);
 
+    juce::StringArray lfoShapeNames()
+    {
+        juce::StringArray s;
+        for (int i = 0; i < (int) bash::LfoShape::count; ++i) s.add (bash::lfoShapeName ((bash::LfoShape) i));
+        return s;
+    }
+
+    juce::StringArray lfoDivNames()
+    {
+        juce::StringArray s;
+        for (auto& d : bash::lfoDivisions()) s.add (d.first);
+        return s;
+    }
+
     juce::StringArray keyNames()
     {
         juce::StringArray s;
@@ -150,6 +164,17 @@ APVTS::ParameterLayout BashProcessor::createLayout()
     addFxParams (*mix, "mfx2", "Master FX 2", 0, 0.5f, 0.5f);
     layout.add (std::move (mix));
 
+    auto mod = std::make_unique<AudioProcessorParameterGroup> ("mod", "Modulation", "|");
+    for (int i = 1; i <= 2; ++i)
+    {
+        const String pre = "lfo" + String (i), name = "LFO " + String (i);
+        mod->addChild (std::make_unique<AudioParameterChoice> (ParameterID { pre + "shape", 1 }, name + " Shape", lfoShapeNames(), i == 1 ? 0 : 5));
+        mod->addChild (floatParam (ParameterID { pre + "rate", 1 }, name + " Rate", skewed (0.01f, 20.0f, 1.0f), i == 1 ? 0.5f : 0.2f, 2, " Hz"));
+        mod->addChild (std::make_unique<AudioParameterBool> (ParameterID { pre + "sync", 1 }, name + " Sync", false));
+        mod->addChild (std::make_unique<AudioParameterChoice> (ParameterID { pre + "div", 1 }, name + " Division", lfoDivNames(), 4));
+    }
+    layout.add (std::move (mod));
+
     for (int t = 0; t < bash::numTracks; ++t)
     {
         const String n = "T" + String (t + 1) + " ";
@@ -197,6 +222,7 @@ APVTS::ParameterLayout BashProcessor::createLayout()
 
         g->addChild (floatParam (id ("level"),     n + "Level",     NormalisableRange<float> (0.0f, 1.0f), 0.8f, 2));
         g->addChild (floatParam (id ("pan"),       n + "Pan",       NormalisableRange<float> (-1.0f, 1.0f), 0.0f, 2));
+        g->addChild (floatParam (id ("liferate"), n + "Life Rate", skewed (0.005f, 2.0f, 0.1f), 0.08f, 3, " Hz"));
         g->addChild (std::make_unique<AudioParameterBool> (id ("mute"), n + "Mute", false));
         g->addChild (std::make_unique<AudioParameterBool> (id ("solo"), n + "Solo", false));
         g->addChild (floatParam (id ("senda"), n + "Send A", NormalisableRange<float> (0.0f, 1.0f), 0.0f, 2));
@@ -237,6 +263,12 @@ BashProcessor::BashProcessor()
     pRetALevel = apvts.getRawParameterValue ("retalevel");
     pRetBLevel = apvts.getRawParameterValue ("retblevel");
     retA = fxPtrs ("reta"); retB = fxPtrs ("retb");
+    for (int i = 0; i < 2; ++i)
+    {
+        const juce::String pre = "lfo" + juce::String (i + 1);
+        lfoP[(size_t) i] = { apvts.getRawParameterValue (pre + "shape"), apvts.getRawParameterValue (pre + "rate"),
+                             apvts.getRawParameterValue (pre + "sync"), apvts.getRawParameterValue (pre + "div") };
+    }
     mfx[0] = fxPtrs ("mfx1"); mfx[1] = fxPtrs ("mfx2");
 
     for (int t = 0; t < bash::numTracks; ++t)
@@ -249,6 +281,7 @@ BashProcessor::BashProcessor()
         p.scaleLock = get ("scalelock"); p.wave = get ("wave"); p.cutoff = get ("cutoff"); p.reso = get ("reso");
         p.envMod = get ("envmod"); p.decay = get ("decay"); p.drive = get ("drive"); p.glide = get ("glide");
         p.level = get ("level"); p.pan = get ("pan");
+        p.lifeRate = get ("liferate");
         p.mute = get ("mute"); p.solo = get ("solo"); p.sendA = get ("senda"); p.sendB = get ("sendb");
         p.fx[0] = fxPtrs (pid (t, "fx1")); p.fx[1] = fxPtrs (pid (t, "fx2"));
         p.machine = get ("machine"); p.timbre = get ("timbre"); p.ftype = get ("ftype");
@@ -342,6 +375,14 @@ void BashProcessor::pullParameters()
     g.returnLevel[1] = load (pRetBLevel);
     g.masterFx[0] = fxFrom (mfx[0]);
     g.masterFx[1] = fxFrom (mfx[1]);
+    for (int i = 0; i < 2; ++i)
+    {
+        auto& lp = g.lfo[(size_t) i];
+        lp.shape    = (bash::LfoShape) juce::jlimit (0, (int) bash::LfoShape::count - 1, (int) load (lfoP[(size_t) i].shape));
+        lp.rateHz   = load (lfoP[(size_t) i].rate);
+        lp.sync     = load (lfoP[(size_t) i].sync) > 0.5f;
+        lp.division = (int) load (lfoP[(size_t) i].div);
+    }
 
     for (int t = 0; t < bash::numTracks; ++t)
     {
@@ -374,6 +415,7 @@ void BashProcessor::pullParameters()
         ts.level = load (p.level);
         ts.pan   = load (p.pan);
         ts.mute  = load (p.mute) > 0.5f;
+        ts.lifeRate = load (p.lifeRate);
         ts.solo  = load (p.solo) > 0.5f;
         ts.sendA = load (p.sendA);
         ts.sendB = load (p.sendB);
@@ -430,7 +472,16 @@ void BashProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBu
     for (const auto meta : midi)
     {
         const auto msg = meta.getMessage();
-        if (msg.isNoteOn())        engine.midiNoteIn (msg.getNoteNumber(), msg.getVelocity());
+        if (msg.isNoteOn())
+        {
+            engine.midiNoteIn (msg.getNoteNumber(), msg.getVelocity());
+            engine.midiExpression (bash::ModSource::Velocity, (float) msg.getVelocity() / 127.0f);
+        }
+        else if (msg.isChannelPressure())    engine.midiExpression (bash::ModSource::Aftertouch, (float) msg.getChannelPressureValue() / 127.0f);
+        else if (msg.isAftertouch())         engine.midiExpression (bash::ModSource::Aftertouch, (float) msg.getAfterTouchValue() / 127.0f);
+        else if (msg.isPitchWheel())         engine.midiExpression (bash::ModSource::PitchBend, (float) (msg.getPitchWheelValue() - 8192) / 8192.0f);
+        else if (msg.isController() && msg.getControllerNumber() == 1)  engine.midiExpression (bash::ModSource::ModWheel, (float) msg.getControllerValue() / 127.0f);
+        else if (msg.isController() && msg.getControllerNumber() == 74) engine.midiExpression (bash::ModSource::Aftertouch, (float) msg.getControllerValue() / 127.0f);   // MPE slide
         else if (msg.isNoteOff())  engine.midiNoteIn (msg.getNoteNumber(), 0);
         else if (msg.isAllNotesOff() || msg.isAllSoundOff()) engine.allInputNotesOff();
         else if (msg.isController() && (msg.getControllerNumber() == 102 || msg.getControllerNumber() == 103))
@@ -570,6 +621,21 @@ void BashProcessor::getStateInformation (juce::MemoryBlock& dest)
     state.removeChild (state.getChildWithName ("Kit"), nullptr);
     state.appendChild (kitToTree(), nullptr);
 
+    juce::ValueTree modTree ("Mod");
+    for (int t = 0; t < bash::numTracks; ++t)
+        for (int d = 0; d < bash::numModDests; ++d)
+            for (int s = 0; s < bash::numModSources; ++s)
+            {
+                const float a = engine.matrix (t).get ((bash::ModDest) d, (bash::ModSource) s);
+                if (a == 0.0f) continue;
+                juce::ValueTree c ("R");
+                c.setProperty ("t", t, nullptr); c.setProperty ("d", d, nullptr);
+                c.setProperty ("s", s, nullptr); c.setProperty ("a", a, nullptr);
+                modTree.appendChild (c, nullptr);
+            }
+    state.removeChild (state.getChildWithName ("Mod"), nullptr);
+    state.appendChild (modTree, nullptr);
+
     if (auto xml = state.createXml())
         copyXmlToBinary (*xml, dest);
 }
@@ -584,6 +650,7 @@ void BashProcessor::setStateInformation (const void* data, int size)
     const auto patterns = tree.getChildWithName ("Patterns");
     const auto samplesTree = tree.getChildWithName ("Samples").createCopy();
     const auto kitTree = tree.getChildWithName ("Kit").createCopy();
+    const auto modTree = tree.getChildWithName ("Mod").createCopy();
     apvts.replaceState (tree);
 
     for (int t = 0; t < bash::numTracks; ++t)
@@ -606,6 +673,13 @@ void BashProcessor::setStateInformation (const void* data, int size)
     }
     if (kitTree.isValid())
         kitFromTree (kitTree);
+    for (int t = 0; t < bash::numTracks; ++t) engine.matrix (t).clear();
+    for (const auto& c : modTree)
+    {
+        const int t = (int) c.getProperty ("t"), d = (int) c.getProperty ("d"), s = (int) c.getProperty ("s");
+        if (t >= 0 && t < bash::numTracks && d >= 0 && d < bash::numModDests && s >= 0 && s < bash::numModSources)
+            engine.matrix (t).set ((bash::ModDest) d, (bash::ModSource) s, (float) c.getProperty ("a"));
+    }
 
     if (patterns.isValid())
     {
@@ -814,4 +888,138 @@ void BashProcessor::kitFromTree (const juce::ValueTree& kit)
         }
         engine.setCell (i, c);
     }
+}
+
+// ---- Roll the Dice (message thread) --------------------------------------------
+namespace
+{
+    enum class DiceCat { Never, Key, Tempo, Level, Seq, Sound, Fx, Mod };
+
+    DiceCat categoryOf (const juce::String& id, int& track)
+    {
+        track = -1;
+        if (id == "root" || id == "scale") return DiceCat::Key;
+        if (id == "tempo") return DiceCat::Tempo;
+        if (id == "sync" || id == "play" || id == "master" || id == "limiter") return DiceCat::Never;
+        if (id == "retalevel" || id == "retblevel") return DiceCat::Level;
+        if (id.startsWith ("reta") || id.startsWith ("retb") || id.startsWith ("mfx")) return DiceCat::Fx;
+        if (id.startsWith ("lfo")) return DiceCat::Mod;
+        if (id.startsWith ("t") && id.containsChar ('_'))
+        {
+            track = id.substring (1, id.indexOfChar ('_')).getIntValue() - 1;
+            const auto s = id.fromFirstOccurrenceOf ("_", false, false);
+            static const juce::StringArray never { "on", "engine", "mute", "solo", "cycle" };
+            static const juce::StringArray level { "level", "pan" };
+            static const juce::StringArray seq   { "algo", "type", "density", "steps", "offset", "direction", "rate",
+                                                   "accent", "gate", "octave", "scalelock", "slicemode", "winstart", "winsize" };
+            if (never.contains (s)) return DiceCat::Never;
+            if (level.contains (s)) return DiceCat::Level;
+            if (seq.contains (s))   return DiceCat::Seq;
+            if (s == "liferate")    return DiceCat::Mod;
+            if (s.startsWith ("fx") || s == "senda" || s == "sendb") return DiceCat::Fx;
+            return DiceCat::Sound;
+        }
+        return DiceCat::Never;
+    }
+}
+
+const juce::StringArray& BashProcessor::diceScopeNames()
+{
+    static const juce::StringArray n { "Everything", "This track", "This track: sequencer", "This track: sound", "This track: effects" };
+    return n;
+}
+
+void BashProcessor::rollDice (int currentTrack)
+{
+    // remember how things were, for Undo
+    DiceSnapshot snap;
+    snap.params = apvts.copyState();
+    for (int t = 0; t < bash::numTracks; ++t)
+    {
+        auto& pat = engine.pattern (t);
+        std::lock_guard<bash::SpinMutex> g (pat.mutex());
+        snap.seeds[(size_t) t] = pat.getSeed();
+    }
+    diceHistory.push_back (snap);
+    if (diceHistory.size() > 16) diceHistory.erase (diceHistory.begin());
+
+    const auto rollSeed = (juce::int64) juce::Random::getSystemRandom().nextInt64();
+    juce::Random rnd (rollSeed);
+    const float chaos = juce::jlimit (0.0f, 1.0f, dice.chaos);
+
+    auto trackInScope = [&] (int t) { return dice.scope == 0 || t == currentTrack; };
+
+    for (auto* p : getParameters())
+    {
+        auto* rp = dynamic_cast<juce::RangedAudioParameter*> (p);
+        if (rp == nullptr) continue;
+        int t = -1;
+        const auto cat = categoryOf (rp->getParameterID(), t);
+        bool ok = false;
+        switch (cat)
+        {
+            case DiceCat::Never: break;
+            case DiceCat::Key:   ok = dice.includeKey && dice.scope == 0; break;
+            case DiceCat::Tempo: ok = dice.includeTempo && dice.scope == 0; break;
+            case DiceCat::Level: ok = dice.includeLevels && (t < 0 ? dice.scope == 0 : trackInScope (t)); break;
+            case DiceCat::Mod:   ok = t < 0 ? dice.scope == 0 : trackInScope (t) && (dice.scope <= 1); break;
+            case DiceCat::Seq:   ok = trackInScope (t) && (dice.scope <= 2) && dice.scope != 3 && dice.scope != 4; break;
+            case DiceCat::Sound: ok = trackInScope (t) && (dice.scope <= 1 || dice.scope == 3); break;
+            case DiceCat::Fx:    ok = t < 0 ? dice.scope == 0 : trackInScope (t) && (dice.scope <= 1 || dice.scope == 4); break;
+        }
+        if (! ok || diceLocked.contains (rp->getParameterID())) continue;
+
+        const float cur = rp->getValue();
+        float next;
+        if (dynamic_cast<juce::AudioParameterBool*> (rp) != nullptr)
+            next = rnd.nextFloat() < chaos * 0.5f ? 1.0f - cur : cur;
+        else if (chaos >= 0.999f)
+            next = rnd.nextFloat();
+        else
+            next = juce::jlimit (0.0f, 1.0f, cur + (rnd.nextFloat() * 2.0f - 1.0f) * chaos);
+
+        if (next != cur)
+        {
+            rp->beginChangeGesture();
+            rp->setValueNotifyingHost (next);
+            rp->endChangeGesture();
+        }
+    }
+
+    if (dice.includePatterns)
+        for (int t = 0; t < bash::numTracks; ++t)
+            if (trackInScope (t) && (dice.scope <= 2))
+            {
+                auto& pat = engine.pattern (t);
+                std::lock_guard<bash::SpinMutex> g (pat.mutex());
+                pat.setSeed (bash::mix64 ((uint64_t) rollSeed + (uint64_t) t));   // locks are kept
+            }
+}
+
+bool BashProcessor::undoDice()
+{
+    if (diceHistory.empty()) return false;
+    const auto snap = diceHistory.back();
+    diceHistory.pop_back();
+    for (const auto& child : snap.params)
+    {
+        if (! child.hasType ("PARAM")) continue;
+        if (auto* p = apvts.getParameter (child.getProperty ("id").toString()))
+        {
+            const float v = p->convertTo0to1 ((float) child.getProperty ("value"));
+            if (std::abs (p->getValue() - v) > 1.0e-6f)
+            {
+                p->beginChangeGesture();
+                p->setValueNotifyingHost (v);
+                p->endChangeGesture();
+            }
+        }
+    }
+    for (int t = 0; t < bash::numTracks; ++t)
+    {
+        auto& pat = engine.pattern (t);
+        std::lock_guard<bash::SpinMutex> g (pat.mutex());
+        pat.setSeed (snap.seeds[(size_t) t]);
+    }
+    return true;
 }

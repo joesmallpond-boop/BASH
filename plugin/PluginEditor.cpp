@@ -256,7 +256,7 @@ void StepView::mouseUp (const juce::MouseEvent& e)
 
 // ============================================================================
 BashEditor::BashEditor (BashProcessor& p)
-    : AudioProcessorEditor (&p), proc (p), stepView (p), samplerPanel (p), synthPanel (p), drumPanel (p), mixerPanel (p)
+    : AudioProcessorEditor (&p), proc (p), stepView (p), samplerPanel (p), synthPanel (p), drumPanel (p), mixerPanel (p), modPanel (p), diceButton (p)
 {
     setLookAndFeel (&lnf);
     auto& apvts = proc.apvts;
@@ -323,13 +323,18 @@ BashEditor::BashEditor (BashProcessor& p)
     addChildComponent (synthPanel);
     addChildComponent (drumPanel);
     addChildComponent (mixerPanel);
-    for (auto* b : { &trackViewButton, &mixerViewButton })
+    addChildComponent (modPanel);
+    addAndMakeVisible (diceButton);
+    diceButton.currentTrack = [this] { return currentTrack; };
+    diceButton.onRolled = [this] { stepView.refresh(); repaint(); };
+    for (auto* b : { &trackViewButton, &mixerViewButton, &modViewButton })
     {
         b->setClickingTogglesState (false);
         addAndMakeVisible (*b);
     }
-    trackViewButton.onClick = [this] { setView (false); };
-    mixerViewButton.onClick = [this] { setView (true); };
+    trackViewButton.onClick = [this] { setView (0); };
+    mixerViewButton.onClick = [this] { setView (1); };
+    modViewButton.onClick   = [this] { setView (2); };
     trackViewButton.setToggleState (true, juce::dontSendNotification);
 
     selectTrack (0);
@@ -352,13 +357,17 @@ std::vector<juce::Component*> BashEditor::trackViewComponents()
     return c;
 }
 
-void BashEditor::setView (bool mixer)
+void BashEditor::setView (int v)
 {
+    view = v;
+    const bool mixer = v != 0;   // anything but the track view hides the track controls
     mixerView = mixer;
-    trackViewButton.setToggleState (! mixer, juce::dontSendNotification);
-    mixerViewButton.setToggleState (mixer, juce::dontSendNotification);
+    trackViewButton.setToggleState (v == 0, juce::dontSendNotification);
+    mixerViewButton.setToggleState (v == 1, juce::dontSendNotification);
+    modViewButton.setToggleState (v == 2, juce::dontSendNotification);
     for (auto* c : trackViewComponents()) c->setVisible (! mixer);
-    mixerPanel.setVisible (mixer);
+    mixerPanel.setVisible (v == 1);
+    modPanel.setVisible (v == 2);
     if (mixer)
     {
         samplerPanel.setVisible (false);
@@ -374,7 +383,7 @@ void BashEditor::setView (bool mixer)
 
 void BashEditor::selectTrack (int t)
 {
-    if (mixerView) setView (false);
+    if (view == 1) setView (0);
     currentTrack = t;
     for (int i = 0; i < bash::numTracks; ++i)
         trackButtons[(size_t) i].setToggleState (i == t, juce::dontSendNotification);
@@ -383,6 +392,12 @@ void BashEditor::selectTrack (int t)
     samplerPanel.setTrack (t);
     synthPanel.setTrack (t);
     drumPanel.setTrack (t);
+    modPanel.setTrack (t);
+    diceLocks.clear();
+    for (size_t i = 0; i < seqKnobs.size(); ++i)
+        diceLocks.bind (seqKnobs[i]->slider, seqKnobs[i]->label, BashProcessor::pid (t, seqKnobIds[i].toRawUTF8()));
+    synthPanel.forEachKnob ([this] (bashui::Knob& k, const juce::String& id) { diceLocks.bind (k.slider, k.label, id); });
+    samplerPanel.forEachKnob ([this] (bashui::Knob& k, const juce::String& id) { diceLocks.bind (k.slider, k.label, id); });
     updateEnginePanel();
 }
 
@@ -432,6 +447,8 @@ void BashEditor::timerCallback()
         drumPanel.refresh();
     if (mixerPanel.isVisible())
         mixerPanel.refresh();
+    if (modPanel.isVisible())
+        modPanel.refresh();
     stepView.refresh();
     for (int t = 0; t < bash::numTracks; ++t)
     {
@@ -472,18 +489,21 @@ void BashEditor::resized()
 
     // header (right side)
     auto header = area.removeFromTop (84).withTrimmedTop (12);
+    diceButton.setBounds (header.removeFromRight (56).withSizeKeepingCentre (52, 52));
+    header.removeFromRight (12);
     placeKnob (master, header.removeFromRight (72));
     header.removeFromRight (8);
     placeKnob (tempo, header.removeFromRight (72));
     header.removeFromRight (12);
     auto row = header.withSizeKeepingCentre (header.getWidth(), 32);
-    playButton.setBounds (row.removeFromRight (84)); row.removeFromRight (8);
-    syncButton.setBounds (row.removeFromRight (84)); row.removeFromRight (16);
-    scaleBox.setBounds (row.removeFromRight (170)); row.removeFromRight (8);
-    keyBox.setBounds (row.removeFromRight (72));
+    playButton.setBounds (row.removeFromRight (74)); row.removeFromRight (8);
+    syncButton.setBounds (row.removeFromRight (74)); row.removeFromRight (12);
+    scaleBox.setBounds (row.removeFromRight (140)); row.removeFromRight (8);
+    keyBox.setBounds (row.removeFromRight (64));
 
-    trackViewButton.setBounds (230, 36, 84, 28);
-    mixerViewButton.setBounds (320, 36, 84, 28);
+    trackViewButton.setBounds (196, 36, 72, 28);
+    mixerViewButton.setBounds (272, 36, 64, 28);
+    modViewButton.setBounds (340, 36, 52, 28);
 
     // track selector
     auto tracksRow = area.removeFromTop (44).withTrimmedTop (4);
@@ -493,6 +513,7 @@ void BashEditor::resized()
     // steps
     area.removeFromTop (12);
     mixerPanel.setBounds (area.withTrimmedBottom (14));
+    modPanel.setBounds (area.withTrimmedBottom (14));
     stepView.setBounds (area.removeFromTop (176));
     auto buttons = area.removeFromTop (44).withTrimmedTop (8);
     regenButton.setBounds (buttons.removeFromLeft (130));

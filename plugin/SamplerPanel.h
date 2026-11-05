@@ -55,6 +55,7 @@ namespace bashui
         void setTrack (int t);
         void refresh();
         void resized() override;
+        void forEachKnob (const std::function<void (Knob&, const juce::String&)>& f);
 
     private:
         void browse();

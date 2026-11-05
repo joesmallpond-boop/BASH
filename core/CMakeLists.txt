@@ -2,6 +2,7 @@
 add_library(bash_core STATIC
     src/Drums.cpp
     src/MachineSynth.cpp
+    src/Modulation.cpp
     src/Engine.cpp
     src/Fx.cpp
     src/Scale.cpp

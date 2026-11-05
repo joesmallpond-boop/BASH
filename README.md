@@ -50,6 +50,11 @@ Full spec: *BASH! — Software Requirements Specification* (Claude doc).
   distortion (Fuzz, Hard Clip, Wavefolder, Bitcrush, Rectifier), saturation (Tape with wow, Tube, Transformer), reverb (Plate, Hall, Spring, Shimmer; full Gnarl freezes into an infinite wash), delay (Tape, Digital, Ping-Pong, Grain; tempo-synced, feedback past 100% held by a soft limiter), modulation (Chorus, Flanger, Phaser, Ring Mod, Frequency Shifter)
 - Multi-out: 8 extra stereo outputs ("Track 1"–"Track 8"); enable one in your DAW and that track leaves the main mix
 
+**Milestone 6 — modulation, Life, Roll the Dice** ✅
+
+- MOD view: LFO 1 and LFO 2 (sine, triangle, saw, square, S&H, smooth; free Hz or synced 1/16 to 32 bars), a Life drift generator per track (smooth wandering noise, its own rate), and a matrix per track: 21 destinations (Type, Density, Steps, Offset, Accent, Gate, Cutoff, Resonance, Character, Timbre, Env Mod, Decay, Drive, Tune, Window, Level, Pan, Sends, FX Gnarl) × 7 sources (LFO 1, LFO 2, Life, Velocity, Aftertouch/MPE slide, Mod wheel, Pitch bend). Drag a cell to set its amount
+- Roll the Dice (top-right die): click to roll, right-click for scope (everything / this track / its sequencer / its sound / its effects), chaos amount (10%–anything goes), whether key, tempo, levels and patterns are included, and Undo (16 rolls). Right-click any knob to protect it from the dice (its label turns coral). Track on/off, engine choice, mute/solo, master and the limiter are never rolled
+
 Next: modulation, Life, Roll the Dice, mixer + FX → MIDI import/export → iPad → Max for Live companion.
 
 ## Getting builds

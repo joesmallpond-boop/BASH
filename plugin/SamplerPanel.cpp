@@ -397,3 +397,11 @@ void SamplerPanel::resized()
     toggles.removeFromTop (8);
     reverse.setBounds (toggles.removeFromTop (30));
 }
+
+void SamplerPanel::forEachKnob (const std::function<void (Knob&, const juce::String&)>& f)
+{
+    const std::pair<Knob*, const char*> knobs[] = {
+        { &winStart, "winstart" }, { &winSize, "winsize" }, { &tune, "tune" }, { &attack, "sattack" },
+        { &release, "srelease" }, { &level, "level" }, { &pan, "pan" } };
+    for (auto& [k, id] : knobs) f (*k, BashProcessor::pid (track, id));
+}

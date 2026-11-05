@@ -86,6 +86,25 @@ public:
     void loadFactoryKit (int k);
     void auditionCell (int i)                          { engine.audition (i); }
 
+    // modulation
+    bash::ModMatrix& matrix (int t)                    { return engine.matrix (t); }
+    float  modSourceValue (int t, bash::ModSource s) const { return engine.sourceValue (t, s); }
+    double lfoPhase (int i) const                      { return engine.lfoPhase (i); }
+
+    // Roll the Dice
+    struct DiceSettings
+    {
+        int   scope = 0;          // 0 everything, 1 track, 2 track seq, 3 track sound, 4 track fx
+        float chaos = 0.5f;       // 0..1
+        bool  includeKey = false, includeTempo = false, includeLevels = false, includePatterns = true;
+    };
+    DiceSettings dice;
+    juce::StringArray diceLocked;  // parameter ids protected from the dice
+    void rollDice (int currentTrack);
+    bool undoDice();
+    int  diceUndoCount() const                         { return (int) diceHistory.size(); }
+    static const juce::StringArray& diceScopeNames();
+
     static const juce::StringArray& cycleNames();
     static uint32_t cycleMultiplier (int index);
 
@@ -99,6 +118,10 @@ private:
     FxPtrs retA, retB;
     std::array<FxPtrs, 2> mfx;
     std::atomic<float> *pLimiter = nullptr, *pRetALevel = nullptr, *pRetBLevel = nullptr;
+    struct LfoPtrs { std::atomic<float> *shape = nullptr, *rate = nullptr, *sync = nullptr, *div = nullptr; };
+    std::array<LfoPtrs, 2> lfoP;
+    struct DiceSnapshot { juce::ValueTree params; std::array<uint64_t, bash::numTracks> seeds {}; };
+    std::vector<DiceSnapshot> diceHistory;
     void pullParameters();
     void timerCallback() override;
     std::shared_ptr<bash::SampleData> decode (const juce::File&, double maxSeconds, juce::String& error);
@@ -115,7 +138,7 @@ private:
                            *accent, *gate, *octave, *scaleLock,
                            *wave, *cutoff, *reso, *envMod, *decay, *drive, *glide, *level, *pan,
                            *machine, *timbre, *ftype, *aAtk, *aDec, *aSus, *aRel,
-                           *mute, *solo, *sendA, *sendB,
+                           *mute, *solo, *sendA, *sendB, *lifeRate,
                            *engine, *sliceMode, *winStart, *winSize, *pitchFollow, *tune, *sAttack, *sRelease, *reverse;
         std::array<FxPtrs, 2> fx;
     };

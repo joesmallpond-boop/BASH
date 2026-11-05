@@ -13,6 +13,7 @@ namespace bashui
         void setTrack (int t);
         void refresh();   // updates the per-machine knob names
         void resized() override;
+        void forEachKnob (const std::function<void (Knob&, const juce::String&)>& f);
 
     private:
         BashProcessor& proc;

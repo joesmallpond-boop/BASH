@@ -6,6 +6,7 @@
 #include "bash/MachineSynth.h"
 #include "bash/Drums.h"
 #include "bash/Fx.h"
+#include "bash/Modulation.h"
 
 #include <cmath>
 #include <cstdio>
@@ -831,6 +832,67 @@ static void testMixer()
     CHECK (loud <= 0.9661f && loud > 0.3f);
 }
 
+// ---------------------------------------------------------------------------
+// Modulation
+
+static void testModulation()
+{
+    for (int sh = 0; sh < (int) LfoShape::count; ++sh)
+    {
+        Lfo lfo; LfoParams p; p.shape = (LfoShape) sh; p.rateHz = 3.0f;
+        float lo = 1.0f, hi = -1.0f;
+        for (int i = 0; i < 2000; ++i) { float v = lfo.advance (p, 0.001, 0.0, false); lo = std::min (lo, v); hi = std::max (hi, v); }
+        CHECK (lo >= -1.0001f && hi <= 1.0001f && hi - lo > 0.2f);
+    }
+    // synced: phase follows song position
+    Lfo synced; LfoParams sp; sp.sync = true; sp.division = 4; sp.shape = LfoShape::Saw;   // 1 bar
+    synced.advance (sp, 0.0, 2.0, true);
+    CHECK (std::abs (synced.phase() - 0.5) < 1e-9);
+
+    // Life: smooth and wandering
+    Life life; life.setSeed (5);
+    float prev = life.advance (0.0, 0.5f), maxStep = 0.0f, lo = 1.0f, hi = -1.0f;
+    for (int i = 0; i < 20000; ++i)
+    {
+        const float v = life.advance (0.005, 0.5f);
+        maxStep = std::max (maxStep, std::abs (v - prev)); prev = v;
+        lo = std::min (lo, v); hi = std::max (hi, v);
+    }
+    CHECK (maxStep < 0.05f);
+    CHECK (hi - lo > 0.8f && lo >= -1.0f && hi <= 1.0f);
+
+    // matrix: mod wheel pulls track level to zero
+    Engine eng; eng.prepare (48000.0, 512);
+    eng.global().returns[0].type = eng.global().returns[1].type = FxType::None;
+    Transport tp; tp.hostAvailable = true; tp.hostPlaying = true; tp.hostBpm = 120.0;
+    eng.track (0).seq.density = 0.9f;
+    CHECK (runEnergy (eng, tp, 100) > 0.1);
+    eng.matrix (0).set (ModDest::Level, ModSource::ModWheel, -1.0f);
+    eng.midiExpression (ModSource::ModWheel, 1.0f);
+    CHECK (runEnergy (eng, tp, 100) < 1.0e-4);
+    eng.midiExpression (ModSource::ModWheel, 0.0f);
+    CHECK (runEnergy (eng, tp, 100) > 0.1);
+    eng.matrix (0).clear();
+
+    // Life -> Type: the pattern drifts over time compared with no modulation
+    auto notesOver = [&] (bool mod)
+    {
+        Engine e2; e2.prepare (48000.0, 512);
+        e2.track (0).seq.density = 1.0f; e2.track (0).lifeRate = 2.0f;
+        if (mod) e2.matrix (0).set (ModDest::Type, ModSource::Life, 1.0f);
+        Transport t2; t2.hostAvailable = true; t2.hostPlaying = true; t2.hostBpm = 120.0;
+        std::vector<float> l (480), r (480); std::vector<MidiOut> midi; std::vector<int> notes;
+        for (int b = 0; b < 400; ++b) { e2.process (l.data(), r.data(), 480, t2, midi); t2.hostPpq += 0.02; }
+        for (auto& m : midi) if (m.noteOn) notes.push_back (m.note);
+        return notes;
+    };
+    auto plain = notesOver (false), drifting = notesOver (true);
+    int diff = 0;
+    for (size_t i = 0; i < std::min (plain.size(), drifting.size()); ++i) if (plain[i] != drifting[i]) ++diff;
+    CHECK (diff > 10);
+    CHECK (eng.sourceValue (0, ModSource::ModWheel) == 0.0f);
+}
+
 int main()
 {
     testDeterminism();
@@ -855,6 +917,7 @@ int main()
     testDrumEngine();
     testEffects();
     testMixer();
+    testModulation();
     std::printf ("%d checks, %d failures\n", checks, failures);
     return failures == 0 ? 0 : 1;
 }

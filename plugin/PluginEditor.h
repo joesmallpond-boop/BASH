@@ -9,6 +9,7 @@
 #include "SynthPanel.h"
 #include "DrumPanel.h"
 #include "MixerPanel.h"
+#include "ModPanel.h"
 
 namespace bashui
 {
@@ -50,7 +51,8 @@ public:
     void paint (juce::Graphics&) override;
     void resized() override;
     void showTrack (int t) { selectTrack (t); }
-    void showMixer()       { setView (true); }
+    void showMixer()       { setView (1); }
+    void showMod()         { setView (2); }
 
 private:
     void timerCallback() override;
@@ -87,9 +89,12 @@ private:
     bashui::SynthPanel synthPanel;
     bashui::DrumPanel drumPanel;
     bashui::MixerPanel mixerPanel;
-    juce::TextButton trackViewButton { "TRACKS" }, mixerViewButton { "MIXER" };
+    bashui::ModPanel modPanel;
+    bashui::DiceButton diceButton;
+    juce::TextButton trackViewButton { "TRACKS" }, mixerViewButton { "MIXER" }, modViewButton { "MOD" };
+    int view = 0;   // 0 tracks, 1 mixer, 2 mod
     bool mixerView = false;
-    void setView (bool mixer);
+    void setView (int v);
     std::vector<juce::Component*> trackViewComponents();
     bash::EngineType shownEngine = bash::EngineType::Synth;
     void updateEnginePanel();
@@ -100,6 +105,8 @@ private:
     std::vector<std::unique_ptr<ButtonAttachment>> buttonAtts;
 
     juce::Rectangle<int> seqPanel, voicePanel;
+
+    bashui::DiceLocks diceLocks { proc };   // must stay last: unbinds before any knob is destroyed
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (BashEditor)
 };

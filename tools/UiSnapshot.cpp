@@ -41,6 +41,13 @@ int main (int argc, char** argv)
     {
         ed->showTrack (track - 1);
         if (argc > 6 && juce::String (argv[6]) == "mixer") ed->showMixer();
+        if (argc > 6 && juce::String (argv[6]) == "mod")
+        {
+            proc.matrix (track - 1).set (bash::ModDest::Cutoff, bash::ModSource::Lfo1, 0.6f);
+            proc.matrix (track - 1).set (bash::ModDest::Type, bash::ModSource::Life, 0.4f);
+            proc.matrix (track - 1).set (bash::ModDest::Density, bash::ModSource::Velocity, -0.3f);
+            ed->showMod();
+        }
     }
     const auto img = editor->createComponentSnapshot (editor->getLocalBounds(), true, 1.0f);
     juce::File out (juce::File::getCurrentWorkingDirectory().getChildFile (juce::String (argv[1])));

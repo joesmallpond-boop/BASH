@@ -6,6 +6,7 @@
 
 #include "bash/Drums.h"
 #include "bash/Fx.h"
+#include "bash/Modulation.h"
 #include "bash/MachineSynth.h"
 #include "bash/Scale.h"
 #include "bash/Sequencer.h"
@@ -48,6 +49,7 @@ namespace bash
         std::array<FxParams, 2> inserts {};
         float sendA = 0.0f, sendB = 0.0f; // post-fader sends to the two return buses
         bool  mute = false, solo = false;
+        float lifeRate = 0.08f;           // Hz, the track's Life drift speed
     };
 
     struct GlobalSettings
@@ -63,6 +65,7 @@ namespace bash
         std::array<float, 2>    returnLevel { 0.8f, 0.8f };
         std::array<FxParams, 2> masterFx {};
         bool   limiter     = true;
+        std::array<LfoParams, 2> lfo {};
     };
 
     struct Transport
@@ -137,6 +140,14 @@ namespace bash
             nullptr = mix into the main output. Buffers must hold the whole block and be zeroed. */
         void setDirectOutput (int t, float* left, float* right) { directOuts[(size_t) (2 * t)] = left; directOuts[(size_t) (2 * t + 1)] = right; }
         float trackLevelMeter (int t) const      { return trackPeak[(size_t) t].load(); }
+
+        // ---- modulation ----
+        ModMatrix& matrix (int t)                { return matrices[(size_t) t]; }
+        /** MIDI expression in (audio thread): Velocity/Aftertouch/ModWheel 0..1, PitchBend -1..1. */
+        void  midiExpression (ModSource s, float v) { expression[(size_t) s] = v; }
+        /** Current value of a source for track t (UI display), -1..1. */
+        float sourceValue (int t, ModSource s) const;
+        double lfoPhase (int i) const            { return lfoPhaseUi[(size_t) i].load(); }
         /** Slice currently playing on a slicer track (-1 if none) and its position in frames. */
         int    playingSlice (int t) const        { return sliceNow[(size_t) t].load(); }
         double playingFrame (int t) const        { return framePos[(size_t) t].load(); }
@@ -147,6 +158,7 @@ namespace bash
                           double ppq, double bpm, std::vector<MidiOut>& midiOut);
         void handleEvent (int t, const NoteEvent&);
         void mixTrack (int t, float* l, float* r, int n, int offsetInBlock, double bpm);
+        void applyModulation (int t);
 
         struct SliceStore
         {
@@ -195,6 +207,14 @@ namespace bash
         bool anySolo = false;
         std::array<float*, 2 * numTracks> directOuts {};
         std::array<std::atomic<float>, numTracks> trackPeak {};
+
+        std::array<TrackSettings, numTracks> live;   // modulated copy used while rendering a chunk
+        std::array<ModMatrix, numTracks> matrices;
+        std::array<Lfo, 2> lfos;
+        std::array<Life, numTracks> lifes;
+        std::array<float, numModSources> expression {};
+        std::array<std::atomic<float>, numModSources * numTracks> sourceUi {};
+        std::array<std::atomic<double>, 2> lfoPhaseUi {};
         std::vector<NoteEvent> events;
     };
 }
