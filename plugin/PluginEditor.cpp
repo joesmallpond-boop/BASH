@@ -4,7 +4,7 @@ using namespace bashui;
 
 namespace
 {
-    constexpr int editorW = 1040, editorH = 768;
+    constexpr int editorW = 1040, editorH = 792;
     constexpr int margin = 24;
 
     juce::String noteText (int note)
@@ -240,7 +240,11 @@ void StepView::mouseUp (const juce::MouseEvent& e)
 static void styleKnob (Knob& k, const juce::String& name)
 {
     k.slider.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
-    k.slider.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 70, 16);
+    k.slider.setColour (juce::Slider::textBoxTextColourId, colour::ink);
+    k.slider.setColour (juce::Slider::textBoxBackgroundColourId, juce::Colours::transparentBlack);
+    k.slider.setColour (juce::Slider::textBoxOutlineColourId, juce::Colours::transparentBlack);
+    k.slider.setColour (juce::Slider::textBoxHighlightColourId, colour::periwinkle);
+    k.slider.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 76, 18);
     k.slider.setRotaryParameters (juce::MathConstants<float>::pi * 1.25f, juce::MathConstants<float>::pi * 2.75f, true);
     k.label.setText (name, juce::dontSendNotification);
     k.label.setJustificationType (juce::Justification::centred);
@@ -402,7 +406,7 @@ void BashEditor::paint (juce::Graphics& g)
     g.setFont (juce::FontOptions (13.0f));
     g.drawText ("an all-in-one kalabash solution", margin + 2, 52, 260, 18, juce::Justification::centredLeft);
 
-    for (auto [r, title] : { std::pair { seqPanel, "SEQUENCER" }, std::pair { voicePanel, "VOICE  ·  acid test synth" } })
+    for (auto [r, title] : { std::pair { seqPanel, "SEQUENCER" }, std::pair { voicePanel, "VOICE  (acid test synth)" } })
     {
         g.setColour (colour::panel);
         g.fillRoundedRectangle (r.toFloat(), 14.0f);
@@ -442,7 +446,7 @@ void BashEditor::resized()
 
     // steps
     area.removeFromTop (12);
-    stepView.setBounds (area.removeFromTop (196));
+    stepView.setBounds (area.removeFromTop (176));
     auto buttons = area.removeFromTop (44).withTrimmedTop (8);
     regenButton.setBounds (buttons.removeFromLeft (130));
     buttons.removeFromLeft (8);
@@ -452,7 +456,7 @@ void BashEditor::resized()
 
     // sequencer panel
     area.removeFromTop (12);
-    seqPanel = area.removeFromTop (196);
+    seqPanel = area.removeFromTop (224);
     auto inner = seqPanel.reduced (16).withTrimmedTop (22);
     auto combos = inner.removeFromTop (52);
     onButton.setBounds (combos.removeFromLeft (110).removeFromBottom (30));
@@ -475,7 +479,7 @@ void BashEditor::resized()
 
     // voice panel
     area.removeFromTop (12);
-    voicePanel = area.removeFromTop (128);
+    voicePanel = area.removeFromTop (150);
     auto vInner = voicePanel.reduced (16).withTrimmedTop (18);
     for (auto& k : voiceKnobs) { placeKnob (*k, vInner.removeFromLeft (84)); vInner.removeFromLeft (8); }
 }

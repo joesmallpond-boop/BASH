@@ -49,6 +49,17 @@ namespace
         return r;
     }
 
+    // Float parameter that displays a sensible number of decimals.
+    std::unique_ptr<juce::AudioParameterFloat> floatParam (const juce::ParameterID& id, const juce::String& name,
+                                                           juce::NormalisableRange<float> range, float def,
+                                                           int decimals, const juce::String& suffix = {})
+    {
+        return std::make_unique<juce::AudioParameterFloat> (id, name, range, def,
+            juce::AudioParameterFloatAttributes()
+                .withLabel (suffix)
+                .withStringFromValueFunction ([decimals, suffix] (float v, int) { return juce::String (v, decimals) + suffix; }));
+    }
+
     float load (std::atomic<float>* p) { return p != nullptr ? p->load (std::memory_order_relaxed) : 0.0f; }
 }
 
@@ -72,10 +83,10 @@ APVTS::ParameterLayout BashProcessor::createLayout()
     auto global = std::make_unique<AudioProcessorParameterGroup> ("global", "Global", "|");
     global->addChild (std::make_unique<AudioParameterChoice> (ParameterID { "root", 1 },   "Key",   keyNames(), 0));
     global->addChild (std::make_unique<AudioParameterChoice> (ParameterID { "scale", 1 },  "Scale", namesOf (bash::allScales()), 0));
-    global->addChild (std::make_unique<AudioParameterFloat>  (ParameterID { "tempo", 1 },  "Tempo", NormalisableRange<float> (40.0f, 300.0f, 0.1f), 128.0f));
+    global->addChild (floatParam (ParameterID { "tempo", 1 },  "Tempo", NormalisableRange<float> (40.0f, 300.0f, 0.1f), 128.0f, 1, " bpm"));
     global->addChild (std::make_unique<AudioParameterBool>   (ParameterID { "sync", 1 },   "Host Sync", true));
     global->addChild (std::make_unique<AudioParameterBool>   (ParameterID { "play", 1 },   "Play", false));
-    global->addChild (std::make_unique<AudioParameterFloat>  (ParameterID { "master", 1 }, "Master", NormalisableRange<float> (0.0f, 1.0f), 0.8f));
+    global->addChild (floatParam (ParameterID { "master", 1 }, "Master", NormalisableRange<float> (0.0f, 1.0f), 0.8f, 2));
     layout.add (std::move (global));
 
     for (int t = 0; t < bash::numTracks; ++t)
@@ -86,27 +97,27 @@ APVTS::ParameterLayout BashProcessor::createLayout()
 
         g->addChild (std::make_unique<AudioParameterBool>   (id ("on"),        n + "On", t == 0));
         g->addChild (std::make_unique<AudioParameterChoice> (id ("algo"),      n + "Algorithm", algorithmNames(), t % 2));
-        g->addChild (std::make_unique<AudioParameterFloat>  (id ("type"),      n + "Type",    NormalisableRange<float> (0.0f, 1.0f), 0.15f));
-        g->addChild (std::make_unique<AudioParameterFloat>  (id ("density"),   n + "Density", NormalisableRange<float> (0.0f, 1.0f), 0.6f));
+        g->addChild (floatParam (id ("type"),      n + "Type",    NormalisableRange<float> (0.0f, 1.0f), 0.15f, 2));
+        g->addChild (floatParam (id ("density"),   n + "Density", NormalisableRange<float> (0.0f, 1.0f), 0.6f, 2));
         g->addChild (std::make_unique<AudioParameterInt>    (id ("steps"),     n + "Steps",   1, 256, 16));
         g->addChild (std::make_unique<AudioParameterChoice> (id ("cycle"),     n + "Cycle",   cycleNames(), 0));
         g->addChild (std::make_unique<AudioParameterInt>    (id ("offset"),    n + "Offset",  0, 255, 0));
         g->addChild (std::make_unique<AudioParameterChoice> (id ("direction"), n + "Direction", directionNames(), 0));
         g->addChild (std::make_unique<AudioParameterChoice> (id ("rate"),      n + "Rate",    rateNames(), 1));
-        g->addChild (std::make_unique<AudioParameterFloat>  (id ("accent"),    n + "Accent",  NormalisableRange<float> (0.0f, 1.0f), 0.6f));
-        g->addChild (std::make_unique<AudioParameterFloat>  (id ("gate"),      n + "Gate",    NormalisableRange<float> (0.05f, 2.0f), 0.5f));
+        g->addChild (floatParam (id ("accent"),    n + "Accent",  NormalisableRange<float> (0.0f, 1.0f), 0.6f, 2));
+        g->addChild (floatParam (id ("gate"),      n + "Gate",    NormalisableRange<float> (0.05f, 2.0f), 0.5f, 2));
         g->addChild (std::make_unique<AudioParameterInt>    (id ("octave"),    n + "Octave",  0, 6, 2));
         g->addChild (std::make_unique<AudioParameterBool>   (id ("scalelock"), n + "Scale Lock", true));
 
-        g->addChild (std::make_unique<AudioParameterFloat>  (id ("wave"),      n + "Wave",      NormalisableRange<float> (0.0f, 1.0f), t % 2 ? 1.0f : 0.0f));
-        g->addChild (std::make_unique<AudioParameterFloat>  (id ("cutoff"),    n + "Cutoff",    skewed (30.0f, 8000.0f, 500.0f), 380.0f));
-        g->addChild (std::make_unique<AudioParameterFloat>  (id ("reso"),      n + "Resonance", NormalisableRange<float> (0.0f, 1.0f), 0.72f));
-        g->addChild (std::make_unique<AudioParameterFloat>  (id ("envmod"),    n + "Env Mod",   NormalisableRange<float> (0.0f, 1.0f), 0.55f));
-        g->addChild (std::make_unique<AudioParameterFloat>  (id ("decay"),     n + "Decay",     skewed (0.02f, 2.0f, 0.3f), 0.3f));
-        g->addChild (std::make_unique<AudioParameterFloat>  (id ("drive"),     n + "Drive",     NormalisableRange<float> (0.0f, 1.0f), 0.35f));
-        g->addChild (std::make_unique<AudioParameterFloat>  (id ("glide"),     n + "Glide",     skewed (0.005f, 0.5f, 0.06f), 0.06f));
-        g->addChild (std::make_unique<AudioParameterFloat>  (id ("level"),     n + "Level",     NormalisableRange<float> (0.0f, 1.0f), 0.8f));
-        g->addChild (std::make_unique<AudioParameterFloat>  (id ("pan"),       n + "Pan",       NormalisableRange<float> (-1.0f, 1.0f), 0.0f));
+        g->addChild (floatParam (id ("wave"),      n + "Wave",      NormalisableRange<float> (0.0f, 1.0f), t % 2 ? 1.0f : 0.0f, 2));
+        g->addChild (floatParam (id ("cutoff"),    n + "Cutoff",    skewed (30.0f, 8000.0f, 500.0f), 380.0f, 0, " Hz"));
+        g->addChild (floatParam (id ("reso"),      n + "Resonance", NormalisableRange<float> (0.0f, 1.0f), 0.72f, 2));
+        g->addChild (floatParam (id ("envmod"),    n + "Env Mod",   NormalisableRange<float> (0.0f, 1.0f), 0.55f, 2));
+        g->addChild (floatParam (id ("decay"),     n + "Decay",     skewed (0.02f, 2.0f, 0.3f), 0.3f, 3, " s"));
+        g->addChild (floatParam (id ("drive"),     n + "Drive",     NormalisableRange<float> (0.0f, 1.0f), 0.35f, 2));
+        g->addChild (floatParam (id ("glide"),     n + "Glide",     skewed (0.005f, 0.5f, 0.06f), 0.06f, 3, " s"));
+        g->addChild (floatParam (id ("level"),     n + "Level",     NormalisableRange<float> (0.0f, 1.0f), 0.8f, 2));
+        g->addChild (floatParam (id ("pan"),       n + "Pan",       NormalisableRange<float> (-1.0f, 1.0f), 0.0f, 2));
 
         layout.add (std::move (g));
     }
