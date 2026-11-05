@@ -29,7 +29,7 @@ FxSlotUI::FxSlotUI (juce::AudioProcessorValueTreeState& s, const juce::String& p
         addAndMakeVisible (k->label);
         atts.push_back (std::make_unique<SliderAttachment> (apvts, prefix + id, k->slider));
     }
-    gnarl.slider.setColour (juce::Slider::rotarySliderFillColourId, colour::coral);
+    gnarl.slider.setColour (juce::Slider::rotarySliderFillColourId, colour::accent);
     refreshLabels();
 }
 
@@ -65,7 +65,7 @@ void LevelMeter::paint (juce::Graphics& g)
     const float db = juce::Decibels::gainToDecibels (level, -60.0f);
     const float frac = juce::jlimit (0.0f, 1.0f, (db + 60.0f) / 63.0f);
     auto lit = r.removeFromBottom (r.getHeight() * frac);
-    g.setColour (db > -1.0f ? colour::coral : colour::periwinkle);
+    g.setColour (db > -1.0f ? colour::accent : colour::accentDim);
     g.fillRoundedRectangle (lit, 3.0f);
 }
 
@@ -103,9 +103,9 @@ void MixerPanel::addCommon (Strip& s)
     addAndMakeVisible (s.name);
     s.fader.setSliderStyle (juce::Slider::LinearVertical);
     s.fader.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 60, 16);
-    s.fader.setColour (juce::Slider::trackColourId, colour::periwinkle);
+    s.fader.setColour (juce::Slider::trackColourId, colour::accentDim);
     s.fader.setColour (juce::Slider::backgroundColourId, colour::line);
-    s.fader.setColour (juce::Slider::thumbColourId, colour::coral);
+    s.fader.setColour (juce::Slider::thumbColourId, colour::accent);
     s.fader.setColour (juce::Slider::textBoxTextColourId, colour::ink);
     s.fader.setColour (juce::Slider::textBoxOutlineColourId, juce::Colours::transparentBlack);
     addAndMakeVisible (s.fader);
@@ -135,8 +135,8 @@ void MixerPanel::buildTrackStrip (Strip& s, int t)
     s.atts.push_back (std::make_unique<SliderAttachment> (apvts, BashProcessor::pid (t, "pan"), s.pan.slider));
     s.mute.setClickingTogglesState (true);
     s.solo.setClickingTogglesState (true);
-    s.mute.setColour (juce::TextButton::buttonOnColourId, colour::coral);
-    s.solo.setColour (juce::TextButton::buttonOnColourId, colour::mint.darker (0.1f));
+    s.mute.setColour (juce::TextButton::buttonOnColourId, colour::accent);
+    s.solo.setColour (juce::TextButton::buttonOnColourId, colour::active.darker (0.1f));
     addAndMakeVisible (s.mute); addAndMakeVisible (s.solo);
     s.buttonAtts.push_back (std::make_unique<ButtonAttachment> (apvts, BashProcessor::pid (t, "mute"), s.mute));
     s.buttonAtts.push_back (std::make_unique<ButtonAttachment> (apvts, BashProcessor::pid (t, "solo"), s.solo));
@@ -183,7 +183,7 @@ void MixerPanel::paint (juce::Graphics& g)
     for (int i = 0; i < n; ++i)
     {
         auto r = juce::Rectangle<float> ((float) i * w, 0.0f, w, (float) getHeight()).reduced (3.0f, 0.0f);
-        g.setColour (i >= bash::numTracks ? colour::iceBlue.withAlpha (0.45f) : colour::panel);
+        g.setColour (i >= bash::numTracks ? colour::raised.withAlpha (0.45f) : colour::panel);
         g.fillRoundedRectangle (r, 12.0f);
         g.setColour (colour::line);
         g.drawRoundedRectangle (r, 12.0f, 1.0f);

@@ -5,7 +5,7 @@ using namespace bashui;
 void DragChip::paint (juce::Graphics& g)
 {
     auto r = getLocalBounds().toFloat().reduced (1.0f);
-    g.setColour (busy ? colour::coral : pressed ? colour::periwinkle : colour::iceBlue);
+    g.setColour (busy ? colour::accent : pressed ? colour::accentDim : colour::raised);
     g.fillRoundedRectangle (r, r.getHeight() * 0.5f);
     g.setColour (colour::ink.withAlpha (0.25f));
     g.drawRoundedRectangle (r, r.getHeight() * 0.5f, 1.0f);

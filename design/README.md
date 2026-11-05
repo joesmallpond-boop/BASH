@@ -13,4 +13,4 @@ Reference: `ui-reference.png` (Joe, 5 Nov 2026). Applies to the final GUI pass.
 - Track / pattern selection as a row of 8 tabs plus a 2×8 pad grid; active pad filled amber, used pads dim amber, empty pads outlined.
 - Clean modern sans (Manrope / Inter-like), generous spacing, everything rounded.
 
-Milestone 1's light soft-club UI is a functional placeholder; the final pass replaces it with this.
+Implemented (Nov 2026): palette roles in plugin/UiCommon.h (background, panel, raised, line, ink, quiet, accent, accentDim, active) and the look-and-feel in plugin/PluginEditor.cpp. Change the palette there to re-theme everything.

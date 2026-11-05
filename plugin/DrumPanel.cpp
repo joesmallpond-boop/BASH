@@ -52,18 +52,19 @@ void DrumGrid::paint (juce::Graphics& g)
         auto r = cellBounds (c).reduced (3.0f);
         const auto cellData = proc.cell (c);
         juce::Colour fill = colour::panel;
-        if (cellData.kind == bash::DrumCell::Kind::Fm)     fill = colour::periwinkle.withAlpha (0.45f);
-        if (cellData.kind == bash::DrumCell::Kind::Sample) fill = colour::mint;
-        if (c == flash && juce::Time::getMillisecondCounter() - flashTime < 150) fill = colour::coral;
+        if (cellData.kind == bash::DrumCell::Kind::Fm)     fill = colour::accentDim.withAlpha (0.45f);
+        if (cellData.kind == bash::DrumCell::Kind::Sample) fill = colour::active;
+        if (c == selected) fill = colour::accent;
+        if (c == flash && juce::Time::getMillisecondCounter() - flashTime < 150) fill = colour::accent.brighter (0.4f);
         g.setColour (fill);
         g.fillRoundedRectangle (r, 8.0f);
 
         const bool inWindow = windowed && c >= ws && c < ws + wz;
-        g.setColour (c == hover ? colour::coral : c == selected ? colour::ink : inWindow ? colour::coral.withAlpha (0.6f) : colour::line);
+        g.setColour (c == hover ? colour::ink : inWindow ? colour::accent.withAlpha (0.7f) : colour::line);
         g.drawRoundedRectangle (r, 8.0f, c == selected || c == hover || inWindow ? 2.0f : 1.0f);
 
         const auto name = proc.cellName (c);
-        g.setColour (colour::ink.withAlpha (name.isEmpty() ? 0.3f : 0.9f));
+        g.setColour (c == selected ? colour::background : colour::ink.withAlpha (name.isEmpty() ? 0.3f : 0.9f));
         g.drawFittedText (name.isEmpty() ? juce::String (c + 1) : name, r.reduced (4.0f).toNearestInt(),
                           juce::Justification::centred, 2, 0.8f);
     }
@@ -142,20 +143,20 @@ void CellWaveform::setCell (int c)
 void CellWaveform::paint (juce::Graphics& g)
 {
     auto r = getLocalBounds().toFloat();
-    g.setColour (colour::iceBlue.withAlpha (0.35f));
+    g.setColour (colour::raised.withAlpha (0.35f));
     g.fillRoundedRectangle (r, 8.0f);
     if (peaks.empty()) return;
 
     const float w = r.getWidth(), mid = r.getCentreY(), half = r.getHeight() * 0.45f;
-    g.setColour (colour::mint);
+    g.setColour (colour::active);
     g.fillRect (juce::Rectangle<float> (start * w, 0.0f, (end - start) * w, r.getHeight()));
-    g.setColour (colour::periwinkle.darker (0.3f));
+    g.setColour (colour::accentDim.darker (0.3f));
     for (int x = 0; x < (int) w; ++x)
     {
         const float v = peaks[(size_t) std::min ((int) peaks.size() - 1, (int) ((float) x / w * (float) peaks.size()))];
         g.drawVerticalLine (x, mid - v * half, mid + v * half + 1.0f);
     }
-    g.setColour (colour::coral);
+    g.setColour (colour::accent);
     g.fillRect (juce::Rectangle<float> (start * w - 1.5f, 0.0f, 3.0f, r.getHeight()));
     g.fillRect (juce::Rectangle<float> (end * w - 1.5f, 0.0f, 3.0f, r.getHeight()));
 }
@@ -254,7 +255,7 @@ DrumPanel::DrumPanel (BashProcessor& p) : proc (p), grid (p), wave (p)
             selectCell (cell);
             proc.auditionCell (cell);
         };
-        b->setColour (juce::TextButton::buttonColourId, colour::iceBlue.withAlpha (0.5f));
+        b->setColour (juce::TextButton::buttonColourId, colour::raised.withAlpha (0.5f));
         addChildComponent (*b);
         startPoints.push_back (std::move (b));
     }

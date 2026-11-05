@@ -17,56 +17,64 @@ LookAndFeel::LookAndFeel()
 {
     setColour (juce::ResizableWindow::backgroundColourId, colour::background);
     setColour (juce::Label::textColourId, colour::ink);
-    setColour (juce::Slider::textBoxTextColourId, colour::ink);
+    setColour (juce::Slider::textBoxTextColourId, colour::accent);
     setColour (juce::Slider::textBoxOutlineColourId, juce::Colours::transparentBlack);
     setColour (juce::Slider::textBoxBackgroundColourId, juce::Colours::transparentBlack);
-    setColour (juce::Slider::textBoxHighlightColourId, colour::periwinkle);
-    setColour (juce::ComboBox::textColourId, colour::ink);
-    setColour (juce::ComboBox::backgroundColourId, colour::panel);
+    setColour (juce::Slider::textBoxHighlightColourId, colour::active);
+    setColour (juce::Slider::trackColourId, colour::accent);
+    setColour (juce::Slider::backgroundColourId, colour::line);
+    setColour (juce::Slider::thumbColourId, colour::accent);
+    setColour (juce::Slider::rotarySliderFillColourId, colour::accent);
+    setColour (juce::Slider::rotarySliderOutlineColourId, colour::line);
+    setColour (juce::ComboBox::textColourId, colour::accent);
+    setColour (juce::ComboBox::backgroundColourId, colour::raised);
     setColour (juce::ComboBox::outlineColourId, colour::line);
-    setColour (juce::ComboBox::arrowColourId, colour::quiet);
-    setColour (juce::PopupMenu::backgroundColourId, colour::panel);
+    setColour (juce::ComboBox::arrowColourId, colour::accent);
+    setColour (juce::PopupMenu::backgroundColourId, juce::Colour (0xff2a2a2a));
     setColour (juce::PopupMenu::textColourId, colour::ink);
-    setColour (juce::PopupMenu::highlightedBackgroundColourId, colour::periwinkle);
-    setColour (juce::PopupMenu::highlightedTextColourId, colour::ink);
-    setColour (juce::TextButton::buttonColourId, colour::panel);
-    setColour (juce::TextButton::buttonOnColourId, colour::periwinkle);
+    setColour (juce::PopupMenu::headerTextColourId, colour::quiet);
+    setColour (juce::PopupMenu::highlightedBackgroundColourId, colour::active);
+    setColour (juce::PopupMenu::highlightedTextColourId, colour::accent);
+    setColour (juce::TextButton::buttonColourId, colour::raised);
+    setColour (juce::TextButton::buttonOnColourId, colour::accent);
     setColour (juce::TextButton::textColourOffId, colour::ink);
-    setColour (juce::TextButton::textColourOnId, colour::ink);
+    setColour (juce::TextButton::textColourOnId, colour::background);
     setColour (juce::ToggleButton::textColourId, colour::ink);
-    setColour (juce::TextEditor::backgroundColourId, colour::panel);
-    setColour (juce::TextEditor::textColourId, colour::ink);
-    setColour (juce::TextEditor::highlightColourId, colour::periwinkle);
-    setColour (juce::CaretComponent::caretColourId, colour::ink);
+    setColour (juce::TextEditor::backgroundColourId, colour::raised);
+    setColour (juce::TextEditor::textColourId, colour::accent);
+    setColour (juce::TextEditor::highlightColourId, colour::active);
+    setColour (juce::TextEditor::outlineColourId, colour::line);
+    setColour (juce::CaretComponent::caretColourId, colour::accent);
+    setColour (juce::TooltipWindow::backgroundColourId, juce::Colour (0xff2a2a2a));
+    setColour (juce::TooltipWindow::textColourId, colour::ink);
+    setColour (juce::BubbleComponent::backgroundColourId, juce::Colour (0xff2a2a2a));
+    setColour (juce::BubbleComponent::outlineColourId, colour::line);
 }
 
 void LookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int w, int h, float pos,
-                                    float start, float end, juce::Slider&)
+                                    float start, float end, juce::Slider& s)
 {
-    const auto bounds = juce::Rectangle<float> ((float) x, (float) y, (float) w, (float) h).reduced (6.0f);
+    // thick amber arc over a dark track, no pointer (design reference)
+    const auto bounds = juce::Rectangle<float> ((float) x, (float) y, (float) w, (float) h).reduced (4.0f);
     const float radius = juce::jmin (bounds.getWidth(), bounds.getHeight()) * 0.5f;
     const auto centre = bounds.getCentre();
+    const float stroke = juce::jlimit (3.0f, 9.0f, radius * 0.24f);
+    const float arcR = radius - stroke * 0.5f;
     const float angle = start + pos * (end - start);
-    const float stroke = 4.0f;
+    const auto fill = s.isEnabled() ? s.findColour (juce::Slider::rotarySliderFillColourId) : colour::line;
 
     juce::Path track;
-    track.addCentredArc (centre.x, centre.y, radius - stroke, radius - stroke, 0.0f, start, end, true);
+    track.addCentredArc (centre.x, centre.y, arcR, arcR, 0.0f, start, end, true);
     g.setColour (colour::line);
     g.strokePath (track, juce::PathStrokeType (stroke, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
 
+    // bipolar parameters (range below and above zero) grow from the top
+    const bool bipolar = s.getMinimum() < 0.0 && s.getMaximum() > 0.0;
+    const float from = bipolar ? start + (float) s.valueToProportionOfLength (0.0) * (end - start) : start;
     juce::Path value;
-    value.addCentredArc (centre.x, centre.y, radius - stroke, radius - stroke, 0.0f, start, angle, true);
-    g.setColour (colour::periwinkle);
+    value.addCentredArc (centre.x, centre.y, arcR, arcR, 0.0f, juce::jmin (from, angle), juce::jmax (from, angle), true);
+    g.setColour (fill);
     g.strokePath (value, juce::PathStrokeType (stroke, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
-
-    g.setColour (colour::panel);
-    g.fillEllipse (juce::Rectangle<float> (radius * 1.2f, radius * 1.2f).withCentre (centre));
-    g.setColour (colour::line);
-    g.drawEllipse (juce::Rectangle<float> (radius * 1.2f, radius * 1.2f).withCentre (centre), 1.0f);
-
-    const auto dot = centre.getPointOnCircumference (radius * 0.42f, angle);
-    g.setColour (colour::coral);
-    g.fillEllipse (juce::Rectangle<float> (6.0f, 6.0f).withCentre (dot));
 }
 
 void LookAndFeel::drawButtonBackground (juce::Graphics& g, juce::Button& b, const juce::Colour& base,
@@ -74,12 +82,15 @@ void LookAndFeel::drawButtonBackground (juce::Graphics& g, juce::Button& b, cons
 {
     auto r = b.getLocalBounds().toFloat().reduced (1.0f);
     auto c = b.getToggleState() ? b.findColour (juce::TextButton::buttonOnColourId) : base;
-    if (down)             c = c.darker (0.08f);
-    else if (highlighted) c = c.brighter (0.04f).overlaidWith (colour::iceBlue.withAlpha (0.25f));
+    if (down)             c = c.darker (0.15f);
+    else if (highlighted) c = c.brighter (0.08f);
     g.setColour (c);
-    g.fillRoundedRectangle (r, 10.0f);
-    g.setColour (colour::line);
-    g.drawRoundedRectangle (r, 10.0f, 1.0f);
+    g.fillRoundedRectangle (r, 8.0f);
+    if (! b.getToggleState())
+    {
+        g.setColour (colour::line);
+        g.drawRoundedRectangle (r, 8.0f, 1.0f);
+    }
 }
 
 void LookAndFeel::drawComboBox (juce::Graphics& g, int w, int h, bool, int, int, int, int, juce::ComboBox& box)
@@ -92,27 +103,27 @@ void LookAndFeel::drawComboBox (juce::Graphics& g, int w, int h, bool, int, int,
 
     juce::Path chevron;
     const float cx = (float) w - 14.0f, cy = (float) h * 0.5f;
-    chevron.startNewSubPath (cx - 4.0f, cy - 2.0f);
-    chevron.lineTo (cx, cy + 2.0f);
-    chevron.lineTo (cx + 4.0f, cy - 2.0f);
-    g.setColour (colour::quiet);
-    g.strokePath (chevron, juce::PathStrokeType (1.5f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+    chevron.startNewSubPath (cx - 4.5f, cy - 2.0f);
+    chevron.lineTo (cx, cy + 2.5f);
+    chevron.lineTo (cx + 4.5f, cy - 2.0f);
+    g.setColour (colour::accent);
+    g.strokePath (chevron, juce::PathStrokeType (1.8f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
 }
 
 void LookAndFeel::drawToggleButton (juce::Graphics& g, juce::ToggleButton& b, bool highlighted, bool)
 {
     auto r = b.getLocalBounds().toFloat().reduced (1.0f);
     const bool on = b.getToggleState();
-    g.setColour (on ? colour::mint : (highlighted ? colour::iceBlue.withAlpha (0.4f) : colour::panel));
+    g.setColour (on ? colour::active : (highlighted ? colour::raised.brighter (0.06f) : colour::raised));
     g.fillRoundedRectangle (r, r.getHeight() * 0.5f);
-    g.setColour (on ? colour::mint.darker (0.15f) : colour::line);
+    g.setColour (on ? colour::accentDim : colour::line);
     g.drawRoundedRectangle (r, r.getHeight() * 0.5f, 1.0f);
 
     const auto dot = juce::Rectangle<float> (8.0f, 8.0f).withCentre ({ r.getX() + 14.0f, r.getCentreY() });
-    g.setColour (on ? colour::coral : colour::line);
+    g.setColour (on ? colour::accent : colour::quiet.withAlpha (0.5f));
     g.fillEllipse (dot);
 
-    g.setColour (colour::ink);
+    g.setColour (on ? colour::accent : colour::ink);
     g.setFont (juce::FontOptions (13.0f));
     g.drawText (b.getButtonText(), r.withTrimmedLeft (24.0f), juce::Justification::centredLeft);
 }
@@ -163,7 +174,7 @@ void StepView::paint (juce::Graphics& g)
         auto cell = cellBounds (i).reduced (3.0f);
         const bool isPlayhead = running && first + (uint32_t) i == playIdx;
 
-        g.setColour (isPlayhead ? colour::mint : colour::panel);
+        g.setColour (isPlayhead ? colour::active : colour::panel);
         g.fillRoundedRectangle (cell, 8.0f);
         g.setColour (i % 4 == 0 ? colour::line.darker (0.1f) : colour::line);
         g.drawRoundedRectangle (cell, 8.0f, 1.0f);
@@ -178,7 +189,7 @@ void StepView::paint (juce::Graphics& g)
                 : juce::jlimit (0.12f, 0.92f, juce::jmap ((float) (s.note - baseNote), -12.0f, 24.0f, 0.12f, 0.92f));
             auto bar = inner.withTrimmedTop (16.0f);
             bar = bar.removeFromBottom (bar.getHeight() * frac);
-            g.setColour (s.accent ? colour::coral : colour::periwinkle);
+            g.setColour (s.accent ? colour::accent : colour::accentDim);
             g.fillRoundedRectangle (bar, 5.0f);
 
             g.setColour (colour::ink);
@@ -221,7 +232,7 @@ void StepView::paint (juce::Graphics& g)
 
         if (mask != 0)
         {
-            g.setColour (colour::ink);
+            g.setColour (colour::accent);
             g.drawRoundedRectangle (cell.reduced (0.5f), 8.0f, 2.0f);
             g.fillEllipse (juce::Rectangle<float> (6.0f, 6.0f).withPosition (cell.getX() + 5.0f, cell.getY() + 5.0f));
         }
@@ -287,7 +298,8 @@ BashView::BashView (BashProcessor& p)
     addAndMakeVisible (stepView);
     regenButton.onClick = [this] { proc.regenerate (currentTrack); stepView.refresh(); };
     clearButton.onClick = [this] { proc.clearLocks (currentTrack); stepView.refresh(); };
-    regenButton.setColour (juce::TextButton::buttonColourId, colour::coral.withAlpha (0.85f));
+    regenButton.setColour (juce::TextButton::buttonColourId, colour::accent);
+    regenButton.setColour (juce::TextButton::textColourOffId, colour::background);
     addAndMakeVisible (regenButton);
     addAndMakeVisible (clearButton);
     addChildComponent (clearMidiButton);
@@ -462,7 +474,7 @@ void BashView::timerCallback()
     {
         const bool on = *proc.apvts.getRawParameterValue (BashProcessor::pid (t, "on")) > 0.5f;
         auto& b = trackButtons[(size_t) t];
-        b.setColour (juce::TextButton::buttonColourId, on ? colour::mint : colour::panel);
+        b.setColour (juce::TextButton::buttonColourId, on ? colour::active : colour::panel);
     }
 }
 

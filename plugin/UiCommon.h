@@ -6,18 +6,18 @@
 
 namespace bashui
 {
-    // Soft-club palette shared with the Decompression Tapes / BASH VIDEO DESTROYER family.
+    // Charcoal + amber (see design/ui-reference.png): one accent colour, dimmed for secondary states.
     namespace colour
     {
-        const juce::Colour background { 0xffeef3fa };   // ice white
-        const juce::Colour panel      { 0xffffffff };
-        const juce::Colour mint       { 0xffcdefe3 };
-        const juce::Colour periwinkle { 0xffa9b4f2 };
-        const juce::Colour iceBlue    { 0xffcfe6f7 };
-        const juce::Colour coral      { 0xffff7a6b };
-        const juce::Colour ink        { 0xff2a2f45 };
-        const juce::Colour quiet      { 0xff7a8199 };
-        const juce::Colour line       { 0xffdde3ee };
+        const juce::Colour background { 0xff1d1d1d };   // window
+        const juce::Colour panel      { 0xff252525 };   // panels, cells
+        const juce::Colour raised     { 0xff2e2e2e };   // wells, inactive buttons, waveform beds
+        const juce::Colour line       { 0xff3a3a3a };   // borders, knob tracks, grid lines
+        const juce::Colour ink        { 0xffe9e6df };   // main text
+        const juce::Colour quiet      { 0xff8b8a86 };   // labels
+        const juce::Colour accent     { 0xffffb800 };   // amber: values, selection, accents, playhead
+        const juce::Colour accentDim  { 0xff8a6508 };   // dim amber: normal steps, inactive fills
+        const juce::Colour active     { 0xff4a3910 };   // dark amber: toggled-on backgrounds, playhead cell
     }
 
     class LookAndFeel : public juce::LookAndFeel_V4
@@ -42,10 +42,10 @@ namespace bashui
     inline void styleKnob (Knob& k, const juce::String& name)
     {
         k.slider.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
-        k.slider.setColour (juce::Slider::textBoxTextColourId, colour::ink);
+        k.slider.setColour (juce::Slider::textBoxTextColourId, colour::accent);
         k.slider.setColour (juce::Slider::textBoxBackgroundColourId, juce::Colours::transparentBlack);
         k.slider.setColour (juce::Slider::textBoxOutlineColourId, juce::Colours::transparentBlack);
-        k.slider.setColour (juce::Slider::textBoxHighlightColourId, colour::periwinkle);
+        k.slider.setColour (juce::Slider::textBoxHighlightColourId, colour::active);
         k.slider.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 76, 18);
         k.slider.setRotaryParameters (juce::MathConstants<float>::pi * 1.25f, juce::MathConstants<float>::pi * 2.75f, true);
         k.label.setText (name, juce::dontSendNotification);

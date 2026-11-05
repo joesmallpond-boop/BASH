@@ -71,9 +71,9 @@ int WaveformView::markerNear (float x) const
 void WaveformView::paint (juce::Graphics& g)
 {
     auto r = getLocalBounds().toFloat();
-    g.setColour (colour::iceBlue.withAlpha (0.35f));
+    g.setColour (colour::raised.withAlpha (0.35f));
     g.fillRoundedRectangle (r, 10.0f);
-    g.setColour (dropHover ? colour::coral : colour::line);
+    g.setColour (dropHover ? colour::accent : colour::line);
     g.drawRoundedRectangle (r.reduced (0.5f), 10.0f, dropHover ? 2.0f : 1.0f);
 
     if (shown == nullptr || peakMin.empty())
@@ -95,7 +95,7 @@ void WaveformView::paint (juce::Graphics& g)
     {
         const size_t ws = std::min<size_t> (params.windowStart, slices.size() - 1);
         const size_t we = std::min<size_t> (ws + params.windowSize, slices.size());
-        g.setColour (colour::mint.withAlpha (0.8f));
+        g.setColour (colour::active.withAlpha (0.8f));
         const float x0 = xForFrame (slices[ws]), x1 = xForFrame (sliceEnd (we - 1));
         g.fillRect (juce::Rectangle<float> (x0, 0.0f, x1 - x0, (float) getHeight()));
     }
@@ -103,14 +103,14 @@ void WaveformView::paint (juce::Graphics& g)
     // playing slice
     if (playing >= 0 && playing < (int) slices.size() && playFrame >= 0.0)
     {
-        g.setColour (colour::coral.withAlpha (0.18f));
+        g.setColour (colour::accent.withAlpha (0.18f));
         const float x0 = xForFrame (slices[(size_t) playing]), x1 = xForFrame (sliceEnd ((size_t) playing));
         g.fillRect (juce::Rectangle<float> (x0, 0.0f, x1 - x0, (float) getHeight()));
     }
 
     // waveform
     const float mid = r.getCentreY(), half = r.getHeight() * 0.44f;
-    g.setColour (colour::periwinkle.darker (0.25f));
+    g.setColour (colour::accentDim.darker (0.25f));
     const int w = getWidth();
     for (int x = 0; x < w; ++x)
     {
@@ -139,7 +139,7 @@ void WaveformView::paint (juce::Graphics& g)
     // playhead
     if (playFrame >= 0.0)
     {
-        g.setColour (colour::coral);
+        g.setColour (colour::accent);
         const float x = xForFrame (playFrame);
         g.drawLine (x, 0.0f, x, (float) getHeight(), 2.0f);
     }
@@ -234,8 +234,8 @@ SamplerPanel::SamplerPanel (BashProcessor& p) : proc (p), wave (p)
     sensitivity.setRange (0.0, 100.0, 1.0);
     sensitivity.setValue (50.0, juce::dontSendNotification);
     sensitivity.setTextBoxStyle (juce::Slider::TextBoxRight, false, 34, 20);
-    sensitivity.setColour (juce::Slider::trackColourId, colour::periwinkle);
-    sensitivity.setColour (juce::Slider::thumbColourId, colour::coral);
+    sensitivity.setColour (juce::Slider::trackColourId, colour::accentDim);
+    sensitivity.setColour (juce::Slider::thumbColourId, colour::accent);
     sensitivity.setColour (juce::Slider::backgroundColourId, colour::line);
     sensitivity.setColour (juce::Slider::textBoxTextColourId, colour::ink);
     sensitivity.setColour (juce::Slider::textBoxOutlineColourId, juce::Colours::transparentBlack);

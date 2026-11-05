@@ -71,6 +71,10 @@ Full spec: *BASH! — Software Requirements Specification* (Claude doc).
 
 - `m4l/BASH Key Lock.amxd`: put it before BASH! on the track and BASH! follows the set's key and scale (any Live scale maps to BASH!'s nearest). See `m4l/README.md`
 
+**Final UI pass** ✅
+
+- Charcoal and amber, after the reference in `design/`: thick amber arc knobs with amber values, amber-on-dark menus, solid amber selection, dim amber steps and pads, locked steps outlined in amber, the die in the top-right corner
+
 Next: modulation, Life, Roll the Dice, mixer + FX → MIDI import/export → iPad → Max for Live companion.
 
 ## Getting builds

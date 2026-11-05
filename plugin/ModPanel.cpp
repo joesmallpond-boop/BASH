@@ -6,7 +6,7 @@ using namespace bashui;
 void LfoView::paint (juce::Graphics& g)
 {
     auto r = getLocalBounds().toFloat().reduced (2.0f);
-    g.setColour (colour::iceBlue.withAlpha (0.35f));
+    g.setColour (colour::raised.withAlpha (0.35f));
     g.fillRoundedRectangle (r, 8.0f);
     g.setColour (colour::line);
     g.drawHorizontalLine ((int) r.getCentreY(), r.getX(), r.getRight());
@@ -25,14 +25,14 @@ void LfoView::paint (juce::Graphics& g)
         const float y = r.getCentreY() - v * r.getHeight() * 0.4f;
         if (i == 0) p.startNewSubPath (x, y); else p.lineTo (x, y);
     }
-    g.setColour (colour::periwinkle.darker (0.2f));
+    g.setColour (colour::accentDim.darker (0.2f));
     g.strokePath (p, juce::PathStrokeType (2.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
 
     const double ph = proc.lfoPhase (lfo);
     const float v = proc.modSourceValue (0, lfo == 0 ? bash::ModSource::Lfo1 : bash::ModSource::Lfo2);
     const float x = r.getX() + r.getWidth() * (float) ph;
     const float y = r.getCentreY() - v * r.getHeight() * 0.4f;
-    g.setColour (colour::coral);
+    g.setColour (colour::accent);
     g.fillEllipse (juce::Rectangle<float> (10.0f, 10.0f).withCentre ({ x, y }));
 }
 
@@ -66,7 +66,7 @@ void MatrixGrid::paint (juce::Graphics& g)
         auto bar = top.reduced (10.0f, 4.0f);
         g.setColour (colour::line);
         g.fillRoundedRectangle (bar, 3.0f);
-        g.setColour (colour::coral);
+        g.setColour (colour::accent);
         const float cx = bar.getCentreX(), half = bar.getWidth() * 0.5f;
         g.fillRect (juce::Rectangle<float> (std::min (cx, cx + v * half), bar.getY(), std::abs (v * half), bar.getHeight()));
     }
@@ -90,7 +90,7 @@ void MatrixGrid::paint (juce::Graphics& g)
             if (std::abs (a) > 0.0f)
             {
                 const float cx = c.getCentreX(), half = c.getWidth() * 0.5f;
-                g.setColour (a > 0.0f ? colour::periwinkle : colour::coral.withAlpha (0.8f));
+                g.setColour (a > 0.0f ? colour::accentDim : colour::accent.withAlpha (0.8f));
                 g.fillRoundedRectangle (juce::Rectangle<float> (std::min (cx, cx + a * half), c.getY(), std::abs (a * half), c.getHeight()), 3.0f);
                 g.setColour (colour::ink);
                 g.setFont (juce::FontOptions (10.5f, juce::Font::bold));
@@ -196,7 +196,7 @@ void ModPanel::paint (juce::Graphics& g)
 
     // Life trace
     auto r = lifeTraceArea.toFloat();
-    g.setColour (colour::iceBlue.withAlpha (0.35f));
+    g.setColour (colour::raised.withAlpha (0.35f));
     g.fillRoundedRectangle (r, 8.0f);
     juce::Path p;
     for (size_t i = 0; i < lifeTrace.size(); ++i)
@@ -205,7 +205,7 @@ void ModPanel::paint (juce::Graphics& g)
         const float y = r.getCentreY() - lifeTrace[i] * r.getHeight() * 0.42f;
         if (i == 0) p.startNewSubPath (x, y); else p.lineTo (x, y);
     }
-    g.setColour (colour::periwinkle.darker (0.2f));
+    g.setColour (colour::accentDim.darker (0.2f));
     g.strokePath (p, juce::PathStrokeType (2.0f));
 }
 
@@ -249,11 +249,11 @@ void DiceButton::paint (juce::Graphics& g)
     if (pressed) r = r.reduced (2.0f);
     g.setColour (colour::panel);
     g.fillRoundedRectangle (r, 9.0f);
-    g.setColour (colour::ink);
+    g.setColour (colour::accent);
     g.drawRoundedRectangle (r, 9.0f, 2.0f);
     const float d = r.getWidth() * 0.16f;
     auto pip = [&] (float fx, float fy) { g.fillEllipse (juce::Rectangle<float> (d, d).withCentre ({ r.getX() + r.getWidth() * fx, r.getY() + r.getHeight() * fy })); };
-    g.setColour (colour::coral);
+    g.setColour (colour::accent);
     switch (face)
     {
         case 1: pip (0.5f, 0.5f); break;
@@ -343,7 +343,7 @@ struct DiceLocks::Listener : public juce::MouseListener
             update();
         });
     }
-    void update() { label.setColour (juce::Label::textColourId, proc.diceLocked.contains (id) ? colour::coral : colour::quiet); }
+    void update() { label.setColour (juce::Label::textColourId, proc.diceLocked.contains (id) ? colour::accent : colour::quiet); }
 
     BashProcessor& proc;
     juce::Slider& slider;
