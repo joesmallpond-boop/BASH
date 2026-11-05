@@ -4,7 +4,6 @@ using namespace bashui;
 
 namespace
 {
-    constexpr int editorW = 1040, editorH = 944;
     constexpr int margin = 24;
 
     juce::String noteText (int note)
@@ -255,8 +254,8 @@ void StepView::mouseUp (const juce::MouseEvent& e)
 }
 
 // ============================================================================
-BashEditor::BashEditor (BashProcessor& p)
-    : AudioProcessorEditor (&p), proc (p), stepView (p), samplerPanel (p), synthPanel (p), drumPanel (p), mixerPanel (p), modPanel (p), diceButton (p)
+BashView::BashView (BashProcessor& p)
+    : proc (p), stepView (p), samplerPanel (p), synthPanel (p), drumPanel (p), mixerPanel (p), modPanel (p), diceButton (p)
 {
     setLookAndFeel (&lnf);
     auto& apvts = proc.apvts;
@@ -346,17 +345,17 @@ BashEditor::BashEditor (BashProcessor& p)
     trackViewButton.setToggleState (true, juce::dontSendNotification);
 
     selectTrack (0);
-    setSize (editorW, editorH);
+    setSize (designWidth, designHeight);
     startTimerHz (30);
 }
 
-BashEditor::~BashEditor()
+BashView::~BashView()
 {
     stopTimer();
     setLookAndFeel (nullptr);
 }
 
-std::vector<juce::Component*> BashEditor::trackViewComponents()
+std::vector<juce::Component*> BashView::trackViewComponents()
 {
     std::vector<juce::Component*> c { &stepView, &regenButton, &clearButton, &hint, &onButton, &scaleLockButton,
                                       &engineBox, &algoBox, &cycleBox, &directionBox, &rateBox,
@@ -365,7 +364,7 @@ std::vector<juce::Component*> BashEditor::trackViewComponents()
     return c;
 }
 
-void BashEditor::setView (int v)
+void BashView::setView (int v)
 {
     view = v;
     const bool mixer = v != 0;   // anything but the track view hides the track controls
@@ -389,7 +388,7 @@ void BashEditor::setView (int v)
     repaint();
 }
 
-void BashEditor::selectTrack (int t)
+void BashView::selectTrack (int t)
 {
     if (view == 1) setView (0);
     currentTrack = t;
@@ -409,7 +408,7 @@ void BashEditor::selectTrack (int t)
     updateEnginePanel();
 }
 
-void BashEditor::bindTrack()
+void BashView::bindTrack()
 {
     auto& apvts = proc.apvts;
     knobAtts.clear(); comboAtts.clear(); buttonAtts.clear();
@@ -433,7 +432,7 @@ void BashEditor::bindTrack()
         knobAtts.push_back (std::make_unique<SliderAttachment> (apvts, id (seqKnobIds[i].toRawUTF8()), seqKnobs[i]->slider));
 }
 
-void BashEditor::updateEnginePanel()
+void BashView::updateEnginePanel()
 {
     shownEngine = proc.engineType (currentTrack);
     if (mixerView) return;
@@ -443,7 +442,7 @@ void BashEditor::updateEnginePanel()
     repaint();
 }
 
-void BashEditor::timerCallback()
+void BashView::timerCallback()
 {
     clearMidiButton.setVisible (view == 0 && proc.hasMotif (currentTrack));
     if (proc.engineType (currentTrack) != shownEngine)
@@ -467,7 +466,7 @@ void BashEditor::timerCallback()
     }
 }
 
-void BashEditor::paint (juce::Graphics& g)
+void BashView::paint (juce::Graphics& g)
 {
     g.fillAll (colour::background);
 
@@ -492,7 +491,7 @@ void BashEditor::paint (juce::Graphics& g)
     }
 }
 
-void BashEditor::resized()
+void BashView::resized()
 {
     auto area = getLocalBounds().reduced (margin, 0);
 
@@ -569,4 +568,34 @@ void BashEditor::resized()
     samplerPanel.setBounds (voicePanel.reduced (16).withTrimmedTop (22));
     synthPanel.setBounds (voicePanel.reduced (16).withTrimmedTop (22));
     drumPanel.setBounds (voicePanel.reduced (16).withTrimmedTop (22));
+}
+
+// ============================================================================
+BashEditor::BashEditor (BashProcessor& p) : AudioProcessorEditor (&p), view (p)
+{
+    addAndMakeVisible (view);
+    setResizable (true, true);
+    setResizeLimits (BashView::designWidth / 2, BashView::designHeight / 2,
+                     BashView::designWidth * 2, BashView::designHeight * 2);
+    if (auto* c = getConstrainer())
+        c->setFixedAspectRatio ((double) BashView::designWidth / BashView::designHeight);
+   #if JUCE_IOS
+    setSize (BashView::designWidth * 3 / 4, BashView::designHeight * 3 / 4);
+   #else
+    setSize (BashView::designWidth, BashView::designHeight);
+   #endif
+}
+
+void BashEditor::paint (juce::Graphics& g)
+{
+    g.fillAll (bashui::colour::background);
+}
+
+void BashEditor::resized()
+{
+    const float scale = juce::jmin ((float) getWidth() / BashView::designWidth, (float) getHeight() / BashView::designHeight);
+    const float x = ((float) getWidth() - BashView::designWidth * scale) * 0.5f;
+    const float y = ((float) getHeight() - BashView::designHeight * scale) * 0.5f;
+    view.setBounds (0, 0, BashView::designWidth, BashView::designHeight);
+    view.setTransform (juce::AffineTransform::scale (scale).translated (x, y));
 }

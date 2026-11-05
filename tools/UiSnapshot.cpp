@@ -49,6 +49,8 @@ int main (int argc, char** argv)
             ed->showMod();
         }
     }
+    if (auto* sc = std::getenv ("BASH_SNAPSHOT_WIDTH"))
+        editor->setSize (juce::String (sc).getIntValue(), juce::String (sc).getIntValue() * 944 / 1040);
     const auto img = editor->createComponentSnapshot (editor->getLocalBounds(), true, 1.0f);
     juce::File out (juce::File::getCurrentWorkingDirectory().getChildFile (juce::String (argv[1])));
     out.deleteFile();

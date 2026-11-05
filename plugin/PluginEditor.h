@@ -60,11 +60,15 @@ namespace bashui
 
 }
 
-class BashEditor : public juce::AudioProcessorEditor, private juce::Timer
+/** The whole BASH! interface at its design size (designWidth x designHeight).
+    BashEditor scales it to whatever size the host or iPad gives it. */
+class BashView : public juce::Component, private juce::Timer
 {
 public:
-    explicit BashEditor (BashProcessor&);
-    ~BashEditor() override;
+    static constexpr int designWidth = 1040, designHeight = 944;
+
+    explicit BashView (BashProcessor&);
+    ~BashView() override;
 
     void paint (juce::Graphics&) override;
     void resized() override;
@@ -127,5 +131,21 @@ private:
 
     bashui::DiceLocks diceLocks { proc };   // must stay last: unbinds before any knob is destroyed
 
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (BashView)
+};
+
+class BashEditor : public juce::AudioProcessorEditor
+{
+public:
+    explicit BashEditor (BashProcessor&);
+    void resized() override;
+    void paint (juce::Graphics&) override;
+
+    void showTrack (int t) { view.showTrack (t); }
+    void showMixer()       { view.showMixer(); }
+    void showMod()         { view.showMod(); }
+
+private:
+    BashView view;
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (BashEditor)
 };
