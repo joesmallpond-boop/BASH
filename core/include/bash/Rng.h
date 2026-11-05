@@ -42,7 +42,7 @@ namespace bash
         {
             rhythm = 0x1001, rhythmJitter, pitchPick, pitchChaos, pitchChaosRange,
             chromatic, chromaticAmount, octaveUp, octaveDown, accent, slide,
-            gateVar, direction, reseed
+            gateVar, direction, reseed, slicePick, sliceChaos
         };
     }
 }

@@ -103,6 +103,30 @@ namespace bash
         const float gv = (unitFloat (seed, i, salt::gateVar) - 0.5f) * t;
         s.gate = std::clamp (p.gate * (1.0f + gv), 0.05f, 2.0f);
         s.velocity = velocityFor (s.accent, p.accentAmount);
+
+        // Slice choice (sampler tracks)
+        if (p.sliceCount > 0)
+        {
+            const uint32_t n = p.sliceCount;
+            const bool wild = unitFloat (seed, i, salt::sliceChaos) < t;
+            switch (p.sliceMode)
+            {
+                case SliceMode::Bounce:
+                    s.slice = (int) uniformInt (seed, i, salt::slicePick, n);
+                    break;
+                case SliceMode::Sequential:
+                    s.slice = (int) (wild ? uniformInt (seed, i, salt::slicePick, n) : i % n);
+                    break;
+                case SliceMode::Window:
+                default:
+                {
+                    const uint32_t ws = std::min (p.windowStart, n - 1);
+                    const uint32_t wz = std::clamp<uint32_t> (p.windowSize, 1u, n - ws);
+                    s.slice = (int) (ws + (wild ? uniformInt (seed, i, salt::slicePick, wz) : i % wz));
+                    break;
+                }
+            }
+        }
         return s;
     }
 
@@ -118,6 +142,8 @@ namespace bash
             if (l.mask & lockbit::accent) s.accent = l.value.accent;
             if (l.mask & lockbit::slide)  s.slide  = l.value.slide;
             if (l.mask & lockbit::gate)   s.gate   = l.value.gate;
+            if ((l.mask & lockbit::slice) && p.sliceCount > 0)
+                s.slice = std::clamp (l.value.slice, 0, (int) p.sliceCount - 1);
             s.velocity = velocityFor (s.accent, p.accentAmount);
         }
         return s;
@@ -152,6 +178,7 @@ namespace bash
         if (mask & lockbit::accent) l.value.accent = value.accent;
         if (mask & lockbit::slide)  l.value.slide  = value.slide;
         if (mask & lockbit::gate)   l.value.gate   = value.gate;
+        if (mask & lockbit::slice)  l.value.slice  = value.slice;
         l.mask |= mask;
     }
 
@@ -172,10 +199,11 @@ namespace bash
     std::string Pattern::serialise() const
     {
         std::ostringstream o;
-        o << "bashpat1 " << seed << ' ' << locks.size();
+        o << "bashpat2 " << seed << ' ' << locks.size();
         for (auto& [idx, l] : locks)
             o << ' ' << idx << ' ' << (int) l.mask << ' ' << (int) l.value.active << ' ' << l.value.note
-              << ' ' << (int) l.value.accent << ' ' << (int) l.value.slide << ' ' << l.value.gate;
+              << ' ' << (int) l.value.accent << ' ' << (int) l.value.slide << ' ' << l.value.gate
+              << ' ' << l.value.slice;
         return o.str();
     }
 
@@ -185,19 +213,23 @@ namespace bash
         std::string tag;
         uint64_t s = 0;
         size_t n = 0;
-        if (! (in >> tag >> s >> n) || tag != "bashpat1")
+        if (! (in >> tag >> s >> n) || (tag != "bashpat1" && tag != "bashpat2"))
             return false;
+        const bool hasSlice = tag == "bashpat2";
 
         std::map<uint32_t, StepLock> loaded;
         for (size_t k = 0; k < n; ++k)
         {
             uint32_t idx; int mask, a, note, acc, sl; float g;
+            int slice = 0;
             if (! (in >> idx >> mask >> a >> note >> acc >> sl >> g))
+                return false;
+            if (hasSlice && ! (in >> slice))
                 return false;
             StepLock l;
             l.mask = (uint8_t) mask;
             l.value.active = a != 0; l.value.note = note;
-            l.value.accent = acc != 0; l.value.slide = sl != 0; l.value.gate = g;
+            l.value.accent = acc != 0; l.value.slide = sl != 0; l.value.gate = g; l.value.slice = slice;
             loaded[idx] = l;
         }
         seed = s;
@@ -274,7 +306,7 @@ namespace bash
             }
             else
             {
-                out.push_back ({ at, true, s.note, s.velocity, legato, s.accent });
+                out.push_back ({ at, true, s.note, s.velocity, legato, s.accent, s.slice });
                 if (legato)
                     out.push_back ({ at, false, heldNote, 0, false, false });
             }
@@ -311,6 +343,17 @@ namespace bash
             case Algorithm::Arpeggiator:   return "Arpeggiator";
             case Algorithm::DedicatedBass: return "Dedicated Bass";
             default:                       return "?";
+        }
+    }
+
+    const char* sliceModeName (SliceMode m)
+    {
+        switch (m)
+        {
+            case SliceMode::Window:     return "Window";
+            case SliceMode::Bounce:     return "Bounce";
+            case SliceMode::Sequential: return "Sequential";
+            default:                    return "?";
         }
     }
 

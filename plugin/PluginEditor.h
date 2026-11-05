@@ -4,36 +4,11 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 
 #include "PluginProcessor.h"
+#include "UiCommon.h"
+#include "SamplerPanel.h"
 
 namespace bashui
 {
-    // Soft-club palette shared with the Decompression Tapes / BASH VIDEO DESTROYER family.
-    namespace colour
-    {
-        const juce::Colour background { 0xffeef3fa };   // ice white
-        const juce::Colour panel      { 0xffffffff };
-        const juce::Colour mint       { 0xffcdefe3 };
-        const juce::Colour periwinkle { 0xffa9b4f2 };
-        const juce::Colour iceBlue    { 0xffcfe6f7 };
-        const juce::Colour coral      { 0xffff7a6b };
-        const juce::Colour ink        { 0xff2a2f45 };
-        const juce::Colour quiet      { 0xff7a8199 };
-        const juce::Colour line       { 0xffdde3ee };
-    }
-
-    class LookAndFeel : public juce::LookAndFeel_V4
-    {
-    public:
-        LookAndFeel();
-        void drawRotarySlider (juce::Graphics&, int x, int y, int w, int h, float pos,
-                               float start, float end, juce::Slider&) override;
-        void drawButtonBackground (juce::Graphics&, juce::Button&, const juce::Colour&,
-                                   bool highlighted, bool down) override;
-        void drawComboBox (juce::Graphics&, int w, int h, bool down, int bx, int by, int bw, int bh,
-                           juce::ComboBox&) override;
-        void drawToggleButton (juce::Graphics&, juce::ToggleButton&, bool highlighted, bool down) override;
-    };
-
     /** The step grid: pitch bars, accents, slides, locks and the playhead. */
     class StepView : public juce::Component
     {
@@ -54,16 +29,12 @@ namespace bashui
         uint32_t first = 0, visible = 16, length = 16, playIdx = 0;
         bool running = false;
         int baseNote = 36;
+        uint32_t sliceCount = 0;
         std::vector<bash::StepData> steps;
         std::vector<uint8_t> masks;
         juce::uint32 pressTime = 0;
     };
 
-    struct Knob
-    {
-        juce::Slider slider;
-        juce::Label  label;
-    };
 }
 
 class BashEditor : public juce::AudioProcessorEditor, private juce::Timer
@@ -104,8 +75,11 @@ private:
 
     // per-track controls (re-bound when the track changes)
     juce::ToggleButton onButton { "Track on" }, scaleLockButton { "Scale lock" };
-    juce::ComboBox algoBox, cycleBox, directionBox, rateBox;
-    juce::Label algoLabel, cycleLabel, directionLabel, rateLabel;
+    juce::ComboBox engineBox, algoBox, cycleBox, directionBox, rateBox;
+    juce::Label engineLabel, algoLabel, cycleLabel, directionLabel, rateLabel;
+    bashui::SamplerPanel samplerPanel;
+    bash::EngineType shownEngine = bash::EngineType::Synth;
+    void updateEnginePanel();
     std::vector<std::unique_ptr<bashui::Knob>> seqKnobs, voiceKnobs;
     std::vector<juce::String> seqKnobIds, voiceKnobIds;
     std::vector<std::unique_ptr<SliderAttachment>> knobAtts;

@@ -2,6 +2,7 @@
 #include "bash/Engine.h"
 #include "bash/Scale.h"
 #include "bash/Sequencer.h"
+#include "bash/Slices.h"
 
 #include <cmath>
 #include <cstdio>
@@ -245,6 +246,171 @@ static void testEngine()
     CHECK (! midi.empty());
 }
 
+// ---------------------------------------------------------------------------
+// Slicer
+
+// A synthetic drum loop: a decaying noise burst every `spacing` frames.
+static SampleData makeClicks (uint32_t frames, uint32_t spacing, double sr = 48000.0)
+{
+    SampleData d; d.sampleRate = sr;
+    d.left.assign (frames, 0.0f);
+    uint64_t x = 12345;
+    for (uint32_t start = spacing / 2; start < frames; start += spacing)
+        for (uint32_t i = 0; i < 2000 && start + i < frames; ++i)
+        {
+            x = x * 6364136223846793005ull + 1442695040888963407ull;
+            const float noise = (float) ((x >> 40) & 0xFFFF) / 32768.0f - 1.0f;
+            d.left[start + i] = noise * std::exp (-(float) i / 300.0f);
+        }
+    d.right = d.left;
+    return d;
+}
+
+static void testSlicePlacement()
+{
+    auto g = slicing::grid (48000, 16);
+    CHECK (g.size() == 16 && g[0] == 0 && g[1] == 3000 && g[15] == 45000);
+    CHECK (slicing::grid (1000, 999).size() == 256);   // capped
+
+    auto r = slicing::random (96000, 32, 7, 48000.0);
+    CHECK (r.size() >= 20 && r.size() <= 32 && r[0] == 0);
+    for (size_t i = 1; i < r.size(); ++i) CHECK (r[i] > r[i - 1] && r[i] - r[i - 1] >= 480);
+    CHECK (slicing::random (96000, 32, 7, 48000.0) == r);   // seeded
+
+    std::vector<uint32_t> messy { 900, 5, 900, 100000, 30, 400 };
+    slicing::normalise (messy, 1000, 32);
+    CHECK ((messy == std::vector<uint32_t> { 0, 400, 900 }));
+
+    // 8 hits → ~8 transient slices (+ the slice at 0)
+    auto clicks = makeClicks (96000, 12000);
+    auto tr = slicing::transients (clicks, 0.5f);
+    CHECK (tr.size() >= 8 && tr.size() <= 10);
+    int near = 0;
+    for (uint32_t hit = 6000; hit < 96000; hit += 12000)
+        for (auto p : tr) if (std::abs ((long) p - (long) hit) < 600) { ++near; break; }
+    CHECK (near == 8);
+    CHECK (slicing::transients (clicks, 1.0f).size() >= tr.size());
+
+    CHECK (slicing::sliceAt (g, 0) == 0 && slicing::sliceAt (g, 3001) == 1 && slicing::sliceAt (g, 47999) == 15);
+}
+
+static void testSlicePicking()
+{
+    Pattern pat (11);
+    Scale s (0, 0);
+    SequencerParams p; p.density = 1.0f; p.sliceCount = 64;
+
+    p.sliceMode = SliceMode::Window; p.windowStart = 10; p.windowSize = 4; p.type = 0.0f;
+    for (uint32_t i = 0; i < 64; ++i) CHECK (pat.step (i, p, s).slice == (int) (10 + i % 4));
+    p.type = 1.0f;
+    std::set<int> seen;
+    for (uint32_t i = 0; i < 400; ++i) { int sl = pat.step (i, p, s).slice; CHECK (sl >= 10 && sl < 14); seen.insert (sl); }
+    CHECK (seen.size() == 4);
+
+    p.windowStart = 62; p.windowSize = 8;   // window clipped at the end
+    for (uint32_t i = 0; i < 100; ++i) { int sl = pat.step (i, p, s).slice; CHECK (sl >= 62 && sl < 64); }
+
+    p.sliceMode = SliceMode::Bounce; p.type = 0.0f; seen.clear();
+    for (uint32_t i = 0; i < 2000; ++i) { int sl = pat.step (i, p, s).slice; CHECK (sl >= 0 && sl < 64); seen.insert (sl); }
+    CHECK (seen.size() > 50);
+
+    p.sliceMode = SliceMode::Sequential;
+    for (uint32_t i = 0; i < 128; ++i) CHECK (pat.step (i, p, s).slice == (int) (i % 64));
+
+    // slice locks survive regenerate
+    p.sliceMode = SliceMode::Bounce;
+    StepData v; v.slice = 42;
+    pat.lock (5, lockbit::slice, v);
+    pat.regenerate();
+    CHECK (pat.step (5, p, s).slice == 42);
+    p.sliceCount = 10;
+    CHECK (pat.step (5, p, s).slice == 9);   // clamped when fewer slices exist
+
+    Pattern back; CHECK (back.deserialise (pat.serialise()));
+    CHECK (back.step (5, p, s).slice == 9);
+    CHECK (back.deserialise ("bashpat1 5 1 3 2 1 40 0 0 0.5"));   // old format still loads
+    CHECK (back.lockMask (3) == 2);
+}
+
+static void testSliceVoice()
+{
+    SampleData d; d.sampleRate = 48000.0;
+    d.left.assign (48000, 0.5f); d.right.assign (48000, -0.5f);
+    SliceVoice v; v.prepare (48000.0);
+    SliceVoice::Params p; p.attack = 0.001f;
+    std::vector<float> l (4800, 0.0f), r (4800, 0.0f);
+
+    v.start (&d, 1000, 3000, 1.0, 1.0f, p);    // 2000-frame slice
+    v.render (l.data(), r.data(), 0, 4800, p);
+    CHECK (std::abs (l[1000] - 0.5f) < 0.01f && std::abs (r[1000] + 0.5f) < 0.01f);
+    CHECK (std::abs (l[2500]) < 1.0e-6f);       // stopped at the slice end
+    CHECK (v.isSilent());
+
+    // double speed plays the slice in half the time
+    std::fill (l.begin(), l.end(), 0.0f); std::fill (r.begin(), r.end(), 0.0f);
+    v.start (&d, 0, 2000, 2.0, 1.0f, p);
+    v.render (l.data(), r.data(), 0, 4800, p);
+    CHECK (std::abs (l[900] - 0.5f) < 0.01f && std::abs (l[1100]) < 1.0e-6f);
+
+    // retrigger mid-slice never jumps: no sample-to-sample step bigger than the signal
+    SampleData sine; sine.sampleRate = 48000.0;
+    for (int i = 0; i < 48000; ++i) sine.left.push_back (std::sin (i * 0.05f));
+    sine.right = sine.left;
+    std::vector<float> o (9600, 0.0f), o2 (9600, 0.0f);
+    v.start (&sine, 0, 48000, 1.0, 1.0f, p);
+    v.render (o.data(), o2.data(), 0, 4000, p);
+    v.start (&sine, 20000, 48000, 1.0, 1.0f, p);
+    v.render (o.data(), o2.data(), 4000, 5600, p);
+    float maxJump = 0.0f;
+    for (int i = 1; i < 9600; ++i) maxJump = std::max (maxJump, std::abs (o[i] - o[i - 1]));
+    CHECK (maxJump < 0.2f);
+
+    v.stopIfUsing (&sine);
+    CHECK (v.isSilent());
+}
+
+static void testSlicerEngine()
+{
+    auto loop = makeClicks (96000, 6000);
+    Engine eng;
+    eng.prepare (48000.0, 256);
+    auto& t = eng.track (2);
+    t.enabled = true;
+    t.engine = EngineType::Slicer;
+    t.seq.density = 1.0f;
+    t.seq.sliceMode = SliceMode::Bounce;
+    eng.track (0).enabled = false;
+    eng.setSample (2, &loop);
+    eng.setSlices (2, slicing::grid (loop.numFrames(), 16));
+    CHECK (eng.sliceCount (2) == 16);
+
+    Transport tp; tp.hostAvailable = true; tp.hostPlaying = true; tp.hostBpm = 120.0;
+    std::vector<float> l (480), r (480);
+    std::vector<MidiOut> midi;
+    double energy = 0.0;
+    std::set<int> slicesHeard;
+    const uint64_t before = eng.blocksProcessed();
+    for (int b = 0; b < 200; ++b)
+    {
+        eng.process (l.data(), r.data(), 480, tp, midi);
+        tp.hostPpq += 480.0 * 2.0 / 48000.0;
+        for (int i = 0; i < 480; ++i) energy += (double) l[i] * l[i];
+        if (eng.playingSlice (2) >= 0) slicesHeard.insert (eng.playingSlice (2));
+    }
+    CHECK (energy > 1.0);
+    CHECK (slicesHeard.size() > 4);
+    CHECK (eng.blocksProcessed() == before + 200);
+    bool ch3 = false; for (auto& m : midi) if (m.channel == 3) ch3 = true;
+    CHECK (ch3);
+
+    // swapping the sample out: next block no longer reads the old one
+    eng.setSample (2, nullptr);
+    midi.clear();
+    for (int b = 0; b < 20; ++b) { eng.process (l.data(), r.data(), 480, tp, midi); tp.hostPpq += 480.0 * 2.0 / 48000.0; }
+    float peak = 0.0f; for (int i = 0; i < 480; ++i) peak = std::max (peak, std::abs (l[i]));
+    CHECK (peak < 1.0e-6f);
+}
+
 int main()
 {
     testDeterminism();
@@ -255,6 +421,10 @@ int main()
     testSerialise();
     testPlayer();
     testEngine();
+    testSlicePlacement();
+    testSlicePicking();
+    testSliceVoice();
+    testSlicerEngine();
     std::printf ("%d checks, %d failures\n", checks, failures);
     return failures == 0 ? 0 : 1;
 }

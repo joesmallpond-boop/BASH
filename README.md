@@ -18,7 +18,16 @@ Full spec: *BASH! — Software Requirements Specification* (Claude doc).
 - Generated MIDI out on channel = track number
 - Patterns and locks save with the DAW session
 
-Next: slice sampler → machine synth → drum grid → remaining algorithms → modulation, Life, Roll the Dice, mixer + FX → MIDI import/export → iPad → Max for Live companion.
+**Milestone 2 — slice sampler** ✅
+
+- Per-track engine choice: Synth or Slicer (Drums coming)
+- Drag an audio file onto the waveform (or Load); auto-sliced by transients
+- Up to 256 slices: Transients (sensitivity), Grid (4–256), Random (count), or by hand: double-click to add, drag to move, right-click to delete
+- Slice modes: Window (start + size, shaded on the waveform), Bounce (anywhere), Sequential
+- Pitch follow (sequencer notes repitch slices), Tune, Attack, Release, Reverse; click-free retriggers
+- Slice choices can be locked per step; samples and slices save with the session
+
+Next: machine synth → drum grid → remaining algorithms → modulation, Life, Roll the Dice, mixer + FX → MIDI import/export → iPad → Max for Live companion.
 
 ## Getting builds
 

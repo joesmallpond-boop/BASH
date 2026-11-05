@@ -1,12 +1,13 @@
 #pragma once
-// BASH! core — the engine: 8 tracks, each a generative sequencer driving a voice,
-// a shared clock (host sync or internal), and the global key/scale.
-// Pure C++ with no JUCE dependency, so it runs the same in every plugin format,
-// on iPad, and in unit tests.
+// BASH! core — the engine: 8 tracks, each a generative sequencer driving one
+// sound engine (synth, slicer, drums), a shared clock (host sync or internal),
+// and the global key/scale. Pure C++ with no JUCE dependency, so it runs the
+// same in every plugin format, on iPad, and in unit tests.
 
 #include "bash/AcidVoice.h"
 #include "bash/Scale.h"
 #include "bash/Sequencer.h"
+#include "bash/Slices.h"
 
 #include <array>
 #include <atomic>
@@ -16,16 +17,28 @@ namespace bash
 {
     constexpr int numTracks = 8;
 
+    enum class EngineType : int { Synth = 0, Slicer, Drums, count };
+    const char* engineTypeName (EngineType);
+
     /** Step rates: steps per quarter note. */
     struct Rate { const char* name; double stepsPerQuarter; };
     const std::vector<Rate>& allRates();   // index 1 = 1/16 (default)
 
+    struct SlicerSettings
+    {
+        bool  pitchFollow = false;   // sequencer pitch repitches slices
+        float tune        = 0.0f;    // semitones
+        SliceVoice::Params voice;
+    };
+
     struct TrackSettings
     {
         bool              enabled = false;
+        EngineType        engine  = EngineType::Synth;
         SequencerParams   seq;
         int               rateIndex = 1;
         AcidVoice::Params voice;
+        SlicerSettings    slicer;
         float             level = 0.8f;
         float             pan   = 0.0f;   // -1..1
     };
@@ -85,10 +98,31 @@ namespace bash
         void lockStep (int t, const SequencerParams&, const Scale&, uint32_t index,
                        uint8_t mask = lockbit::all);
 
+        // ---- slicer (message thread) ----
+        /** The caller owns the sample. After replacing one, keep the old one alive
+            until blocksProcessed() has advanced by 2 (the audio thread drops it at
+            the start of its next block). nullptr clears the track. */
+        void setSample (int t, const SampleData* s)  { samples[(size_t) t].store (s); }
+        const SampleData* sample (int t) const       { return samples[(size_t) t].load(); }
+        void setSlices (int t, std::vector<uint32_t> slices);
+        std::vector<uint32_t> slices (int t);
+        uint32_t sliceCount (int t);
+        uint64_t blocksProcessed() const         { return blockCount.load(); }
+        /** Slice currently playing on a slicer track (-1 if none) and its position in frames. */
+        int    playingSlice (int t) const        { return sliceNow[(size_t) t].load(); }
+        double playingFrame (int t) const        { return framePos[(size_t) t].load(); }
+
     private:
         void refreshScale();
         void renderChunk (float* l, float* r, int n, int offsetInBlock, bool run,
                           double ppq, double bpm, std::vector<MidiOut>& midiOut);
+        void handleEvent (int t, const NoteEvent&);
+
+        struct SliceStore
+        {
+            SpinMutex m;
+            std::vector<uint32_t> points;
+        };
 
         double sr = 44100.0;
         int    maxBlock = 512;
@@ -96,8 +130,16 @@ namespace bash
         std::array<TrackSettings, numTracks> tracks;
         std::array<Pattern,       numTracks> patterns;
         std::array<TrackPlayer,   numTracks> players;
-        std::array<AcidVoice,     numTracks> voices;
+        std::array<AcidVoice,     numTracks> synths;
+        std::array<SliceVoice,    numTracks> slicers;
+        std::array<SliceStore,    numTracks> sliceStores;
+        std::array<std::atomic<const SampleData*>, numTracks> samples {};
+        std::array<const SampleData*, numTracks> lastSample {};
+        std::array<int, numTracks> slicerNote {};
         std::array<std::atomic<uint32_t>, numTracks> playIdx {};
+        std::array<std::atomic<int>,      numTracks> sliceNow {};
+        std::array<std::atomic<double>,   numTracks> framePos {};
+        std::atomic<uint64_t> blockCount { 0 };
         std::atomic<bool> running { false };
 
         GlobalSettings globals;
@@ -106,7 +148,7 @@ namespace bash
         double internalPpq = 0.0;
         bool   wasRunning = false;
 
-        std::vector<float>     mono;
+        std::vector<float>     bufL, bufR;
         std::vector<NoteEvent> events;
     };
 }

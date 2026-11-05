@@ -29,6 +29,15 @@ namespace bash
 
     enum class Direction : int { Forward = 0, Reverse, PingPong, Random, count };
 
+    /** How a sampler track chooses slices. */
+    enum class SliceMode : int
+    {
+        Window = 0,   // stay inside a short run of slices (window start + size)
+        Bounce,       // jump anywhere across all slices
+        Sequential,   // slices in order, following the sequencer's direction
+        count
+    };
+
     struct SequencerParams
     {
         Algorithm algorithm   = Algorithm::CoreAcidV1;
@@ -41,6 +50,12 @@ namespace bash
         float     gate        = 0.5f;   // note length in steps (0.05..2)
         int       baseNote    = 36;     // MIDI note for scale degree 0
         bool      scaleLock   = true;   // quantise output to the global scale
+
+        // slicer tracks (sliceCount 0 = not a slicer)
+        uint32_t  sliceCount  = 0;
+        SliceMode sliceMode   = SliceMode::Window;
+        uint32_t  windowStart = 0;
+        uint32_t  windowSize  = 4;
     };
 
     struct StepData
@@ -51,11 +66,12 @@ namespace bash
         bool    accent   = false;
         bool    slide    = false;
         float   gate     = 0.5f;    // in steps
+        int     slice    = 0;       // slicer tracks: which slice plays
     };
 
     namespace lockbit
     {
-        enum : uint8_t { active = 1, pitch = 2, accent = 4, slide = 8, gate = 16, all = 31 };
+        enum : uint8_t { active = 1, pitch = 2, accent = 4, slide = 8, gate = 16, slice = 32, all = 63 };
     }
 
     struct StepLock
@@ -124,6 +140,7 @@ namespace bash
         int  velocity     = 0;
         bool legato       = false;  // note-on that should glide from the held note (303 slide)
         bool accent       = false;
+        int  slice        = 0;
     };
 
     class TrackPlayer
@@ -154,4 +171,5 @@ namespace bash
 
     const char* algorithmName (Algorithm);
     const char* directionName (Direction);
+    const char* sliceModeName (SliceMode);
 }

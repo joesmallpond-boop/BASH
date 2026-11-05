@@ -13,6 +13,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 option(BASH_BUILD_PLUGIN "Build the JUCE plugin and standalone app" ON)
 option(BASH_BUILD_TESTS  "Build the core unit tests" ON)
+option(BASH_BUILD_TOOLS  "Build developer tools (UI snapshot)" OFF)
 
 add_subdirectory(core)
 
@@ -32,4 +33,11 @@ if(BASH_BUILD_PLUGIN)
         GIT_SHALLOW    ON)
     FetchContent_MakeAvailable(JUCE)
     add_subdirectory(plugin)
+
+    if(BASH_BUILD_TOOLS)
+        add_executable(bash_ui_snapshot tools/UiSnapshot.cpp)
+        target_link_libraries(bash_ui_snapshot PRIVATE BASH juce::juce_recommended_config_flags)
+        target_include_directories(bash_ui_snapshot PRIVATE $<TARGET_PROPERTY:BASH,INCLUDE_DIRECTORIES>)
+        target_compile_definitions(bash_ui_snapshot PRIVATE $<TARGET_PROPERTY:BASH,COMPILE_DEFINITIONS>)
+    endif()
 endif()

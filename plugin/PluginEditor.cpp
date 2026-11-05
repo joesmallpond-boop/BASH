@@ -4,7 +4,7 @@ using namespace bashui;
 
 namespace
 {
-    constexpr int editorW = 1040, editorH = 792;
+    constexpr int editorW = 1040, editorH = 920;
     constexpr int margin = 24;
 
     juce::String noteText (int note)
@@ -121,7 +121,8 @@ void LookAndFeel::drawToggleButton (juce::Graphics& g, juce::ToggleButton& b, bo
 // ============================================================================
 void StepView::refresh()
 {
-    const auto params = proc.seqParams (track);
+    const auto params = proc.uiSeqParams (track);
+    sliceCount = params.sliceCount;
     length   = params.length;
     visible  = juce::jmin<uint32_t> (length, 64u);
     running  = proc.isRunning();
@@ -170,7 +171,9 @@ void StepView::paint (juce::Graphics& g)
         auto inner = cell.reduced (5.0f);
         if (s.active)
         {
-            const float frac = juce::jlimit (0.12f, 0.92f, juce::jmap ((float) (s.note - baseNote), -12.0f, 24.0f, 0.12f, 0.92f));
+            const float frac = sliceCount > 0
+                ? juce::jmap ((float) (s.slice + 1) / (float) sliceCount, 0.12f, 0.92f)
+                : juce::jlimit (0.12f, 0.92f, juce::jmap ((float) (s.note - baseNote), -12.0f, 24.0f, 0.12f, 0.92f));
             auto bar = inner.withTrimmedTop (16.0f);
             bar = bar.removeFromBottom (bar.getHeight() * frac);
             g.setColour (s.accent ? colour::coral : colour::periwinkle);
@@ -178,7 +181,8 @@ void StepView::paint (juce::Graphics& g)
 
             g.setColour (colour::ink);
             g.setFont (juce::FontOptions (10.5f));
-            g.drawText (noteText (s.note), inner.removeFromTop (14.0f), juce::Justification::centred);
+            g.drawText (sliceCount > 0 ? "S" + juce::String (s.slice + 1) : noteText (s.note),
+                        inner.removeFromTop (14.0f), juce::Justification::centred);
 
             if (s.slide)
             {
@@ -237,37 +241,8 @@ void StepView::mouseUp (const juce::MouseEvent& e)
 }
 
 // ============================================================================
-static void styleKnob (Knob& k, const juce::String& name)
-{
-    k.slider.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
-    k.slider.setColour (juce::Slider::textBoxTextColourId, colour::ink);
-    k.slider.setColour (juce::Slider::textBoxBackgroundColourId, juce::Colours::transparentBlack);
-    k.slider.setColour (juce::Slider::textBoxOutlineColourId, juce::Colours::transparentBlack);
-    k.slider.setColour (juce::Slider::textBoxHighlightColourId, colour::periwinkle);
-    k.slider.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 76, 18);
-    k.slider.setRotaryParameters (juce::MathConstants<float>::pi * 1.25f, juce::MathConstants<float>::pi * 2.75f, true);
-    k.label.setText (name, juce::dontSendNotification);
-    k.label.setJustificationType (juce::Justification::centred);
-    k.label.setFont (juce::FontOptions (12.0f, juce::Font::bold));
-    k.label.setColour (juce::Label::textColourId, colour::quiet);
-}
-
-static void styleComboLabel (juce::Label& l, const juce::String& text)
-{
-    l.setText (text, juce::dontSendNotification);
-    l.setFont (juce::FontOptions (12.0f, juce::Font::bold));
-    l.setColour (juce::Label::textColourId, colour::quiet);
-}
-
-static void fillChoices (juce::ComboBox& box, juce::AudioProcessorValueTreeState& apvts, const juce::String& id)
-{
-    box.clear (juce::dontSendNotification);
-    if (auto* p = dynamic_cast<juce::AudioParameterChoice*> (apvts.getParameter (id)))
-        box.addItemList (p->choices, 1);
-}
-
 BashEditor::BashEditor (BashProcessor& p)
-    : AudioProcessorEditor (&p), proc (p), stepView (p)
+    : AudioProcessorEditor (&p), proc (p), stepView (p), samplerPanel (p)
 {
     setLookAndFeel (&lnf);
     auto& apvts = proc.apvts;
@@ -311,7 +286,10 @@ BashEditor::BashEditor (BashProcessor& p)
     // per-track controls
     addAndMakeVisible (onButton);
     addAndMakeVisible (scaleLockButton);
-    for (auto* b : { &algoBox, &cycleBox, &directionBox, &rateBox }) addAndMakeVisible (*b);
+    for (auto* b : { &engineBox, &algoBox, &cycleBox, &directionBox, &rateBox }) addAndMakeVisible (*b);
+    styleComboLabel (engineLabel, "ENGINE");
+    addAndMakeVisible (engineLabel);
+    addChildComponent (samplerPanel);
     styleComboLabel (algoLabel, "ALGORITHM");
     styleComboLabel (rateLabel, "RATE");
     styleComboLabel (directionLabel, "DIRECTION");
@@ -358,6 +336,8 @@ void BashEditor::selectTrack (int t)
         trackButtons[(size_t) i].setToggleState (i == t, juce::dontSendNotification);
     bindTrack();
     stepView.setTrack (t);
+    samplerPanel.setTrack (t);
+    updateEnginePanel();
 }
 
 void BashEditor::bindTrack()
@@ -367,6 +347,8 @@ void BashEditor::bindTrack()
 
     auto id = [this] (const char* s) { return BashProcessor::pid (currentTrack, s); };
 
+    fillChoices (engineBox, apvts, id ("engine"));
+    comboAtts.push_back (std::make_unique<ComboAttachment> (apvts, id ("engine"), engineBox));
     fillChoices (algoBox, apvts, id ("algo"));
     fillChoices (rateBox, apvts, id ("rate"));
     fillChoices (directionBox, apvts, id ("direction"));
@@ -384,8 +366,21 @@ void BashEditor::bindTrack()
         knobAtts.push_back (std::make_unique<SliderAttachment> (apvts, id (voiceKnobIds[i].toRawUTF8()), voiceKnobs[i]->slider));
 }
 
+void BashEditor::updateEnginePanel()
+{
+    shownEngine = proc.engineType (currentTrack);
+    const bool slicer = shownEngine == bash::EngineType::Slicer;
+    samplerPanel.setVisible (slicer);
+    for (auto& k : voiceKnobs) { k->slider.setVisible (! slicer); k->label.setVisible (! slicer); }
+    repaint();
+}
+
 void BashEditor::timerCallback()
 {
+    if (proc.engineType (currentTrack) != shownEngine)
+        updateEnginePanel();
+    if (samplerPanel.isVisible())
+        samplerPanel.refresh();
     stepView.refresh();
     for (int t = 0; t < bash::numTracks; ++t)
     {
@@ -406,7 +401,7 @@ void BashEditor::paint (juce::Graphics& g)
     g.setFont (juce::FontOptions (13.0f));
     g.drawText ("an all-in-one kalabash solution", margin + 2, 52, 260, 18, juce::Justification::centredLeft);
 
-    for (auto [r, title] : { std::pair { seqPanel, "SEQUENCER" }, std::pair { voicePanel, "VOICE  (acid test synth)" } })
+    for (auto [r, title] : { std::pair { seqPanel, "SEQUENCER" }, std::pair { voicePanel, shownEngine == bash::EngineType::Slicer ? "SLICE SAMPLER" : "VOICE  (acid test synth)" } })
     {
         g.setColour (colour::panel);
         g.fillRoundedRectangle (r.toFloat(), 14.0f);
@@ -424,11 +419,6 @@ void BashEditor::resized()
 
     // header (right side)
     auto header = area.removeFromTop (84).withTrimmedTop (12);
-    auto placeKnob = [] (Knob& k, juce::Rectangle<int> r)
-    {
-        k.label.setBounds (r.removeFromTop (16));
-        k.slider.setBounds (r);
-    };
     placeKnob (master, header.removeFromRight (72));
     header.removeFromRight (8);
     placeKnob (tempo, header.removeFromRight (72));
@@ -461,6 +451,12 @@ void BashEditor::resized()
     auto combos = inner.removeFromTop (52);
     onButton.setBounds (combos.removeFromLeft (110).removeFromBottom (30));
     combos.removeFromLeft (12);
+    {
+        auto r = combos.removeFromLeft (110);
+        engineLabel.setBounds (r.removeFromTop (18));
+        engineBox.setBounds (r.removeFromTop (30));
+        combos.removeFromLeft (12);
+    }
     auto placeCombo = [&combos] (juce::Label& l, juce::ComboBox& b, int w)
     {
         auto r = combos.removeFromLeft (w);
@@ -468,7 +464,7 @@ void BashEditor::resized()
         b.setBounds (r.removeFromTop (30));
         combos.removeFromLeft (12);
     };
-    placeCombo (algoLabel, algoBox, 170);
+    placeCombo (algoLabel, algoBox, 150);
     placeCombo (rateLabel, rateBox, 100);
     placeCombo (directionLabel, directionBox, 130);
     placeCombo (cycleLabel, cycleBox, 100);
@@ -479,7 +475,8 @@ void BashEditor::resized()
 
     // voice panel
     area.removeFromTop (12);
-    voicePanel = area.removeFromTop (150);
-    auto vInner = voicePanel.reduced (16).withTrimmedTop (18);
+    voicePanel = area.removeFromTop (278);
+    samplerPanel.setBounds (voicePanel.reduced (16).withTrimmedTop (22));
+    auto vInner = voicePanel.reduced (16).withTrimmedTop (18).withHeight (100);
     for (auto& k : voiceKnobs) { placeKnob (*k, vInner.removeFromLeft (84)); vInner.removeFromLeft (8); }
 }
