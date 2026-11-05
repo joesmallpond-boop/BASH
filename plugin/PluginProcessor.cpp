@@ -63,6 +63,16 @@ namespace
         return s;
     }
 
+    juce::StringArray fxNames()
+    {
+        juce::StringArray s;
+        for (int i = 0; i < (int) bash::FxType::count; ++i) s.add (bash::fxName ((bash::FxType) i));
+        return s;
+    }
+
+    /** type, a, b, gnarl, mix for one effect slot, ids prefixed with `prefix`. */
+    void addFxParams (juce::AudioProcessorParameterGroup& g, const juce::String& prefix, const juce::String& name, int defType, float defA, float defB);
+
     juce::StringArray keyNames()
     {
         juce::StringArray s;
@@ -103,6 +113,19 @@ uint32_t BashProcessor::cycleMultiplier (int index)
     return m[juce::jlimit (0, 7, index)];
 }
 
+namespace
+{
+    void addFxParams (juce::AudioProcessorParameterGroup& g, const juce::String& prefix, const juce::String& name, int defType, float defA, float defB)
+    {
+        using namespace juce;
+        g.addChild (std::make_unique<AudioParameterChoice> (ParameterID { prefix + "type", 1 }, name + " Type", fxNames(), defType));
+        g.addChild (floatParam (ParameterID { prefix + "a", 1 },     name + " A",     NormalisableRange<float> (0.0f, 1.0f), defA, 2));
+        g.addChild (floatParam (ParameterID { prefix + "b", 1 },     name + " B",     NormalisableRange<float> (0.0f, 1.0f), defB, 2));
+        g.addChild (floatParam (ParameterID { prefix + "gnarl", 1 }, name + " Gnarl", NormalisableRange<float> (0.0f, 1.0f), 0.0f, 2));
+        g.addChild (floatParam (ParameterID { prefix + "mix", 1 },   name + " Mix",   NormalisableRange<float> (0.0f, 1.0f), 1.0f, 2));
+    }
+}
+
 APVTS::ParameterLayout BashProcessor::createLayout()
 {
     APVTS::ParameterLayout layout;
@@ -115,7 +138,17 @@ APVTS::ParameterLayout BashProcessor::createLayout()
     global->addChild (std::make_unique<AudioParameterBool>   (ParameterID { "sync", 1 },   "Host Sync", true));
     global->addChild (std::make_unique<AudioParameterBool>   (ParameterID { "play", 1 },   "Play", false));
     global->addChild (floatParam (ParameterID { "master", 1 }, "Master", NormalisableRange<float> (0.0f, 1.0f), 0.8f, 2));
+    global->addChild (std::make_unique<AudioParameterBool> (ParameterID { "limiter", 1 }, "Limiter", true));
     layout.add (std::move (global));
+
+    auto mix = std::make_unique<AudioProcessorParameterGroup> ("mixer", "Mixer", "|");
+    addFxParams (*mix, "reta",  "Return A", (int) bash::FxType::Plate, 0.6f, 0.4f);
+    addFxParams (*mix, "retb",  "Return B", (int) bash::FxType::TapeDelay, 0.55f, 0.4f);
+    mix->addChild (floatParam (ParameterID { "retalevel", 1 }, "Return A Level", NormalisableRange<float> (0.0f, 1.0f), 0.8f, 2));
+    mix->addChild (floatParam (ParameterID { "retblevel", 1 }, "Return B Level", NormalisableRange<float> (0.0f, 1.0f), 0.8f, 2));
+    addFxParams (*mix, "mfx1", "Master FX 1", 0, 0.5f, 0.5f);
+    addFxParams (*mix, "mfx2", "Master FX 2", 0, 0.5f, 0.5f);
+    layout.add (std::move (mix));
 
     for (int t = 0; t < bash::numTracks; ++t)
     {
@@ -164,14 +197,30 @@ APVTS::ParameterLayout BashProcessor::createLayout()
 
         g->addChild (floatParam (id ("level"),     n + "Level",     NormalisableRange<float> (0.0f, 1.0f), 0.8f, 2));
         g->addChild (floatParam (id ("pan"),       n + "Pan",       NormalisableRange<float> (-1.0f, 1.0f), 0.0f, 2));
+        g->addChild (std::make_unique<AudioParameterBool> (id ("mute"), n + "Mute", false));
+        g->addChild (std::make_unique<AudioParameterBool> (id ("solo"), n + "Solo", false));
+        g->addChild (floatParam (id ("senda"), n + "Send A", NormalisableRange<float> (0.0f, 1.0f), 0.0f, 2));
+        g->addChild (floatParam (id ("sendb"), n + "Send B", NormalisableRange<float> (0.0f, 1.0f), 0.0f, 2));
+        addFxParams (*g, pid (t, "fx1"), n + "Insert 1", 0, 0.5f, 0.5f);
+        addFxParams (*g, pid (t, "fx2"), n + "Insert 2", 0, 0.5f, 0.5f);
 
         layout.add (std::move (g));
     }
     return layout;
 }
 
+juce::AudioProcessor::BusesProperties BashProcessor::makeBuses()
+{
+    auto b = BusesProperties().withOutput ("Main", juce::AudioChannelSet::stereo(), true);
+   #if ! JUCE_IOS
+    for (int t = 0; t < bash::numTracks; ++t)
+        b = b.withOutput ("Track " + juce::String (t + 1), juce::AudioChannelSet::stereo(), false);
+   #endif
+    return b;
+}
+
 BashProcessor::BashProcessor()
-    : AudioProcessor (BusesProperties().withOutput ("Output", juce::AudioChannelSet::stereo(), true)),
+    : AudioProcessor (makeBuses()),
       apvts (*this, nullptr, "BASH", createLayout())
 {
     formats.registerBasicFormats();
@@ -184,6 +233,11 @@ BashProcessor::BashProcessor()
     pSync   = apvts.getRawParameterValue ("sync");
     pPlay   = apvts.getRawParameterValue ("play");
     pMaster = apvts.getRawParameterValue ("master");
+    pLimiter = apvts.getRawParameterValue ("limiter");
+    pRetALevel = apvts.getRawParameterValue ("retalevel");
+    pRetBLevel = apvts.getRawParameterValue ("retblevel");
+    retA = fxPtrs ("reta"); retB = fxPtrs ("retb");
+    mfx[0] = fxPtrs ("mfx1"); mfx[1] = fxPtrs ("mfx2");
 
     for (int t = 0; t < bash::numTracks; ++t)
     {
@@ -195,6 +249,8 @@ BashProcessor::BashProcessor()
         p.scaleLock = get ("scalelock"); p.wave = get ("wave"); p.cutoff = get ("cutoff"); p.reso = get ("reso");
         p.envMod = get ("envmod"); p.decay = get ("decay"); p.drive = get ("drive"); p.glide = get ("glide");
         p.level = get ("level"); p.pan = get ("pan");
+        p.mute = get ("mute"); p.solo = get ("solo"); p.sendA = get ("senda"); p.sendB = get ("sendb");
+        p.fx[0] = fxPtrs (pid (t, "fx1")); p.fx[1] = fxPtrs (pid (t, "fx2"));
         p.machine = get ("machine"); p.timbre = get ("timbre"); p.ftype = get ("ftype");
         p.aAtk = get ("aatk"); p.aDec = get ("adec"); p.aSus = get ("asus"); p.aRel = get ("arel");
         p.engine = get ("engine"); p.sliceMode = get ("slicemode"); p.winStart = get ("winstart");
@@ -206,7 +262,15 @@ BashProcessor::BashProcessor()
 bool BashProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
 {
     const auto out = layouts.getMainOutputChannelSet();
-    return out == juce::AudioChannelSet::stereo() || out == juce::AudioChannelSet::mono();
+    if (out != juce::AudioChannelSet::stereo() && out != juce::AudioChannelSet::mono())
+        return false;
+    for (int i = 1; i < layouts.outputBuses.size(); ++i)
+    {
+        const auto& set = layouts.outputBuses.getReference (i);
+        if (! set.isDisabled() && set != juce::AudioChannelSet::stereo())
+            return false;
+    }
+    return layouts.inputBuses.isEmpty();
 }
 
 void BashProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
@@ -239,6 +303,24 @@ bash::SequencerParams BashProcessor::seqParams (int t) const
     return s;
 }
 
+BashProcessor::FxPtrs BashProcessor::fxPtrs (const juce::String& prefix)
+{
+    return { apvts.getRawParameterValue (prefix + "type"), apvts.getRawParameterValue (prefix + "a"),
+             apvts.getRawParameterValue (prefix + "b"), apvts.getRawParameterValue (prefix + "gnarl"),
+             apvts.getRawParameterValue (prefix + "mix") };
+}
+
+bash::FxParams BashProcessor::fxFrom (const FxPtrs& f)
+{
+    bash::FxParams p;
+    p.type  = (bash::FxType) juce::jlimit (0, (int) bash::FxType::count - 1, (int) load (f.type));
+    p.a     = load (f.a);
+    p.b     = load (f.b);
+    p.gnarl = load (f.gnarl);
+    p.mix   = load (f.mix);
+    return p;
+}
+
 bash::Scale BashProcessor::scaleNow() const
 {
     return bash::Scale ((int) load (pRoot), (int) load (pScale));
@@ -253,6 +335,13 @@ void BashProcessor::pullParameters()
     g.hostSync   = load (pSync) > 0.5f;
     g.playing    = load (pPlay) > 0.5f;
     g.master     = load (pMaster);
+    g.limiter    = load (pLimiter) > 0.5f;
+    g.returns[0] = fxFrom (retA);
+    g.returns[1] = fxFrom (retB);
+    g.returnLevel[0] = load (pRetALevel);
+    g.returnLevel[1] = load (pRetBLevel);
+    g.masterFx[0] = fxFrom (mfx[0]);
+    g.masterFx[1] = fxFrom (mfx[1]);
 
     for (int t = 0; t < bash::numTracks; ++t)
     {
@@ -284,6 +373,12 @@ void BashProcessor::pullParameters()
         ts.voice.glide     = load (p.glide);
         ts.level = load (p.level);
         ts.pan   = load (p.pan);
+        ts.mute  = load (p.mute) > 0.5f;
+        ts.solo  = load (p.solo) > 0.5f;
+        ts.sendA = load (p.sendA);
+        ts.sendB = load (p.sendB);
+        ts.inserts[0] = fxFrom (p.fx[0]);
+        ts.inserts[1] = fxFrom (p.fx[1]);
     }
 }
 
@@ -311,8 +406,24 @@ void BashProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBu
     if (scratch.getNumSamples() < n)
         scratch.setSize (1, n, false, false, true);   // only if the host lied about block size
 
-    float* left  = buffer.getWritePointer (0);
-    float* right = buffer.getNumChannels() > 1 ? buffer.getWritePointer (1) : scratch.getWritePointer (0);
+    auto mainBus = getBusBuffer (buffer, false, 0);
+    float* left  = mainBus.getWritePointer (0);
+    float* right = mainBus.getNumChannels() > 1 ? mainBus.getWritePointer (1) : scratch.getWritePointer (0);
+
+    for (int t = 0; t < bash::numTracks; ++t)
+    {
+        auto* bus = getBus (false, t + 1);
+        if (bus != nullptr && bus->isEnabled() && bus->getNumberOfChannels() == 2)
+        {
+            auto out = getBusBuffer (buffer, false, t + 1);
+            out.clear();
+            engine.setDirectOutput (t, out.getWritePointer (0), out.getWritePointer (1));
+        }
+        else
+        {
+            engine.setDirectOutput (t, nullptr, nullptr);
+        }
+    }
 
     // MIDI in: held notes feed the arpeggiator; CC 102 / 103 set key / scale
     // (sent by the BASH! Key Lock device in Ableton so BASH! follows the set's key).
@@ -336,8 +447,11 @@ void BashProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBu
     midiOut.clear();
     engine.process (left, right, n, transport, midiOut);
 
-    if (buffer.getNumChannels() == 1)
-        juce::FloatVectorOperations::add (left, right, n), juce::FloatVectorOperations::multiply (left, 0.5f, n);
+    if (mainBus.getNumChannels() == 1)
+    {
+        juce::FloatVectorOperations::add (left, right, n);
+        juce::FloatVectorOperations::multiply (left, 0.5f, n);
+    }
 
     // Generated notes go out on channel = track number. Incoming MIDI is reserved
     // for the arpeggiator and modulation matrix (later milestones).

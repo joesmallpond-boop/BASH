@@ -43,6 +43,13 @@ Full spec: *BASH! — Software Requirements Specification* (Claude doc).
 - Drum tracks: Groove mode gives each pad in the window a role (kick, snare, closed hat, open hat, perc…) and plays several hits per step; other slice modes pick one pad per step
 - Kit (pads, sounds, sample paths) saves with the session
 
+**Milestone 5 — mixer and effects** ✅
+
+- Mixer view: per track 2 inserts, Send A/B (post-fader), pan, mute/solo, fader and meter; Return A (Plate) and Return B (Tape Delay) with their own effect; Master with 2 inserts and a safety limiter (-0.3 dBFS)
+- 21 effects, each with A/B knobs, a Gnarl macro (tasteful → wrecked) and Mix:
+  distortion (Fuzz, Hard Clip, Wavefolder, Bitcrush, Rectifier), saturation (Tape with wow, Tube, Transformer), reverb (Plate, Hall, Spring, Shimmer; full Gnarl freezes into an infinite wash), delay (Tape, Digital, Ping-Pong, Grain; tempo-synced, feedback past 100% held by a soft limiter), modulation (Chorus, Flanger, Phaser, Ring Mod, Frequency Shifter)
+- Multi-out: 8 extra stereo outputs ("Track 1"–"Track 8"); enable one in your DAW and that track leaves the main mix
+
 Next: modulation, Life, Roll the Dice, mixer + FX → MIDI import/export → iPad → Max for Live companion.
 
 ## Getting builds

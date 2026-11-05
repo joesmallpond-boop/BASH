@@ -256,7 +256,7 @@ void StepView::mouseUp (const juce::MouseEvent& e)
 
 // ============================================================================
 BashEditor::BashEditor (BashProcessor& p)
-    : AudioProcessorEditor (&p), proc (p), stepView (p), samplerPanel (p), synthPanel (p), drumPanel (p)
+    : AudioProcessorEditor (&p), proc (p), stepView (p), samplerPanel (p), synthPanel (p), drumPanel (p), mixerPanel (p)
 {
     setLookAndFeel (&lnf);
     auto& apvts = proc.apvts;
@@ -322,6 +322,15 @@ BashEditor::BashEditor (BashProcessor& p)
     }
     addChildComponent (synthPanel);
     addChildComponent (drumPanel);
+    addChildComponent (mixerPanel);
+    for (auto* b : { &trackViewButton, &mixerViewButton })
+    {
+        b->setClickingTogglesState (false);
+        addAndMakeVisible (*b);
+    }
+    trackViewButton.onClick = [this] { setView (false); };
+    mixerViewButton.onClick = [this] { setView (true); };
+    trackViewButton.setToggleState (true, juce::dontSendNotification);
 
     selectTrack (0);
     setSize (editorW, editorH);
@@ -334,8 +343,38 @@ BashEditor::~BashEditor()
     setLookAndFeel (nullptr);
 }
 
+std::vector<juce::Component*> BashEditor::trackViewComponents()
+{
+    std::vector<juce::Component*> c { &stepView, &regenButton, &clearButton, &hint, &onButton, &scaleLockButton,
+                                      &engineBox, &algoBox, &cycleBox, &directionBox, &rateBox,
+                                      &engineLabel, &algoLabel, &rateLabel, &directionLabel, &cycleLabel };
+    for (auto& k : seqKnobs) { c.push_back (&k->slider); c.push_back (&k->label); }
+    return c;
+}
+
+void BashEditor::setView (bool mixer)
+{
+    mixerView = mixer;
+    trackViewButton.setToggleState (! mixer, juce::dontSendNotification);
+    mixerViewButton.setToggleState (mixer, juce::dontSendNotification);
+    for (auto* c : trackViewComponents()) c->setVisible (! mixer);
+    mixerPanel.setVisible (mixer);
+    if (mixer)
+    {
+        samplerPanel.setVisible (false);
+        synthPanel.setVisible (false);
+        drumPanel.setVisible (false);
+    }
+    else
+    {
+        updateEnginePanel();
+    }
+    repaint();
+}
+
 void BashEditor::selectTrack (int t)
 {
+    if (mixerView) setView (false);
     currentTrack = t;
     for (int i = 0; i < bash::numTracks; ++i)
         trackButtons[(size_t) i].setToggleState (i == t, juce::dontSendNotification);
@@ -374,6 +413,7 @@ void BashEditor::bindTrack()
 void BashEditor::updateEnginePanel()
 {
     shownEngine = proc.engineType (currentTrack);
+    if (mixerView) return;
     samplerPanel.setVisible (shownEngine == bash::EngineType::Slicer);
     synthPanel.setVisible (shownEngine == bash::EngineType::Synth);
     drumPanel.setVisible (shownEngine == bash::EngineType::Drums);
@@ -390,6 +430,8 @@ void BashEditor::timerCallback()
         synthPanel.refresh();
     if (drumPanel.isVisible())
         drumPanel.refresh();
+    if (mixerPanel.isVisible())
+        mixerPanel.refresh();
     stepView.refresh();
     for (int t = 0; t < bash::numTracks; ++t)
     {
@@ -410,6 +452,7 @@ void BashEditor::paint (juce::Graphics& g)
     g.setFont (juce::FontOptions (13.0f));
     g.drawText ("an all-in-one kalabash solution", margin + 2, 52, 260, 18, juce::Justification::centredLeft);
 
+    if (! mixerView)
     for (auto [r, title] : { std::pair { seqPanel, "SEQUENCER" }, std::pair { voicePanel, shownEngine == bash::EngineType::Slicer ? "SLICE SAMPLER"
                                                        : shownEngine == bash::EngineType::Drums ? "DRUM KIT" : "MACHINE SYNTH" } })
     {
@@ -439,6 +482,9 @@ void BashEditor::resized()
     scaleBox.setBounds (row.removeFromRight (170)); row.removeFromRight (8);
     keyBox.setBounds (row.removeFromRight (72));
 
+    trackViewButton.setBounds (230, 36, 84, 28);
+    mixerViewButton.setBounds (320, 36, 84, 28);
+
     // track selector
     auto tracksRow = area.removeFromTop (44).withTrimmedTop (4);
     const int bw = (tracksRow.getWidth() - 7 * 8) / bash::numTracks;
@@ -446,6 +492,7 @@ void BashEditor::resized()
 
     // steps
     area.removeFromTop (12);
+    mixerPanel.setBounds (area.withTrimmedBottom (14));
     stepView.setBounds (area.removeFromTop (176));
     auto buttons = area.removeFromTop (44).withTrimmedTop (8);
     regenButton.setBounds (buttons.removeFromLeft (130));

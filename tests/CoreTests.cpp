@@ -5,6 +5,7 @@
 #include "bash/Slices.h"
 #include "bash/MachineSynth.h"
 #include "bash/Drums.h"
+#include "bash/Fx.h"
 
 #include <cmath>
 #include <cstdio>
@@ -690,6 +691,146 @@ static void testDrumEngine()
     CHECK (a > 0.01f);
 }
 
+// ---------------------------------------------------------------------------
+// Effects and mixer
+
+static void testEffects()
+{
+    const double sr = 48000.0;
+    for (int ti = 1; ti < (int) FxType::count; ++ti)
+        for (float gn : { 0.0f, 0.5f, 1.0f })
+        {
+            FxSlot fx; fx.prepare (sr, 128);
+            FxParams p; p.type = (FxType) ti; p.a = 0.6f; p.b = 0.7f; p.gnarl = gn; p.mix = 1.0f;
+            uint32_t x = 99;
+            float peak = 0.0f, inEnergy = 0.0f, outEnergy = 0.0f, tail = 0.0f;
+            bool finite = true;
+            std::vector<float> l (128), r (128);
+            for (int b = 0; b < 1500; ++b)   // 4 s: 1 s of signal, then silence
+            {
+                for (int i = 0; i < 128; ++i)
+                {
+                    float v = 0.0f;
+                    if (b < 375)
+                    {
+                        x ^= x << 13; x ^= x >> 17; x ^= x << 5;
+                        v = 0.3f * std::sin ((b * 128 + i) * 0.03f) + 0.1f * ((float) (x >> 8) / 8388608.0f - 1.0f);
+                    }
+                    l[(size_t) i] = v; r[(size_t) i] = v * 0.8f;
+                    inEnergy += v * v;
+                }
+                fx.process (l.data(), r.data(), 128, p, 120.0);
+                for (int i = 0; i < 128; ++i)
+                {
+                    finite = finite && std::isfinite (l[(size_t) i]) && std::isfinite (r[(size_t) i]);
+                    peak = std::max (peak, std::max (std::abs (l[(size_t) i]), std::abs (r[(size_t) i])));
+                    outEnergy += l[(size_t) i] * l[(size_t) i];
+                    if (b >= 1400) tail += l[(size_t) i] * l[(size_t) i];
+                }
+            }
+            CHECK (finite);
+            CHECK (peak < 8.0f);
+            CHECK (outEnergy > inEnergy * 0.01f);   // the effect produces sound
+            const bool sustains = gn > 0.1f && ((FxType) ti >= FxType::Plate && (FxType) ti <= FxType::GrainDelay);
+            if (! sustains) CHECK (tail < outEnergy * 0.05f);   // tails die away unless gnarled into freeze / runaway feedback
+            if (! finite || peak >= 8.0f || ! (outEnergy > inEnergy * 0.01f))
+                std::printf ("  fx %s gnarl %.1f: peak %.2f in %.1f out %.1f\n", fxName ((FxType) ti), gn, peak, inEnergy, outEnergy);
+        }
+
+    // limiter
+    Limiter lim; lim.prepare (sr);
+    std::vector<float> l (4800), r (4800);
+    for (int i = 0; i < 4800; ++i) { l[(size_t) i] = 3.0f * std::sin (i * 0.05f); r[(size_t) i] = -2.0f; }
+    lim.process (l.data(), r.data(), 4800);
+    float pk = 0.0f; for (int i = 0; i < 4800; ++i) pk = std::max (pk, std::max (std::abs (l[(size_t) i]), std::abs (r[(size_t) i])));
+    CHECK (pk <= 0.9661f);
+}
+
+static double runEnergy (Engine& eng, Transport& tp, int blocks, float* lastPeak = nullptr)
+{
+    std::vector<float> l (480), r (480);
+    std::vector<MidiOut> midi;
+    double e = 0.0;
+    for (int b = 0; b < blocks; ++b)
+    {
+        eng.process (l.data(), r.data(), 480, tp, midi);
+        tp.hostPpq += 480.0 * tp.hostBpm / 60.0 / 48000.0;
+        for (int i = 0; i < 480; ++i) e += (double) l[(size_t) i] * l[(size_t) i];
+    }
+    if (lastPeak) { *lastPeak = 0.0f; for (int i = 0; i < 480; ++i) *lastPeak = std::max (*lastPeak, std::abs (l[(size_t) i])); }
+    return e;
+}
+
+static void testMixer()
+{
+    Engine eng; eng.prepare (48000.0, 512);
+    Transport tp; tp.hostAvailable = true; tp.hostPlaying = true; tp.hostBpm = 120.0;
+    eng.track (0).seq.density = 0.8f;
+    eng.global().returns[0].type = FxType::None;
+    eng.global().returns[1].type = FxType::None;
+
+    const double base = runEnergy (eng, tp, 100);
+    CHECK (base > 0.1);
+
+    eng.track (0).mute = true;
+    CHECK (runEnergy (eng, tp, 100) < 1.0e-6);
+    eng.track (0).mute = false;
+
+    eng.track (1).enabled = true; eng.track (1).solo = true;   // soloing another track silences track 1
+    eng.track (1).engine = EngineType::Synth; eng.track (1).seq.density = 0.0f;
+    CHECK (runEnergy (eng, tp, 100) < 1.0e-6);
+    eng.track (1).solo = false; eng.track (1).enabled = false;
+
+    // reverb send: tail after the track stops
+    eng.global().returns[0].type = FxType::Hall; eng.global().returns[0].a = 0.8f;
+    eng.track (0).sendA = 1.0f;
+    runEnergy (eng, tp, 200);
+    eng.track (0).enabled = false;
+    float pk = 0.0f;
+    runEnergy (eng, tp, 20, &pk);
+    CHECK (pk > 1.0e-3f);    // the hall is still ringing
+    runEnergy (eng, tp, 3000, &pk);
+    CHECK (pk < 1.0e-3f);    // ...and dies out
+
+    // insert on a silent track rings out
+    eng.track (0).enabled = true; eng.track (0).sendA = 0.0f;
+    eng.track (0).inserts[0].type = FxType::DigitalDelay; eng.track (0).inserts[0].b = 0.5f;
+    runEnergy (eng, tp, 100);
+    eng.track (0).enabled = false;
+    runEnergy (eng, tp, 5, &pk);
+    CHECK (pk > 1.0e-3f);
+    eng.track (0).inserts[0].type = FxType::None;
+
+    // direct output takes the track out of the main mix
+    eng.track (0).enabled = true;
+    std::vector<float> dl (480, 0.0f), dr (480, 0.0f), l (480), r (480);
+    std::vector<MidiOut> midi;
+    double mainE = 0.0, directE = 0.0;
+    for (int b = 0; b < 100; ++b)
+    {
+        std::fill (dl.begin(), dl.end(), 0.0f); std::fill (dr.begin(), dr.end(), 0.0f);
+        eng.setDirectOutput (0, dl.data(), dr.data());
+        eng.process (l.data(), r.data(), 480, tp, midi);
+        tp.hostPpq += 0.02;
+        for (int i = 0; i < 480; ++i) { mainE += l[(size_t) i] * l[(size_t) i]; directE += dl[(size_t) i] * dl[(size_t) i]; }
+    }
+    eng.setDirectOutput (0, nullptr, nullptr);
+    CHECK (directE > 0.1 && mainE < 0.01 * directE);
+
+    // limiter keeps the master under the ceiling even with everything cranked
+    for (int t = 0; t < numTracks; ++t) { eng.track (t).enabled = true; eng.track (t).level = 1.0f; eng.track (t).seq.density = 1.0f; eng.track (t).voice.drive = 1.0f; }
+    eng.global().master = 1.0f;
+    eng.global().masterFx[0].type = FxType::Fuzz; eng.global().masterFx[0].gnarl = 1.0f;
+    float loud = 0.0f; std::vector<float> L2 (480), R2 (480);
+    for (int b = 0; b < 200; ++b)
+    {
+        eng.process (L2.data(), R2.data(), 480, tp, midi);
+        tp.hostPpq += 0.02;
+        for (int i = 0; i < 480; ++i) loud = std::max (loud, std::max (std::abs (L2[(size_t) i]), std::abs (R2[(size_t) i])));
+    }
+    CHECK (loud <= 0.9661f && loud > 0.3f);
+}
+
 int main()
 {
     testDeterminism();
@@ -712,6 +853,8 @@ int main()
     testDrumSamplesAndChoke();
     testDrumGroove();
     testDrumEngine();
+    testEffects();
+    testMixer();
     std::printf ("%d checks, %d failures\n", checks, failures);
     return failures == 0 ? 0 : 1;
 }

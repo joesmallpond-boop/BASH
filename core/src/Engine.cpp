@@ -38,15 +38,23 @@ namespace bash
             sliceStores[(size_t) t].points.reserve (maxSlices + 1);
         }
         tracks[0].enabled = true;   // track 1 plays out of the box
+        globals.returns[0].type = FxType::Plate;     globals.returns[0].a = 0.6f; globals.returns[0].b = 0.4f;
+        globals.returns[1].type = FxType::TapeDelay; globals.returns[1].a = 0.55f; globals.returns[1].b = 0.4f;
+        for (auto& p : trackPeak) p.store (0.0f);
         refreshScale();
     }
 
     void Engine::prepare (double sampleRate, int maxBlockSize)
     {
         sr = sampleRate;
-        maxBlock = std::max (32, std::min (maxBlockSize, 2048));
+        maxBlock = std::max (32, std::min (maxBlockSize, 128));   // internal chunk: modulation updates every <= 128 samples
         bufL.assign ((size_t) maxBlock, 0.0f);
         bufR.assign ((size_t) maxBlock, 0.0f);
+        for (int k = 0; k < 2; ++k) { retL[(size_t) k].assign ((size_t) maxBlock, 0.0f); retR[(size_t) k].assign ((size_t) maxBlock, 0.0f); }
+        for (auto& tf : trackFx) for (auto& f : tf) f.prepare (sr, maxBlock);
+        for (auto& f : returnFx) f.prepare (sr, maxBlock);
+        for (auto& f : masterFx) f.prepare (sr, maxBlock);
+        limiter.prepare (sr);
         events.reserve (256);
         for (auto& v : synths)  v.prepare (sr);
         for (auto& v : slicers) v.prepare (sr);
@@ -264,6 +272,13 @@ namespace bash
     {
         std::fill (l, l + n, 0.0f);
         std::fill (r, r + n, 0.0f);
+        for (int k = 0; k < 2; ++k)
+        {
+            std::fill (retL[(size_t) k].begin(), retL[(size_t) k].begin() + n, 0.0f);
+            std::fill (retR[(size_t) k].begin(), retR[(size_t) k].begin() + n, 0.0f);
+        }
+        anySolo = false;
+        for (auto& tr : tracks) anySolo = anySolo || tr.solo;
 
         for (int t = 0; t < numTracks; ++t)
         {
@@ -313,9 +328,15 @@ namespace bash
             if (ts.engine != EngineType::Synth && ! synth.isSilent()) synth.allNotesOff();
             if (! isSlicer && ! slicer.isSilent())    slicer.release();
 
+            const bool insertsActive = ts.inserts[0].type != FxType::None || ts.inserts[1].type != FxType::None;
             if (events.empty() && synth.isSilent() && slicer.isSilent() && drum.isSilent())
             {
                 if (isSlicer) { framePos[(size_t) t].store (-1.0); }
+                trackPeak[(size_t) t].store (trackPeak[(size_t) t].load() * 0.9f);
+                if (! insertsActive) continue;
+                std::fill (bufL.begin(), bufL.begin() + n, 0.0f);
+                std::fill (bufR.begin(), bufR.begin() + n, 0.0f);
+                mixTrack (t, l, r, n, offsetInBlock, bpm);   // let insert reverbs / delays ring out
                 continue;
             }
 
@@ -348,17 +369,10 @@ namespace bash
                 framePos[(size_t) t].store (slicer.position());
             (void) isDrums;
 
-            const float pan = std::clamp (ts.pan, -1.0f, 1.0f);
-            const float gl  = ts.level * globals.master * std::cos ((pan + 1.0f) * 0.25f * 3.14159265f) * 1.41421356f;
-            const float gr  = ts.level * globals.master * std::sin ((pan + 1.0f) * 0.25f * 3.14159265f) * 1.41421356f;
-            for (int i = 0; i < n; ++i)
-            {
-                l[i] += bufL[(size_t) i] * gl;
-                r[i] += bufR[(size_t) i] * gr;
-            }
+            mixTrack (t, l, r, n, offsetInBlock, bpm);
         }
 
-        // UI audition of a kit cell, straight to the output
+        // UI audition of a kit cell (goes through the master bus)
         const int req = auditionRequest.exchange (-1);
         if (req >= 0)
         {
@@ -370,11 +384,53 @@ namespace bash
             auditionPlayer.trigger (c, req, 110, false);
         }
         if (! auditionPlayer.isSilent())
+            auditionPlayer.render (l, r, 0, n);
+
+        // returns
+        for (int k = 0; k < 2; ++k)
         {
-            std::fill (bufL.begin(), bufL.begin() + n, 0.0f);
-            std::fill (bufR.begin(), bufR.begin() + n, 0.0f);
-            auditionPlayer.render (bufL.data(), bufR.data(), 0, n);
-            for (int i = 0; i < n; ++i) { l[i] += bufL[(size_t) i] * globals.master; r[i] += bufR[(size_t) i] * globals.master; }
+            if (globals.returns[(size_t) k].type == FxType::None) continue;
+            returnFx[(size_t) k].process (retL[(size_t) k].data(), retR[(size_t) k].data(), n, globals.returns[(size_t) k], bpm);
+            const float g = globals.returnLevel[(size_t) k];
+            for (int i = 0; i < n; ++i) { l[i] += retL[(size_t) k][(size_t) i] * g; r[i] += retR[(size_t) k][(size_t) i] * g; }
         }
+
+        // master
+        for (int k = 0; k < 2; ++k)
+            masterFx[(size_t) k].process (l, r, n, globals.masterFx[(size_t) k], bpm);
+        for (int i = 0; i < n; ++i) { l[i] *= globals.master; r[i] *= globals.master; }
+        if (globals.limiter)
+            limiter.process (l, r, n);
+    }
+
+    void Engine::mixTrack (int t, float* l, float* r, int n, int offsetInBlock, double bpm)
+    {
+        auto& ts = tracks[(size_t) t];
+        for (int k = 0; k < 2; ++k)
+            trackFx[(size_t) t][(size_t) k].process (bufL.data(), bufR.data(), n, ts.inserts[(size_t) k], bpm);
+
+        const bool audible = ! ts.mute && (! anySolo || ts.solo);
+        const float pan = std::clamp (ts.pan, -1.0f, 1.0f);
+        const float lvl = audible ? ts.level : 0.0f;
+        const float gl  = lvl * std::cos ((pan + 1.0f) * 0.25f * 3.14159265f) * 1.41421356f;
+        const float gr  = lvl * std::sin ((pan + 1.0f) * 0.25f * 3.14159265f) * 1.41421356f;
+
+        float* dl = directOuts[(size_t) (2 * t)];
+        float* dr = directOuts[(size_t) (2 * t + 1)];
+        float* outL = dl != nullptr ? dl + offsetInBlock : l;
+        float* outR = dr != nullptr ? dr + offsetInBlock : r;
+        const float sa = ts.sendA, sb = ts.sendB;
+        auto& aL = retL[0]; auto& aR = retR[0]; auto& bL = retL[1]; auto& bR = retR[1];
+
+        float peak = 0.0f;
+        for (int i = 0; i < n; ++i)
+        {
+            const float yl = bufL[(size_t) i] * gl, yr = bufR[(size_t) i] * gr;
+            outL[i] += yl; outR[i] += yr;
+            aL[(size_t) i] += yl * sa; aR[(size_t) i] += yr * sa;
+            bL[(size_t) i] += yl * sb; bR[(size_t) i] += yr * sb;
+            peak = std::max (peak, std::max (std::abs (yl), std::abs (yr)));
+        }
+        trackPeak[(size_t) t].store (std::max (peak, trackPeak[(size_t) t].load() * 0.9f));
     }
 }

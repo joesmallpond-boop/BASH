@@ -8,6 +8,7 @@
 #include "SamplerPanel.h"
 #include "SynthPanel.h"
 #include "DrumPanel.h"
+#include "MixerPanel.h"
 
 namespace bashui
 {
@@ -49,6 +50,7 @@ public:
     void paint (juce::Graphics&) override;
     void resized() override;
     void showTrack (int t) { selectTrack (t); }
+    void showMixer()       { setView (true); }
 
 private:
     void timerCallback() override;
@@ -84,6 +86,11 @@ private:
     bashui::SamplerPanel samplerPanel;
     bashui::SynthPanel synthPanel;
     bashui::DrumPanel drumPanel;
+    bashui::MixerPanel mixerPanel;
+    juce::TextButton trackViewButton { "TRACKS" }, mixerViewButton { "MIXER" };
+    bool mixerView = false;
+    void setView (bool mixer);
+    std::vector<juce::Component*> trackViewComponents();
     bash::EngineType shownEngine = bash::EngineType::Synth;
     void updateEnginePanel();
     std::vector<std::unique_ptr<bashui::Knob>> seqKnobs;

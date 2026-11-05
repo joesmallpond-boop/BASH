@@ -37,7 +37,11 @@ int main (int argc, char** argv)
     }
 
     std::unique_ptr<juce::AudioProcessorEditor> editor (proc.createEditor());
-    if (auto* ed = dynamic_cast<BashEditor*> (editor.get())) ed->showTrack (track - 1);
+    if (auto* ed = dynamic_cast<BashEditor*> (editor.get()))
+    {
+        ed->showTrack (track - 1);
+        if (argc > 6 && juce::String (argv[6]) == "mixer") ed->showMixer();
+    }
     const auto img = editor->createComponentSnapshot (editor->getLocalBounds(), true, 1.0f);
     juce::File out (juce::File::getCurrentWorkingDirectory().getChildFile (juce::String (argv[1])));
     out.deleteFile();

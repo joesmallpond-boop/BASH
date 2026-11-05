@@ -53,6 +53,7 @@ public:
 
     std::vector<bash::StepData> snapshot (int track, uint32_t first, uint32_t count);
     uint32_t playIndex (int track) const { return engine.playIndex (track); }
+    float    trackMeter (int track) const { return engine.trackLevelMeter (track); }
     bool     isRunning() const           { return engine.isRunning(); }
 
     void regenerate (int track);
@@ -90,6 +91,14 @@ public:
 
 private:
     static juce::AudioProcessorValueTreeState::ParameterLayout createLayout();
+    static BusesProperties makeBuses();
+
+    struct FxPtrs { std::atomic<float> *type = nullptr, *a = nullptr, *b = nullptr, *gnarl = nullptr, *mix = nullptr; };
+    FxPtrs fxPtrs (const juce::String& prefix);
+    static bash::FxParams fxFrom (const FxPtrs&);
+    FxPtrs retA, retB;
+    std::array<FxPtrs, 2> mfx;
+    std::atomic<float> *pLimiter = nullptr, *pRetALevel = nullptr, *pRetBLevel = nullptr;
     void pullParameters();
     void timerCallback() override;
     std::shared_ptr<bash::SampleData> decode (const juce::File&, double maxSeconds, juce::String& error);
@@ -106,7 +115,9 @@ private:
                            *accent, *gate, *octave, *scaleLock,
                            *wave, *cutoff, *reso, *envMod, *decay, *drive, *glide, *level, *pan,
                            *machine, *timbre, *ftype, *aAtk, *aDec, *aSus, *aRel,
+                           *mute, *solo, *sendA, *sendB,
                            *engine, *sliceMode, *winStart, *winSize, *pitchFollow, *tune, *sAttack, *sRelease, *reverse;
+        std::array<FxPtrs, 2> fx;
     };
     std::array<TrackParams, bash::numTracks> tp {};
     std::atomic<float> *pRoot = nullptr, *pScale = nullptr, *pTempo = nullptr, *pSync = nullptr,
