@@ -115,6 +115,8 @@ public:
     int  exportBars = 4;
     bool exportWithFx = true;
 
+    static int scaleForMask (int twelveBitMask);   // used by the Ableton key lock
+
     static const juce::StringArray& cycleNames();
     static uint32_t cycleMultiplier (int index);
 
@@ -139,6 +141,8 @@ private:
     double exportBpm() const;
     juce::String exportName (int track, const juce::String& ext) const;
     std::atomic<double> lastHostBpm { 0.0 };
+    int keyLockMaskLow = 0;
+    void setParamFromAudio (const juce::String& id, float value);
     juce::ValueTree kitToTree();
     void kitFromTree (const juce::ValueTree&);
 

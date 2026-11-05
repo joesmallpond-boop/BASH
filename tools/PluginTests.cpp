@@ -164,6 +164,32 @@ static void testExports()
     mid.deleteFile();
 }
 
+static void testKeyLock()
+{
+    BashProcessor p;
+    p.setPlayConfigDetails (0, 2, 48000.0, 256);
+    p.prepareToPlay (48000.0, 256);
+
+    // exact matches by note mask
+    auto maskOf = [] (std::initializer_list<int> iv) { int m = 0; for (int i : iv) m |= 1 << i; return m; };
+    CHECK (p.scaleForMask (maskOf ({ 0, 2, 4, 5, 7, 9, 11 })) == 1);     // Major
+    CHECK (p.scaleForMask (maskOf ({ 0, 2, 3, 5, 7, 8, 10 })) == 0);     // Minor
+    CHECK (p.scaleForMask (maskOf ({ 0, 3, 5, 7, 10 })) == 10);          // Minor pentatonic
+    // a Live scale BASH! doesn't have (Lydian augmented) maps to its nearest relative
+    CHECK (p.scaleForMask (maskOf ({ 0, 2, 4, 6, 8, 9, 11 })) == 4);     // -> Lydian
+
+    // what the device sends: CC 102 root, CC 103 low bits, CC 104 high bits (channel 16)
+    juce::AudioBuffer<float> buf (2, 256);
+    juce::MidiBuffer midi;
+    const int dorian = maskOf ({ 0, 2, 3, 5, 7, 9, 10 });
+    midi.addEvent (juce::MidiMessage::controllerEvent (16, 102, 7), 0);   // G
+    midi.addEvent (juce::MidiMessage::controllerEvent (16, 103, dorian & 127), 1);
+    midi.addEvent (juce::MidiMessage::controllerEvent (16, 104, dorian >> 7), 2);
+    p.processBlock (buf, midi);
+    CHECK ((int) *p.apvts.getRawParameterValue ("root") == 7);
+    CHECK ((int) *p.apvts.getRawParameterValue ("scale") == 2);   // Dorian
+}
+
 int main()
 {
     juce::ScopedJuceInitialiser_GUI init;
@@ -171,6 +197,7 @@ int main()
     testState();
     testProcessing();
     testExports();
+    testKeyLock();
     std::printf ("%d plugin checks, %d failures\n", checks, failures);
     return failures == 0 ? 0 : 1;
 }

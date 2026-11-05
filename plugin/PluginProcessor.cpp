@@ -489,14 +489,18 @@ void BashProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBu
         else if (msg.isController() && msg.getControllerNumber() == 74) engine.midiExpression (bash::ModSource::Aftertouch, (float) msg.getControllerValue() / 127.0f);   // MPE slide
         else if (msg.isNoteOff())  engine.midiNoteIn (msg.getNoteNumber(), 0);
         else if (msg.isAllNotesOff() || msg.isAllSoundOff()) engine.allInputNotesOff();
-        else if (msg.isController() && (msg.getControllerNumber() == 102 || msg.getControllerNumber() == 103))
+        else if (msg.isController() && msg.getControllerNumber() == 102)
         {
-            auto* param = apvts.getParameter (msg.getControllerNumber() == 102 ? "root" : "scale");
-            const int value = msg.getControllerValue();
-            const int count = msg.getControllerNumber() == 102 ? 12 : (int) bash::allScales().size();
-            const float norm = param->convertTo0to1 ((float) juce::jlimit (0, count - 1, value % (msg.getControllerNumber() == 102 ? 12 : 128)));
-            if (std::abs (param->getValue() - norm) > 1.0e-4f)
-                param->setValueNotifyingHost (norm);
+            setParamFromAudio ("root", (float) (msg.getControllerValue() % 12));
+        }
+        else if (msg.isController() && msg.getControllerNumber() == 103)
+        {
+            keyLockMaskLow = msg.getControllerValue();   // scale notes 0-6 above the root
+        }
+        else if (msg.isController() && msg.getControllerNumber() == 104)
+        {
+            const int mask = keyLockMaskLow | (msg.getControllerValue() << 7);   // notes 7-11
+            setParamFromAudio ("scale", (float) scaleForMask (mask));
         }
     }
 
@@ -1195,4 +1199,34 @@ juce::File BashProcessor::exportAudio (int t)
     stream.release();   // the writer owns it now
     writer->writeFromAudioSampleBuffer (buf, 0, buf.getNumSamples());
     return file;
+}
+
+// ---- Ableton key lock --------------------------------------------------------------
+int BashProcessor::scaleForMask (int mask)
+{
+    // The BASH! Key Lock device sends Live's scale as a 12-bit mask of the notes above the
+    // root. Pick the BASH! scale with exactly those notes, or else the closest one.
+    mask |= 1;
+    const auto& scales = bash::allScales();
+    int best = 0;
+    float bestScore = -1.0f;
+    for (int i = 0; i < (int) scales.size(); ++i)
+    {
+        int m = 0;
+        for (int iv : scales[(size_t) i].intervals) m |= 1 << (iv % 12);
+        if (m == mask) return i;
+        const float common = (float) juce::countNumberOfBits ((juce::uint32) (m & mask));
+        const float either = (float) juce::countNumberOfBits ((juce::uint32) (m | mask));
+        const float score = common / either;
+        if (score > bestScore) { bestScore = score; best = i; }
+    }
+    return best;
+}
+
+void BashProcessor::setParamFromAudio (const juce::String& id, float value)
+{
+    auto* param = apvts.getParameter (id);
+    const float norm = param->convertTo0to1 (value);
+    if (std::abs (param->getValue() - norm) > 1.0e-4f)
+        param->setValueNotifyingHost (norm);
 }

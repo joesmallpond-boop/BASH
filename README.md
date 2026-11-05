@@ -63,6 +63,14 @@ Full spec: *BASH! — Software Requirements Specification* (Claude doc).
 - MIDI import: drop a .mid on the step grid. Its notes, rhythm and accents become the track's motif: Type 0 plays it exactly, turning Type up morphs away from it (Clear MIDI removes it). Drum tracks map notes 36–51 to the pads
 - Swing and Jitter per track
 
+**Milestone 8 — iPad** ✅ (needs your Apple team to install: `scripts/build-ipad.sh`)
+
+- Standalone iPad app + AUv3 from the same code; the whole UI scales to any window (also resizable in DAWs); on iPad the MIDI/WAV chips open the share sheet
+
+**Milestone 9 — Ableton key lock** ✅ (untested in Live yet)
+
+- `m4l/BASH Key Lock.amxd`: put it before BASH! on the track and BASH! follows the set's key and scale (any Live scale maps to BASH!'s nearest). See `m4l/README.md`
+
 Next: modulation, Life, Roll the Dice, mixer + FX → MIDI import/export → iPad → Max for Live companion.
 
 ## Getting builds
