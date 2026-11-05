@@ -22,7 +22,16 @@ juce_add_plugin(BASH
     EDITOR_WANTS_KEYBOARD_FOCUS FALSE
     COPY_PLUGIN_AFTER_BUILD FALSE
     VST3_CATEGORIES         Instrument Synth Sampler
-    AU_MAIN_TYPE            kAudioUnitType_MusicDevice)
+    AU_MAIN_TYPE            kAudioUnitType_MusicDevice
+    # iPad app + AUv3
+    FILE_SHARING_ENABLED    TRUE
+    DOCUMENT_BROWSER_ENABLED TRUE
+    BACKGROUND_AUDIO_ENABLED TRUE
+    REQUIRES_FULL_SCREEN    FALSE
+    MICROPHONE_PERMISSION_ENABLED FALSE
+    IPAD_SCREEN_ORIENTATIONS UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight
+                             UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown
+    IPHONE_SCREEN_ORIENTATIONS UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight)
 
 target_sources(BASH PRIVATE
     PluginProcessor.cpp
@@ -33,6 +42,10 @@ target_sources(BASH PRIVATE
     MixerPanel.cpp
     ModPanel.cpp
     ExportUI.cpp)
+
+if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    target_compile_definitions(BASH PUBLIC JUCE_CONTENT_SHARING=1)
+endif()
 
 target_compile_definitions(BASH PUBLIC
     JUCE_WEB_BROWSER=0

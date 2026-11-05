@@ -22,6 +22,7 @@ namespace bashui
         juce::String label;
         std::function<juce::File()> makeFile;
         bool dragged = false, pressed = false, busy = false;
+        juce::ScopedMessageBox shareBox;   // iOS share sheet
     };
 
     /** Bars + FX choice and the per-track drag chips (MIDI, WAV). */

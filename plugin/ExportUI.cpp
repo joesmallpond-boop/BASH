@@ -23,6 +23,10 @@ void DragChip::paint (juce::Graphics& g)
 
 void DragChip::mouseDrag (const juce::MouseEvent& e)
 {
+   #if JUCE_IOS
+    juce::ignoreUnused (e);
+    return;   // no drag between apps on iOS: a tap opens the share sheet instead
+   #endif
     if (dragged || e.getDistanceFromDragStart() < 6) return;
     dragged = true;
     busy = true; repaint();
@@ -46,8 +50,12 @@ void DragChip::mouseUp (const juce::MouseEvent&)
         busy = false;
         if (file.existsAsFile())
         {
+           #if JUCE_IOS
+            // AirDrop, Files, AudioShare, other apps... (also kept in the app's BASH Exports folder)
+            shareBox = juce::ContentSharer::shareFilesScoped ({ juce::URL (file) }, [] (bool, const juce::String&) {}, this);
+            if (onMessage) onMessage ("Sharing " + file.getFileName());
+           #else
             if (onMessage) onMessage ("Saved " + file.getFileName() + " to " + file.getParentDirectory().getFullPathName());
-           #if ! JUCE_IOS
             file.revealToUser();
            #endif
         }
@@ -78,6 +86,9 @@ ExportBar::ExportBar (BashProcessor& p, std::function<int()> currentTrack)
     fx.setTooltip ("Render with the track's inserts and sends");
     addAndMakeVisible (fx);
 
+   #if JUCE_IOS
+    title.setText ("SHARE", juce::dontSendNotification);
+   #endif
     midi.setTooltip ("Drag into your DAW or onto the desktop as a MIDI file. Click to save it.");
     wav.setTooltip ("Drag out this track as a WAV loop. Click to save it.");
     for (auto* c : { &midi, &wav })

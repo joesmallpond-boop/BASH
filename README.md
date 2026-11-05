@@ -67,12 +67,17 @@ Next: modulation, Life, Roll the Dice, mixer + FX → MIDI import/export → iPa
 
 ## Getting builds
 
-Every push to `main` builds on GitHub Actions. Open the **Actions** tab, pick the latest run, and download:
+**On your Mac (recommended):** install CMake (`brew install cmake`), then in the repo folder run
 
-- **BASH-mac** — a DMG with `BASH.vst3`, `BASH.component` (AU) and `BASH.app`
-- **BASH-windows** — a zip with `BASH.vst3` and `BASH.exe`
+```
+./scripts/build-mac.sh
+```
 
-Install steps are in the `INSTALL` file inside each download. Pushing a tag like `v0.1.0` also publishes a GitHub Release with both.
+It builds VST3 + AU + the standalone app, runs all the tests, makes `BASH-mac.dmg` and installs the plugins for you.
+
+**iPad:** `./scripts/build-ipad.sh YOURTEAMID` makes the Xcode project and opens it; pick your iPad and press Run. You get the standalone app plus the AUv3 for AUM, Logic for iPad, Cubasis and others. On iPad the MIDI/WAV chips open the share sheet instead of dragging.
+
+**GitHub Actions:** every push runs the tests (Linux) and builds Windows (download **BASH-windows** from the run). Mac and iPad builds use 10x-billed macOS minutes on a private repo, so they run only for version tags (`v0.1.0` also publishes a Release) or when you start them by hand: Actions → Build → Run workflow.
 
 ## Layout
 
