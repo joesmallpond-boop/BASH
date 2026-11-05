@@ -17,6 +17,10 @@ on:
         description: "Build the Mac installer (DMG)"
         type: boolean
         default: true
+      release:
+        description: "Publish the builds as GitHub Release v0.1.0"
+        type: boolean
+        default: false
       ipad:
         description: "Also run the iPad compile check"
         type: boolean
@@ -117,7 +121,7 @@ jobs:
 
   release:
     name: Publish release
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.mac && inputs.release)
     needs: [macos, windows]
     runs-on: ubuntu-latest
     steps:
@@ -126,6 +130,12 @@ jobs:
           path: dist
       - uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || 'v0.1.0' }}
+          name: BASH! ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || 'v0.1.0' }}
+          target_commitish: ${{ github.sha }}
+          body: |
+            **Mac:** download BASH-mac.dmg, open it and double-click "Install BASH!.pkg" (standalone app + VST3 + AU). If macOS blocks it, right-click the .pkg > Open.
+            **Windows:** BASH-windows.zip (VST3 + standalone), see INSTALL-windows.txt inside.
           files: |
             dist/BASH-mac/BASH-mac.dmg
             dist/BASH-windows/BASH-windows.zip
