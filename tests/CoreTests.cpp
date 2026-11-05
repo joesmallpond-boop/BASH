@@ -4,6 +4,7 @@
 #include "bash/Sequencer.h"
 #include "bash/Slices.h"
 #include "bash/MachineSynth.h"
+#include "bash/Drums.h"
 
 #include <cmath>
 #include <cstdio>
@@ -554,6 +555,141 @@ static void testEngineMidiIn()
     CHECK (ch1 && ch9);
 }
 
+// ---------------------------------------------------------------------------
+// Drums
+
+static void testFmDrums()
+{
+    for (const auto& preset : fmPresets())
+    {
+        DrumPlayer pl; pl.prepare (48000.0);
+        pl.trigger (makeFmCell (preset), 0, 120, false);
+        std::vector<float> l (48000 * 12, 0.0f), r (48000 * 12, 0.0f);
+        pl.render (l.data(), r.data(), 0, (int) l.size());
+        double e = 0.0; bool finite = true; float peak = 0.0f;
+        for (size_t i = 0; i < l.size(); ++i) { e += l[i] * l[i]; finite = finite && std::isfinite (l[i]); peak = std::max (peak, std::abs (l[i])); }
+        CHECK (finite);
+        CHECK (e > 0.5);
+        CHECK (peak < 2.0f);
+        CHECK (pl.isSilent());   // one-shots end on their own
+        if (! (e > 0.5)) std::printf ("  quiet preset %s\n", preset.name);
+    }
+    CHECK (fmStartPoints().size() >= 4);
+    for (auto& sp : fmStartPoints()) CHECK (sp.preset >= 0 && sp.preset < (int) fmPresets().size());
+    for (auto& kit : factoryKits())
+        for (int c : kit.cells) CHECK (c >= -1 && c < (int) fmPresets().size());
+}
+
+static void testDrumSamplesAndChoke()
+{
+    SampleData d; d.sampleRate = 48000.0;
+    for (int i = 0; i < 48000; ++i) d.left.push_back (i < 24000 ? 0.5f : -0.5f);
+    d.right = d.left;
+
+    DrumCell c; c.kind = DrumCell::Kind::Sample; c.sample = &d; c.start = 0.5f; c.end = 0.75f; c.fadeOut = 0.001f;
+    DrumPlayer pl; pl.prepare (48000.0);
+    pl.trigger (c, 3, 127, false);
+    std::vector<float> l (48000, 0.0f), r (48000, 0.0f);
+    pl.render (l.data(), r.data(), 0, 48000);
+    CHECK (l[1000] < -0.1f);            // second half of the file (negative)
+    CHECK (std::abs (l[13000]) < 1.0e-6f); // stopped after a quarter of the file
+    CHECK (pl.isSilent());
+
+    // choke: closed hat cuts open hat in the same group
+    DrumCell open = makeFmCell (fmPresets()[9]), closed = makeFmCell (fmPresets()[8]);
+    CHECK (open.choke == 1 && closed.choke == 1);
+    DrumPlayer hp; hp.prepare (48000.0);
+    hp.trigger (open, 1, 100, false);
+    std::fill (l.begin(), l.end(), 0.0f); std::fill (r.begin(), r.end(), 0.0f);
+    hp.render (l.data(), r.data(), 0, 4800);
+    hp.trigger (closed, 0, 100, false);
+    hp.render (l.data(), r.data(), 4800, 48000 - 4800);
+    CHECK (hp.isSilent());
+    float lateEnergy = 0.0f;
+    for (int i = 24000; i < 48000; ++i) lateEnergy += l[i] * l[i];
+    CHECK (lateEnergy < 1.0e-6f);       // the open hat's long tail was cut
+
+    pl.trigger (c, 3, 127, false);
+    pl.stopVoicesUsing (&d);
+    CHECK (pl.isSilent());
+}
+
+static void testDrumGroove()
+{
+    Pattern pat (909);
+    Scale s (0, 0);
+    SequencerParams p; p.drumTrack = true; p.sliceCount = numCells; p.sliceMode = SliceMode::Groove;
+    p.windowStart = 8; p.windowSize = 4; p.density = 0.5f; p.type = 0.0f;
+    int multi = 0, kicksOnOne = 0;
+    for (uint32_t i = 0; i < 256; ++i)
+    {
+        auto st = pat.step (i, p, s);
+        if (! st.active) continue;
+        CHECK (st.slice >= 8 && st.slice < 12);
+        CHECK (st.note == 36 + st.slice);
+        for (int c = 0; c < st.chordExtra; ++c) CHECK (st.chord[(size_t) c] >= 36 + 8 && st.chord[(size_t) c] < 36 + 12);
+        if (st.chordExtra > 0) ++multi;
+        if (i % 16 == 0 && st.slice == 8) ++kicksOnOne;
+    }
+    CHECK (multi > 20);          // kick + hat together etc.
+    CHECK (kicksOnOne == 16);    // the first cell (kick role) always lands on beat 1 at Type 0
+
+    // other modes: note follows the cell
+    p.sliceMode = SliceMode::Bounce; p.density = 1.0f;
+    for (uint32_t i = 0; i < 64; ++i) { auto st = pat.step (i, p, s); CHECK (st.note == 36 + st.slice && st.chordExtra == 0); }
+}
+
+static void testDrumEngine()
+{
+    Engine eng; eng.prepare (48000.0, 256);
+    const auto& kit = factoryKits()[0];
+    for (int c = 0; c < numCells; ++c) if (kit.cells[(size_t) c] >= 0) eng.setCell (c, makeFmCell (fmPresets()[(size_t) kit.cells[(size_t) c]]));
+    auto& t = eng.track (1);
+    t.enabled = true; t.engine = EngineType::Drums;
+    t.seq.sliceMode = SliceMode::Groove; t.seq.windowStart = 0; t.seq.windowSize = 4; t.seq.density = 0.6f;
+    eng.track (0).enabled = false;
+
+    Transport tp; tp.hostAvailable = true; tp.hostPlaying = true; tp.hostBpm = 125.0;
+    std::vector<float> l (480), r (480);
+    std::vector<MidiOut> midi;
+    double energy = 0.0;
+    for (int b = 0; b < 300; ++b)
+    {
+        eng.process (l.data(), r.data(), 480, tp, midi);
+        tp.hostPpq += 480.0 * 125.0 / 60.0 / 48000.0;
+        for (int i = 0; i < 480; ++i) energy += (double) l[i] * l[i];
+    }
+    CHECK (energy > 1.0);
+    std::set<int> notes; for (auto& m : midi) if (m.noteOn && m.channel == 2) notes.insert (m.note);
+    CHECK (notes.count (36) && notes.count (38) && notes.size() >= 3);
+
+    // replacing a sample cell: voices using the old one stop on the next block
+    eng.track (1).enabled = false;
+    for (int b = 0; b < 1200; ++b) { eng.process (l.data(), r.data(), 480, tp, midi); tp.hostPpq += 480.0 * 125.0 / 60.0 / 48000.0; }
+    SampleData d; d.sampleRate = 48000.0; d.left.assign (480000, 0.3f); d.right = d.left;
+    DrumCell sc; sc.kind = DrumCell::Kind::Sample; sc.sample = &d;
+    eng.setCell (0, sc);
+    eng.track (1).enabled = true;
+    eng.track (1).seq.sliceMode = SliceMode::Window; eng.track (1).seq.windowSize = 1; eng.track (1).seq.density = 1.0f;
+    for (int b = 0; b < 40; ++b) { eng.process (l.data(), r.data(), 480, tp, midi); tp.hostPpq += 480.0 * 125.0 / 60.0 / 48000.0; }
+    float during = 0.0f; for (int i = 0; i < 480; ++i) during = std::max (during, std::abs (l[i]));
+    CHECK (during > 0.1f);
+    eng.track (1).enabled = false;
+    DrumCell empty;
+    eng.setCell (0, empty);
+    eng.process (l.data(), r.data(), 480, tp, midi);
+    eng.process (l.data(), r.data(), 480, tp, midi);
+    float peak = 0.0f; for (int i = 0; i < 480; ++i) peak = std::max (peak, std::abs (l[i]));
+    CHECK (peak < 0.05f);
+
+    // audition plays through the output with no track running
+    eng.setCell (5, makeFmCell (fmPresets()[0]));
+    eng.audition (5);
+    eng.process (l.data(), r.data(), 480, tp, midi);
+    float a = 0.0f; for (int i = 0; i < 480; ++i) a = std::max (a, std::abs (l[i]));
+    CHECK (a > 0.01f);
+}
+
 int main()
 {
     testDeterminism();
@@ -572,6 +708,10 @@ int main()
     testAlgorithms();
     testMachines();
     testEngineMidiIn();
+    testFmDrums();
+    testDrumSamplesAndChoke();
+    testDrumGroove();
+    testDrumEngine();
     std::printf ("%d checks, %d failures\n", checks, failures);
     return failures == 0 ? 0 : 1;
 }

@@ -4,6 +4,7 @@
 // and the global key/scale. Pure C++ with no JUCE dependency, so it runs the
 // same in every plugin format, on iPad, and in unit tests.
 
+#include "bash/Drums.h"
 #include "bash/MachineSynth.h"
 #include "bash/Scale.h"
 #include "bash/Sequencer.h"
@@ -103,6 +104,12 @@ namespace bash
         void lockStep (int t, const SequencerParams&, const Scale&, uint32_t index,
                        uint8_t mask = lockbit::all);
 
+        // ---- drum kit (message thread) ----
+        void     setCell (int index, const DrumCell&);
+        DrumCell cell (int index);
+        /** Plays a cell once through the master output (UI preview). */
+        void     audition (int index)          { auditionRequest.store (index); }
+
         // ---- slicer (message thread) ----
         /** The caller owns the sample. After replacing one, keep the old one alive
             until blocksProcessed() has advanced by 2 (the audio thread drops it at
@@ -138,6 +145,12 @@ namespace bash
         std::array<MachineSynth,  numTracks> synths;
         std::array<SliceVoice,    numTracks> slicers;
         std::array<SliceStore,    numTracks> sliceStores;
+        std::array<DrumPlayer,    numTracks> drums;
+        std::array<DrumCell,      numCells>  kit;
+        SpinMutex kitMutex;
+        std::array<std::atomic<const SampleData*>, numCells> retiredCellSamples {};
+        std::atomic<int> auditionRequest { -1 };
+        DrumPlayer auditionPlayer;
         std::array<std::atomic<const SampleData*>, numTracks> samples {};
         std::array<const SampleData*, numTracks> lastSample {};
         std::array<int, numTracks> slicerNote {};

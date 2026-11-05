@@ -4,7 +4,7 @@ using namespace bashui;
 
 namespace
 {
-    constexpr int editorW = 1040, editorH = 920;
+    constexpr int editorW = 1040, editorH = 944;
     constexpr int margin = 24;
 
     juce::String noteText (int note)
@@ -123,6 +123,7 @@ void StepView::refresh()
 {
     const auto params = proc.uiSeqParams (track);
     sliceCount = params.sliceCount;
+    drumTrack = params.drumTrack;
     length   = params.length;
     visible  = juce::jmin<uint32_t> (length, 64u);
     running  = proc.isRunning();
@@ -171,7 +172,9 @@ void StepView::paint (juce::Graphics& g)
         auto inner = cell.reduced (5.0f);
         if (s.active)
         {
-            const float frac = sliceCount > 0
+            const float frac = drumTrack
+                ? juce::jmap ((float) (1 + s.chordExtra) / 4.0f, 0.12f, 0.92f)
+                : sliceCount > 0
                 ? juce::jmap ((float) (s.slice + 1) / (float) sliceCount, 0.12f, 0.92f)
                 : juce::jlimit (0.12f, 0.92f, juce::jmap ((float) (s.note - baseNote), -12.0f, 24.0f, 0.12f, 0.92f));
             auto bar = inner.withTrimmedTop (16.0f);
@@ -181,7 +184,18 @@ void StepView::paint (juce::Graphics& g)
 
             g.setColour (colour::ink);
             g.setFont (juce::FontOptions (10.5f));
-            g.drawText (sliceCount > 0 ? "S" + juce::String (s.slice + 1) : noteText (s.note),
+            juce::String label = noteText (s.note);
+            if (drumTrack)
+            {
+                label = proc.cellName (s.slice).substring (0, 5);
+                if (label.isEmpty()) label = juce::String (s.slice + 1);
+                if (s.chordExtra > 0) label << "+" << s.chordExtra;
+            }
+            else if (sliceCount > 0)
+            {
+                label = "S" + juce::String (s.slice + 1);
+            }
+            g.drawText (label,
                         inner.removeFromTop (14.0f), juce::Justification::centred);
 
             if (s.slide)
@@ -242,7 +256,7 @@ void StepView::mouseUp (const juce::MouseEvent& e)
 
 // ============================================================================
 BashEditor::BashEditor (BashProcessor& p)
-    : AudioProcessorEditor (&p), proc (p), stepView (p), samplerPanel (p), synthPanel (p)
+    : AudioProcessorEditor (&p), proc (p), stepView (p), samplerPanel (p), synthPanel (p), drumPanel (p)
 {
     setLookAndFeel (&lnf);
     auto& apvts = proc.apvts;
@@ -307,6 +321,7 @@ BashEditor::BashEditor (BashProcessor& p)
         seqKnobs.push_back (std::move (k)); seqKnobIds.push_back (id);
     }
     addChildComponent (synthPanel);
+    addChildComponent (drumPanel);
 
     selectTrack (0);
     setSize (editorW, editorH);
@@ -328,6 +343,7 @@ void BashEditor::selectTrack (int t)
     stepView.setTrack (t);
     samplerPanel.setTrack (t);
     synthPanel.setTrack (t);
+    drumPanel.setTrack (t);
     updateEnginePanel();
 }
 
@@ -358,9 +374,9 @@ void BashEditor::bindTrack()
 void BashEditor::updateEnginePanel()
 {
     shownEngine = proc.engineType (currentTrack);
-    const bool slicer = shownEngine == bash::EngineType::Slicer;
-    samplerPanel.setVisible (slicer);
-    synthPanel.setVisible (! slicer);
+    samplerPanel.setVisible (shownEngine == bash::EngineType::Slicer);
+    synthPanel.setVisible (shownEngine == bash::EngineType::Synth);
+    drumPanel.setVisible (shownEngine == bash::EngineType::Drums);
     repaint();
 }
 
@@ -372,6 +388,8 @@ void BashEditor::timerCallback()
         samplerPanel.refresh();
     if (synthPanel.isVisible())
         synthPanel.refresh();
+    if (drumPanel.isVisible())
+        drumPanel.refresh();
     stepView.refresh();
     for (int t = 0; t < bash::numTracks; ++t)
     {
@@ -392,7 +410,8 @@ void BashEditor::paint (juce::Graphics& g)
     g.setFont (juce::FontOptions (13.0f));
     g.drawText ("an all-in-one kalabash solution", margin + 2, 52, 260, 18, juce::Justification::centredLeft);
 
-    for (auto [r, title] : { std::pair { seqPanel, "SEQUENCER" }, std::pair { voicePanel, shownEngine == bash::EngineType::Slicer ? "SLICE SAMPLER" : "MACHINE SYNTH" } })
+    for (auto [r, title] : { std::pair { seqPanel, "SEQUENCER" }, std::pair { voicePanel, shownEngine == bash::EngineType::Slicer ? "SLICE SAMPLER"
+                                                       : shownEngine == bash::EngineType::Drums ? "DRUM KIT" : "MACHINE SYNTH" } })
     {
         g.setColour (colour::panel);
         g.fillRoundedRectangle (r.toFloat(), 14.0f);
@@ -466,7 +485,8 @@ void BashEditor::resized()
 
     // voice panel
     area.removeFromTop (12);
-    voicePanel = area.removeFromTop (278);
+    voicePanel = area.removeFromTop (302);
     samplerPanel.setBounds (voicePanel.reduced (16).withTrimmedTop (22));
     synthPanel.setBounds (voicePanel.reduced (16).withTrimmedTop (22));
+    drumPanel.setBounds (voicePanel.reduced (16).withTrimmedTop (22));
 }

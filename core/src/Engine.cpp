@@ -50,6 +50,8 @@ namespace bash
         events.reserve (256);
         for (auto& v : synths)  v.prepare (sr);
         for (auto& v : slicers) v.prepare (sr);
+        for (auto& d : drums)   d.prepare (sr);
+        auditionPlayer.prepare (sr);
         for (auto& p : players) p.reset();
     }
 
@@ -111,6 +113,26 @@ namespace bash
         store.points.assign (s.begin(), s.end());   // capacity reserved: no allocation
     }
 
+    void Engine::setCell (int index, const DrumCell& c)
+    {
+        if (index < 0 || index >= numCells) return;
+        const SampleData* old = nullptr;
+        {
+            std::lock_guard<SpinMutex> g (kitMutex);
+            old = kit[(size_t) index].kind == DrumCell::Kind::Sample ? kit[(size_t) index].sample : nullptr;
+            kit[(size_t) index] = c;
+        }
+        const SampleData* now = c.kind == DrumCell::Kind::Sample ? c.sample : nullptr;
+        if (old != nullptr && old != now)
+            retiredCellSamples[(size_t) index].store (old);   // audio thread stops voices using it
+    }
+
+    DrumCell Engine::cell (int index)
+    {
+        std::lock_guard<SpinMutex> g (kitMutex);
+        return kit[(size_t) std::clamp (index, 0, numCells - 1)];
+    }
+
     std::vector<uint32_t> Engine::slices (int t)
     {
         auto& store = sliceStores[(size_t) t];
@@ -142,6 +164,13 @@ namespace bash
                 lastSample[(size_t) t] = now;
             }
         }
+
+        for (auto& r : retiredCellSamples)
+            if (const SampleData* old = r.exchange (nullptr))
+            {
+                for (auto& d : drums) d.stopVoicesUsing (old);
+                auditionPlayer.stopVoicesUsing (old);
+            }
 
         const bool useHost = globals.hostSync && tp.hostAvailable;
         const bool run     = useHost ? tp.hostPlaying : globals.playing;
@@ -204,8 +233,21 @@ namespace bash
                 return;
             }
 
+            case EngineType::Drums:
+            {
+                if (! e.noteOn) return;   // one-shots
+                const int idx = std::clamp (e.note - drumBaseNote, 0, numCells - 1);
+                DrumCell c;
+                {
+                    std::lock_guard<SpinMutex> g (kitMutex);
+                    c = kit[(size_t) idx];
+                }
+                drums[(size_t) t].trigger (c, idx, e.velocity, e.accent);
+                sliceNow[(size_t) t].store (idx);
+                return;
+            }
+
             case EngineType::Synth:
-            case EngineType::Drums:   // drums arrive in milestone 4; synth voice meanwhile
             default:
             {
                 auto& v = synths[(size_t) t];
@@ -230,7 +272,12 @@ namespace bash
             events.clear();
 
             // the sequencer needs to know how many slices exist
-            if (ts.engine == EngineType::Slicer)
+            ts.seq.drumTrack = ts.engine == EngineType::Drums;
+            if (ts.engine == EngineType::Drums)
+            {
+                ts.seq.sliceCount = numCells;
+            }
+            else if (ts.engine == EngineType::Slicer)
             {
                 auto& store = sliceStores[(size_t) t];
                 std::lock_guard<SpinMutex> g (store.m);
@@ -258,13 +305,15 @@ namespace bash
 
             auto& synth  = synths[(size_t) t];
             auto& slicer = slicers[(size_t) t];
+            auto& drum   = drums[(size_t) t];
             const bool isSlicer = ts.engine == EngineType::Slicer;
+            const bool isDrums  = ts.engine == EngineType::Drums;
 
             // engine switched: silence the one no longer used
-            if (isSlicer && ! synth.isSilent())       synth.allNotesOff();
+            if (ts.engine != EngineType::Synth && ! synth.isSilent()) synth.allNotesOff();
             if (! isSlicer && ! slicer.isSilent())    slicer.release();
 
-            if (events.empty() && synth.isSilent() && slicer.isSilent())
+            if (events.empty() && synth.isSilent() && slicer.isSilent() && drum.isSilent())
             {
                 if (isSlicer) { framePos[(size_t) t].store (-1.0); }
                 continue;
@@ -278,6 +327,7 @@ namespace bash
                 if (count <= 0) return;
                 if (! synth.isSilent())  synth.render (bufL.data(), from, count, ts.voice);
                 if (! slicer.isSilent()) slicer.render (bufL.data() + 0, bufR.data(), from, count, ts.slicer.voice);
+                if (! drum.isSilent())   drum.render (bufL.data(), bufR.data(), from, count);
             };
 
             // synth renders mono into bufL; copy it to bufR afterwards. To keep that
@@ -292,10 +342,11 @@ namespace bash
             }
             renderRange (pos, n - pos);
 
-            if (! isSlicer)
+            if (ts.engine == EngineType::Synth)
                 std::copy (bufL.begin(), bufL.begin() + n, bufR.begin());   // mono synth → both sides
-            else
+            else if (isSlicer)
                 framePos[(size_t) t].store (slicer.position());
+            (void) isDrums;
 
             const float pan = std::clamp (ts.pan, -1.0f, 1.0f);
             const float gl  = ts.level * globals.master * std::cos ((pan + 1.0f) * 0.25f * 3.14159265f) * 1.41421356f;
@@ -305,6 +356,25 @@ namespace bash
                 l[i] += bufL[(size_t) i] * gl;
                 r[i] += bufR[(size_t) i] * gr;
             }
+        }
+
+        // UI audition of a kit cell, straight to the output
+        const int req = auditionRequest.exchange (-1);
+        if (req >= 0)
+        {
+            DrumCell c;
+            {
+                std::lock_guard<SpinMutex> g (kitMutex);
+                c = kit[(size_t) std::clamp (req, 0, numCells - 1)];
+            }
+            auditionPlayer.trigger (c, req, 110, false);
+        }
+        if (! auditionPlayer.isSilent())
+        {
+            std::fill (bufL.begin(), bufL.begin() + n, 0.0f);
+            std::fill (bufR.begin(), bufR.begin() + n, 0.0f);
+            auditionPlayer.render (bufL.data(), bufR.data(), 0, n);
+            for (int i = 0; i < n; ++i) { l[i] += bufL[(size_t) i] * globals.master; r[i] += bufR[(size_t) i] * globals.master; }
         }
     }
 }

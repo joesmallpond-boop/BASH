@@ -36,6 +36,7 @@ namespace bash
         Window = 0,   // stay inside a short run of slices (window start + size)
         Bounce,       // jump anywhere across all slices
         Sequential,   // slices in order, following the sequencer's direction
+        Groove,       // drums: each cell in the window gets a role (kick, snare, hats, perc), several hits per step
         count
     };
 
@@ -57,6 +58,7 @@ namespace bash
         SliceMode sliceMode   = SliceMode::Window;
         uint32_t  windowStart = 0;
         uint32_t  windowSize  = 4;
+        bool      drumTrack   = false;  // slices are drum cells; note = 36 + cell
 
         // arpeggiator input: notes currently held on MIDI in (ascending)
         std::array<int, 16> held {};

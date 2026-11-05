@@ -34,7 +34,16 @@ Full spec: *BASH! — Software Requirements Specification* (Claude doc).
 - Algorithms: Core Acid V1/V2, Counterpoint (bar-wise harmony → in-key chords on the track's channel, complementary bass on channel + 8), Arpeggiator (plays only the notes you hold on MIDI in), Dedicated Bass (grid-locked driving low end)
 - MIDI CC 102/103 set Key/Scale (used by the Ableton key-lock device)
 
-Next: drum grid → modulation, Life, Roll the Dice, mixer + FX → MIDI import/export → iPad → Max for Live companion.
+**Milestone 4 — drum kit** ✅
+
+- 4×4 pad grid (notes 36–51). Each pad is a sample or an FM drum; click to audition
+- Drop samples on pads (several files fill several pads); sample editor: start/end (drag on the waveform), fade in/out, transient attack/sustain, tune, low-pass, reverse
+- FM drum engine: pitch + sweep, FM ratio/amount/decay, noise with tone, clap bursts, click, drive; starting points for Kick, Snare, Clap, Cymbal, Hat, Tom plus 30 FM sounds
+- 5 factory kits (Acid House, Electro, Industrial, Minimal, Big Room), choke groups, level/pan per pad
+- Drum tracks: Groove mode gives each pad in the window a role (kick, snare, closed hat, open hat, perc…) and plays several hits per step; other slice modes pick one pad per step
+- Kit (pads, sounds, sample paths) saves with the session
+
+Next: modulation, Life, Roll the Dice, mixer + FX → MIDI import/export → iPad → Max for Live companion.
 
 ## Getting builds
 

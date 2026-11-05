@@ -43,7 +43,7 @@ namespace bash
             rhythm = 0x1001, rhythmJitter, pitchPick, pitchChaos, pitchChaosRange,
             chromatic, chromaticAmount, octaveUp, octaveDown, accent, slide,
             gateVar, direction, reseed, slicePick, sliceChaos,
-            harmony, harmonyChaos, chordRhythm, chordExtra, bassRhythm, bassPick, arpPick, arpChaos
+            harmony, harmonyChaos, chordRhythm, chordExtra, bassRhythm, bassPick, arpPick, arpChaos, grooveJitter, grooveChaos
         };
     }
 }

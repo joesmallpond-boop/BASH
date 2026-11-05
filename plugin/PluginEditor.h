@@ -7,6 +7,7 @@
 #include "UiCommon.h"
 #include "SamplerPanel.h"
 #include "SynthPanel.h"
+#include "DrumPanel.h"
 
 namespace bashui
 {
@@ -31,6 +32,7 @@ namespace bashui
         bool running = false;
         int baseNote = 36;
         uint32_t sliceCount = 0;
+        bool drumTrack = false;
         std::vector<bash::StepData> steps;
         std::vector<uint8_t> masks;
         juce::uint32 pressTime = 0;
@@ -46,6 +48,7 @@ public:
 
     void paint (juce::Graphics&) override;
     void resized() override;
+    void showTrack (int t) { selectTrack (t); }
 
 private:
     void timerCallback() override;
@@ -80,6 +83,7 @@ private:
     juce::Label engineLabel, algoLabel, cycleLabel, directionLabel, rateLabel;
     bashui::SamplerPanel samplerPanel;
     bashui::SynthPanel synthPanel;
+    bashui::DrumPanel drumPanel;
     bash::EngineType shownEngine = bash::EngineType::Synth;
     void updateEnginePanel();
     std::vector<std::unique_ptr<bashui::Knob>> seqKnobs;

@@ -41,6 +41,8 @@ namespace bash
             return pool[0].semitones;
         }
 
+        constexpr int drumBaseNoteValue = 36;
+
         int64_t floorMod (int64_t a, int64_t b) { int64_t m = a % b; return m < 0 ? m + b : m; }
 
 
@@ -221,6 +223,41 @@ namespace bash
         for (auto& c : s.chord) c = std::clamp (c, 0, 127);
         s.velocity = velocityFor (s.accent, p.accentAmount);
 
+        // Drum groove: one rhythm role per cell in the window, up to 4 hits per step
+        if (p.drumTrack && p.sliceMode == SliceMode::Groove && p.sliceCount > 0)
+        {
+            static constexpr float roles[8][16] = {
+                { 0.00f, 0.95f, 0.70f, 0.90f, 0.35f, 0.95f, 0.75f, 0.85f, 0.10f, 0.95f, 0.60f, 0.90f, 0.40f, 0.95f, 0.65f, 0.80f }, // kick
+                { 0.95f, 0.98f, 0.95f, 0.90f, 0.05f, 0.95f, 0.90f, 0.75f, 0.95f, 0.98f, 0.92f, 0.90f, 0.05f, 0.90f, 0.85f, 0.70f }, // snare / clap
+                { 0.10f, 0.55f, 0.15f, 0.60f, 0.12f, 0.55f, 0.15f, 0.60f, 0.10f, 0.55f, 0.15f, 0.60f, 0.12f, 0.55f, 0.15f, 0.65f }, // closed hat
+                { 0.95f, 0.95f, 0.25f, 0.95f, 0.95f, 0.95f, 0.30f, 0.95f, 0.95f, 0.95f, 0.25f, 0.95f, 0.95f, 0.95f, 0.30f, 0.95f }, // open hat
+                { 0.90f, 0.80f, 0.85f, 0.45f, 0.90f, 0.70f, 0.85f, 0.60f, 0.90f, 0.75f, 0.50f, 0.85f, 0.90f, 0.65f, 0.85f, 0.55f }, // perc 1
+                { 0.85f, 0.90f, 0.60f, 0.90f, 0.80f, 0.90f, 0.85f, 0.50f, 0.85f, 0.90f, 0.70f, 0.90f, 0.80f, 0.90f, 0.85f, 0.60f }, // perc 2
+                { 0.95f, 0.85f, 0.90f, 0.80f, 0.95f, 0.85f, 0.90f, 0.70f, 0.95f, 0.85f, 0.90f, 0.80f, 0.95f, 0.85f, 0.90f, 0.60f }, // fill 1
+                { 0.90f, 0.95f, 0.85f, 0.95f, 0.90f, 0.95f, 0.85f, 0.95f, 0.90f, 0.95f, 0.85f, 0.95f, 0.90f, 0.95f, 0.75f, 0.95f }, // fill 2
+            };
+            const uint32_t n  = p.sliceCount;
+            const uint32_t ws = std::min (p.windowStart, n - 1);
+            const uint32_t wz = std::clamp<uint32_t> (p.windowSize, 1u, std::min (8u, n - ws));
+            int hits[maxChordNotes]; int count = 0;
+            for (uint32_t r = 0; r < wz && count < maxChordNotes; ++r)
+            {
+                const float jitter = unitFloat (seed, i * 8u + r, salt::grooveJitter);
+                const float structured = std::clamp (roles[r][i % 16] + (jitter - 0.5f) * 0.2f, 0.0f, 0.999f);
+                const float chaotic = unitFloat (seed, i * 8u + r, salt::grooveChaos);
+                const float prio = structured * (1.0f - t) + chaotic * t;
+                if (prio < density) hits[count++] = (int) (ws + r);
+            }
+            s.active = count > 0;
+            s.slice = count > 0 ? hits[0] : (int) ws;
+            s.note = drumBaseNoteValue + s.slice;
+            s.chordExtra = std::max (0, count - 1);
+            for (int c = 1; c < count; ++c) s.chord[(size_t) c - 1] = drumBaseNoteValue + hits[c];
+            s.slide = false;
+            s.bassActive = false;
+            return s;
+        }
+
         // Slice choice (sampler and drum tracks)
         if (p.sliceCount > 0)
         {
@@ -242,6 +279,12 @@ namespace bash
                     s.slice = (int) (ws + (wild ? uniformInt (seed, i, salt::slicePick, wz) : i % wz));
                     break;
                 }
+            }
+            if (p.drumTrack)
+            {
+                s.note = drumBaseNoteValue + s.slice;
+                s.chordExtra = 0;
+                s.bassActive = false;
             }
         }
         return s;
@@ -440,7 +483,7 @@ namespace bash
             lastIndex = idx;
             lastBoundary = b;
 
-            if (p.algorithm == Algorithm::Counterpoint)
+            if (p.algorithm == Algorithm::Counterpoint || (p.drumTrack && p.sliceMode == SliceMode::Groove))
             {
                 const int at = offsetAt ((double) b);
                 if (heldNote >= 0) { out.push_back ({ at, false, heldNote, 0, false, false }); heldNote = -1; heldSlides = false; }
@@ -543,6 +586,7 @@ namespace bash
             case SliceMode::Window:     return "Window";
             case SliceMode::Bounce:     return "Bounce";
             case SliceMode::Sequential: return "Sequential";
+            case SliceMode::Groove:     return "Groove";
             default:                    return "?";
         }
     }

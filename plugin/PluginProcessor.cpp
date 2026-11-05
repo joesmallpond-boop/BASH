@@ -124,7 +124,7 @@ APVTS::ParameterLayout BashProcessor::createLayout()
         auto g = std::make_unique<AudioProcessorParameterGroup> ("track" + String (t + 1), "Track " + String (t + 1), "|");
 
         g->addChild (std::make_unique<AudioParameterBool>   (id ("on"),        n + "On", t == 0));
-        g->addChild (std::make_unique<AudioParameterChoice> (id ("engine"),    n + "Engine", engineNames(), 0));
+        g->addChild (std::make_unique<AudioParameterChoice> (id ("engine"),    n + "Engine", engineNames(), t == 1 ? 2 : 0));
         g->addChild (std::make_unique<AudioParameterChoice> (id ("algo"),      n + "Algorithm", algorithmNames(), t % 2));
         g->addChild (floatParam (id ("type"),      n + "Type",    NormalisableRange<float> (0.0f, 1.0f), 0.15f, 2));
         g->addChild (floatParam (id ("density"),   n + "Density", NormalisableRange<float> (0.0f, 1.0f), 0.6f, 2));
@@ -153,7 +153,7 @@ APVTS::ParameterLayout BashProcessor::createLayout()
         g->addChild (floatParam (id ("asus"),      n + "Amp Sustain", NormalisableRange<float> (0.0f, 1.0f), 1.0f, 2));
         g->addChild (floatParam (id ("arel"),      n + "Amp Release", skewed (0.002f, 4.0f, 0.2f), 0.01f, 3, " s"));
         // slicer
-        g->addChild (std::make_unique<AudioParameterChoice> (id ("slicemode"), n + "Slice Mode",   sliceModeNames(), 0));
+        g->addChild (std::make_unique<AudioParameterChoice> (id ("slicemode"), n + "Slice Mode",   sliceModeNames(), t == 1 ? 3 : 0));
         g->addChild (std::make_unique<AudioParameterInt>    (id ("winstart"),  n + "Window Start", 1, 256, 1));
         g->addChild (std::make_unique<AudioParameterInt>    (id ("winsize"),   n + "Window Size",  1, 256, 4));
         g->addChild (std::make_unique<AudioParameterBool>   (id ("pitchfollow"), n + "Pitch Follow", false));
@@ -176,6 +176,7 @@ BashProcessor::BashProcessor()
 {
     formats.registerBasicFormats();
     startTimer (1000);
+    loadFactoryKit (0);
 
     pRoot   = apvts.getRawParameterValue ("root");
     pScale  = apvts.getRawParameterValue ("scale");
@@ -355,6 +356,11 @@ bash::SequencerParams BashProcessor::uiSeqParams (int t)
     auto p = seqParams (t);
     if (engineType (t) == bash::EngineType::Slicer && engine.sample (t) != nullptr)
         p.sliceCount = engine.sliceCount (t);
+    if (engineType (t) == bash::EngineType::Drums)
+    {
+        p.sliceCount = bash::numCells;
+        p.drumTrack = true;
+    }
     return p;
 }
 
@@ -447,6 +453,8 @@ void BashProcessor::getStateInformation (juce::MemoryBlock& dest)
     }
     state.removeChild (state.getChildWithName ("Samples"), nullptr);
     state.appendChild (samplesTree, nullptr);
+    state.removeChild (state.getChildWithName ("Kit"), nullptr);
+    state.appendChild (kitToTree(), nullptr);
 
     if (auto xml = state.createXml())
         copyXmlToBinary (*xml, dest);
@@ -461,6 +469,7 @@ void BashProcessor::setStateInformation (const void* data, int size)
     auto tree = juce::ValueTree::fromXml (*xml);
     const auto patterns = tree.getChildWithName ("Patterns");
     const auto samplesTree = tree.getChildWithName ("Samples").createCopy();
+    const auto kitTree = tree.getChildWithName ("Kit").createCopy();
     apvts.replaceState (tree);
 
     for (int t = 0; t < bash::numTracks; ++t)
@@ -481,6 +490,8 @@ void BashProcessor::setStateInformation (const void* data, int size)
             missingSamples[(size_t) t] = file.getFullPathName();
         }
     }
+    if (kitTree.isValid())
+        kitFromTree (kitTree);
 
     if (patterns.isValid())
     {
@@ -505,17 +516,14 @@ juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()
 }
 
 // ---- samples and slices (message thread) -------------------------------------
-juce::String BashProcessor::loadSample (int t, const juce::File& file, bool autoSlice)
+std::shared_ptr<bash::SampleData> BashProcessor::decode (const juce::File& file, double maxSeconds, juce::String& error)
 {
     std::unique_ptr<juce::AudioFormatReader> reader (formats.createReaderFor (file));
-    if (reader == nullptr)
-        return "Couldn't read " + file.getFileName();
+    if (reader == nullptr) { error = "Couldn't read " + file.getFileName(); return nullptr; }
+    if (reader->lengthInSamples <= 0) { error = file.getFileName() + " is empty"; return nullptr; }
 
-    const auto maxFrames = (juce::int64) (reader->sampleRate * 600.0);   // 10 minutes
-    if (reader->lengthInSamples <= 0)
-        return file.getFileName() + " is empty";
+    const auto maxFrames = (juce::int64) (reader->sampleRate * maxSeconds);
     const int frames = (int) juce::jmin (reader->lengthInSamples, maxFrames);
-
     juce::AudioBuffer<float> buf ((int) juce::jmin (2u, reader->numChannels), frames);
     reader->read (&buf, 0, frames, 0, true, buf.getNumChannels() > 1);
 
@@ -525,6 +533,14 @@ juce::String BashProcessor::loadSample (int t, const juce::File& file, bool auto
     data->left.assign (buf.getReadPointer (0), buf.getReadPointer (0) + frames);
     if (buf.getNumChannels() > 1) data->right.assign (buf.getReadPointer (1), buf.getReadPointer (1) + frames);
     else                          data->right = data->left;
+    return data;
+}
+
+juce::String BashProcessor::loadSample (int t, const juce::File& file, bool autoSlice)
+{
+    juce::String error;
+    auto data = decode (file, 600.0, error);   // up to 10 minutes
+    if (data == nullptr) return error;
 
     auto& slot = sampleSlots[(size_t) t];
     if (slot != nullptr)
@@ -566,4 +582,122 @@ void BashProcessor::timerCallback()
     graveyard.erase (std::remove_if (graveyard.begin(), graveyard.end(),
                                      [now, this] (const auto& g) { return now >= g.second + 2 || ! isPrepared; }),
                      graveyard.end());
+}
+
+// ---- drum kit (message thread) ------------------------------------------------
+void BashProcessor::setCell (int i, const bash::DrumCell& c)
+{
+    if (i < 0 || i >= bash::numCells) return;
+    engine.setCell (i, c);
+}
+
+void BashProcessor::retireCellSample (int i)
+{
+    auto& info = cells[(size_t) i];
+    if (info.sample != nullptr)
+        graveyard.push_back ({ info.sample, engine.blocksProcessed() });
+    info.sample = nullptr;
+}
+
+juce::String BashProcessor::loadCellSample (int i, const juce::File& file)
+{
+    if (i < 0 || i >= bash::numCells) return {};
+    juce::String error;
+    auto data = decode (file, 60.0, error);   // one-shots: up to a minute
+    if (data == nullptr) return error;
+
+    bash::DrumCell c;
+    c.kind = bash::DrumCell::Kind::Sample;
+    c.sample = data.get();
+    c.choke = engine.cell (i).choke;
+    retireCellSample (i);
+    cells[(size_t) i].sample = data;
+    cells[(size_t) i].name = file.getFileNameWithoutExtension();
+    engine.setCell (i, c);
+    return {};
+}
+
+void BashProcessor::setCellFm (int i, int presetIndex)
+{
+    const auto& presets = bash::fmPresets();
+    if (i < 0 || i >= bash::numCells || presetIndex < 0 || presetIndex >= (int) presets.size()) return;
+    retireCellSample (i);
+    cells[(size_t) i].name = presets[(size_t) presetIndex].name;
+    engine.setCell (i, bash::makeFmCell (presets[(size_t) presetIndex]));
+}
+
+void BashProcessor::clearCell (int i)
+{
+    if (i < 0 || i >= bash::numCells) return;
+    retireCellSample (i);
+    cells[(size_t) i].name = {};
+    engine.setCell (i, bash::DrumCell());
+}
+
+void BashProcessor::loadFactoryKit (int k)
+{
+    const auto& kits = bash::factoryKits();
+    if (k < 0 || k >= (int) kits.size()) return;
+    for (int i = 0; i < bash::numCells; ++i) clearCell (i);
+    for (int i = 0; i < bash::numCells; ++i)
+        if (kits[(size_t) k].cells[(size_t) i] >= 0)
+            setCellFm (i, kits[(size_t) k].cells[(size_t) i]);
+}
+
+juce::ValueTree BashProcessor::kitToTree()
+{
+    juce::ValueTree kit ("Kit");
+    for (int i = 0; i < bash::numCells; ++i)
+    {
+        const auto c = engine.cell (i);
+        if (c.kind == bash::DrumCell::Kind::Empty) continue;
+        juce::ValueTree v ("Cell");
+        v.setProperty ("i", i, nullptr);
+        v.setProperty ("kind", (int) c.kind, nullptr);
+        v.setProperty ("name", cells[(size_t) i].name, nullptr);
+        if (c.kind == bash::DrumCell::Kind::Sample && cells[(size_t) i].sample != nullptr)
+            v.setProperty ("path", juce::String (cells[(size_t) i].sample->path), nullptr);
+        const float values[] = { c.start, c.end, c.fadeIn, c.fadeOut, c.attack, c.sustain, c.tune, c.cutoff,
+                                 c.reverse ? 1.0f : 0.0f, c.gain, c.pan, (float) c.choke,
+                                 c.fm.pitch, c.fm.pitchAmt, c.fm.pitchTime, c.fm.ratio, c.fm.fmAmt, c.fm.fmDecay,
+                                 c.fm.noise, c.fm.tone, c.fm.noiseDecay, (float) c.fm.bursts, c.fm.decay, c.fm.click, c.fm.drive };
+        juce::String s;
+        for (float f : values) s << juce::String (f, 6) << ' ';
+        v.setProperty ("p", s.trim(), nullptr);
+        kit.appendChild (v, nullptr);
+    }
+    return kit;
+}
+
+void BashProcessor::kitFromTree (const juce::ValueTree& kit)
+{
+    for (int i = 0; i < bash::numCells; ++i) clearCell (i);
+    for (const auto& v : kit)
+    {
+        const int i = (int) v.getProperty ("i");
+        if (i < 0 || i >= bash::numCells) continue;
+        auto tokens = juce::StringArray::fromTokens (v.getProperty ("p").toString(), " ", "");
+        std::vector<float> f;
+        for (auto& tk : tokens) if (tk.isNotEmpty()) f.push_back (tk.getFloatValue());
+        if (f.size() < 25) continue;
+
+        bash::DrumCell c;
+        c.kind = (bash::DrumCell::Kind) juce::jlimit (0, 2, (int) v.getProperty ("kind"));
+        c.start = f[0]; c.end = f[1]; c.fadeIn = f[2]; c.fadeOut = f[3]; c.attack = f[4]; c.sustain = f[5];
+        c.tune = f[6]; c.cutoff = f[7]; c.reverse = f[8] > 0.5f; c.gain = f[9]; c.pan = f[10]; c.choke = (int) f[11];
+        c.fm.pitch = f[12]; c.fm.pitchAmt = f[13]; c.fm.pitchTime = f[14]; c.fm.ratio = f[15]; c.fm.fmAmt = f[16];
+        c.fm.fmDecay = f[17]; c.fm.noise = f[18]; c.fm.tone = f[19]; c.fm.noiseDecay = f[20]; c.fm.bursts = (int) f[21];
+        c.fm.decay = f[22]; c.fm.click = f[23]; c.fm.drive = f[24];
+
+        cells[(size_t) i].name = v.getProperty ("name").toString();
+        if (c.kind == bash::DrumCell::Kind::Sample)
+        {
+            const juce::File file (v.getProperty ("path").toString());
+            juce::String error;
+            auto data = file.existsAsFile() ? decode (file, 60.0, error) : nullptr;
+            if (data == nullptr) { cells[(size_t) i].name = "Missing: " + file.getFileName(); c.kind = bash::DrumCell::Kind::Empty; }
+            else { cells[(size_t) i].sample = data; c.sample = data.get(); }
+        }
+        engine.setCell (i, c);
+    }
 }

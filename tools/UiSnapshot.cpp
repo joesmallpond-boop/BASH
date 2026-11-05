@@ -17,9 +17,10 @@ int main (int argc, char** argv)
         const auto err = proc.loadSample (0, juce::File (juce::String (argv[2])));
         if (err.isNotEmpty()) std::printf ("load: %s\n", err.toRawUTF8());
     }
+    const int track = argc > 5 ? juce::String (argv[5]).getIntValue() : 1;
     if (argc > 3)
     {
-        auto* p = proc.apvts.getParameter ("t1_engine");
+        auto* p = proc.apvts.getParameter ("t" + juce::String (track) + "_engine");
         p->setValueNotifyingHost (p->convertTo0to1 ((float) juce::String (argv[3]).getIntValue()));
     }
 
@@ -29,12 +30,14 @@ int main (int argc, char** argv)
     {
         auto* sync = proc.apvts.getParameter ("sync");  sync->setValueNotifyingHost (0.0f);
         auto* play = proc.apvts.getParameter ("play");  play->setValueNotifyingHost (1.0f);
+        auto* on = proc.apvts.getParameter ("t" + juce::String (track) + "_on"); on->setValueNotifyingHost (1.0f);
         juce::AudioBuffer<float> buf (2, 512);
         juce::MidiBuffer midi;
         for (int i = 0; i < blocks; ++i) proc.processBlock (buf, midi);
     }
 
     std::unique_ptr<juce::AudioProcessorEditor> editor (proc.createEditor());
+    if (auto* ed = dynamic_cast<BashEditor*> (editor.get())) ed->showTrack (track - 1);
     const auto img = editor->createComponentSnapshot (editor->getLocalBounds(), true, 1.0f);
     juce::File out (juce::File::getCurrentWorkingDirectory().getChildFile (juce::String (argv[1])));
     out.deleteFile();

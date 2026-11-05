@@ -28,7 +28,8 @@ target_sources(BASH PRIVATE
     PluginProcessor.cpp
     PluginEditor.cpp
     SamplerPanel.cpp
-    SynthPanel.cpp)
+    SynthPanel.cpp
+    DrumPanel.cpp)
 
 target_compile_definitions(BASH PUBLIC
     JUCE_WEB_BROWSER=0

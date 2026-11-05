@@ -6,6 +6,7 @@
 
 #include "bash/Engine.h"
 #include "bash/Slices.h"
+#include "bash/Drums.h"
 
 #include <array>
 
@@ -72,6 +73,18 @@ public:
     juce::String missingSample (int track) const       { return missingSamples[(size_t) track]; }
     juce::AudioFormatManager& formatManager()          { return formats; }
 
+    // drum kit
+    bash::DrumCell cell (int i)                        { return engine.cell (i); }
+    void setCell (int i, const bash::DrumCell&);       // keeps the cell's sample
+    juce::String cellName (int i) const                { return cells[(size_t) i].name; }
+    void setCellName (int i, const juce::String& n)    { cells[(size_t) i].name = n; }
+    std::shared_ptr<const bash::SampleData> cellSample (int i) const { return cells[(size_t) i].sample; }
+    juce::String loadCellSample (int i, const juce::File&);
+    void setCellFm (int i, int presetIndex);
+    void clearCell (int i);
+    void loadFactoryKit (int k);
+    void auditionCell (int i)                          { engine.audition (i); }
+
     static const juce::StringArray& cycleNames();
     static uint32_t cycleMultiplier (int index);
 
@@ -79,6 +92,13 @@ private:
     static juce::AudioProcessorValueTreeState::ParameterLayout createLayout();
     void pullParameters();
     void timerCallback() override;
+    std::shared_ptr<bash::SampleData> decode (const juce::File&, double maxSeconds, juce::String& error);
+    void retireCellSample (int i);
+    juce::ValueTree kitToTree();
+    void kitFromTree (const juce::ValueTree&);
+
+    struct CellInfo { juce::String name; std::shared_ptr<bash::SampleData> sample; };
+    std::array<CellInfo, bash::numCells> cells;
 
     struct TrackParams
     {
