@@ -1,0 +1,30 @@
+BASH! — an all-in-one kalabash solution
+=======================================
+
+Install
+-------
+Copy each file into its folder (Finder > Go > Go to Folder…):
+
+  BASH.vst3       ->  ~/Library/Audio/Plug-Ins/VST3/
+  BASH.component  ->  ~/Library/Audio/Plug-Ins/Components/
+  BASH.app        ->  /Applications/
+
+These builds are not notarised yet, so macOS may block them. Once copied,
+open Terminal and run:
+
+  xattr -cr ~/Library/Audio/Plug-Ins/VST3/BASH.vst3
+  xattr -cr ~/Library/Audio/Plug-Ins/Components/BASH.component
+  xattr -cr /Applications/BASH.app
+
+Then restart your DAW (for Logic, if BASH! doesn't appear, also run:
+  killall -9 AudioComponentRegistrar).
+
+Using it
+--------
+- Load BASH! as an instrument. Press play in your DAW: track 1 plays.
+- Turn tracks on with the TRACK buttons and "Track on".
+- Click a step to lock it. Regenerate rolls a new pattern but keeps locks.
+- Right-click (or hold) a step to mute/unmute it.
+- In the standalone app (or with Sync off) press Play to run the internal clock.
+- Generated MIDI comes out on channel = track number (Ableton: set another
+  MIDI track's "MIDI From" to the BASH! track).
