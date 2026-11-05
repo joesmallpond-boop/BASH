@@ -1,30 +1,26 @@
-BASH! — an all-in-one kalabash solution
+BASH! - an all-in-one kalabash solution
 =======================================
 
 Install
 -------
-Copy each file into its folder (Finder > Go > Go to Folder…):
+Double-click "Install BASH!.pkg" and follow the steps. It installs:
 
-  BASH.vst3       ->  ~/Library/Audio/Plug-Ins/VST3/
-  BASH.component  ->  ~/Library/Audio/Plug-Ins/Components/
-  BASH.app        ->  /Applications/
+  BASH! app (standalone)   ->  Applications
+  BASH! VST3               ->  /Library/Audio/Plug-Ins/VST3      (Ableton, Bitwig, Cubase, Reaper, FL...)
+  BASH! Audio Unit         ->  /Library/Audio/Plug-Ins/Components (Logic, GarageBand...)
 
-These builds are not notarised yet, so macOS may block them. Once copied,
-open Terminal and run:
+Untick anything you don't want under "Customize".
 
-  xattr -cr ~/Library/Audio/Plug-Ins/VST3/BASH.vst3
-  xattr -cr ~/Library/Audio/Plug-Ins/Components/BASH.component
-  xattr -cr /Applications/BASH.app
+The installer isn't notarised yet, so the first time macOS may say it
+"can't be opened". Right-click (or Control-click) the .pkg and choose Open,
+then Open again. Or: System Settings > Privacy & Security > "Open Anyway".
 
-Then restart your DAW (for Logic, if BASH! doesn't appear, also run:
-  killall -9 AudioComponentRegistrar).
+Restart your DAW afterwards. In Logic, BASH! is under AU Instruments > Kalabash.
 
 Using it
 --------
 - Load BASH! as an instrument. Press play in your DAW: track 1 plays.
-- Turn tracks on with the TRACK buttons and "Track on".
-- Click a step to lock it. Regenerate rolls a new pattern but keeps locks.
-- Right-click (or hold) a step to mute/unmute it.
-- In the standalone app (or with Sync off) press Play to run the internal clock.
-- Generated MIDI comes out on channel = track number (Ableton: set another
-  MIDI track's "MIDI From" to the BASH! track).
+- In the BASH! app, press Play (top bar) to run its own clock.
+- The die in the top-right corner rolls everything; right-click it for options.
+- Drag the WAV / MIDI chips (Sequencer panel, mixer strips, master MIX) into
+  your DAW or onto the desktop.
