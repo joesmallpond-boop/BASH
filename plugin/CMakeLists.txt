@@ -31,7 +31,8 @@ target_sources(BASH PRIVATE
     SynthPanel.cpp
     DrumPanel.cpp
     MixerPanel.cpp
-    ModPanel.cpp)
+    ModPanel.cpp
+    ExportUI.cpp)
 
 target_compile_definitions(BASH PUBLIC
     JUCE_WEB_BROWSER=0

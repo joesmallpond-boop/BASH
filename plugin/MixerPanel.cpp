@@ -110,6 +110,11 @@ void MixerPanel::addCommon (Strip& s)
     s.fader.setColour (juce::Slider::textBoxOutlineColourId, juce::Colours::transparentBlack);
     addAndMakeVisible (s.fader);
     addAndMakeVisible (s.meter);
+    if (s.chip != nullptr)
+    {
+        s.chip->onMessage = [this] (const juce::String& m) { if (onMessage) onMessage (m); };
+        addAndMakeVisible (*s.chip);
+    }
     for (auto& f : s.fx) addAndMakeVisible (*f);
 }
 
@@ -118,6 +123,8 @@ void MixerPanel::buildTrackStrip (Strip& s, int t)
     auto& apvts = proc.apvts;
     s.isTrack = true;
     s.track = t;
+    s.chip = std::make_unique<DragChip> ("WAV", [this, t] { return proc.exportAudio (t); });
+    s.chip->setTooltip ("Drag this track out as a WAV loop (bars and FX from the track view)");
     s.name.setText ("TRACK " + juce::String (t + 1), juce::dontSendNotification);
     s.fx.push_back (std::make_unique<FxSlotUI> (apvts, BashProcessor::pid (t, "fx1")));
     s.fx.push_back (std::make_unique<FxSlotUI> (apvts, BashProcessor::pid (t, "fx2")));
@@ -149,6 +156,8 @@ void MixerPanel::buildMasterStrip (Strip& s)
 {
     s.isMaster = true;
     s.name.setText ("MASTER", juce::dontSendNotification);
+    s.chip = std::make_unique<DragChip> ("MIX", [this] { return proc.exportAudio (-1); });
+    s.chip->setTooltip ("Drag the whole mix out as one WAV");
     s.fx.push_back (std::make_unique<FxSlotUI> (proc.apvts, "mfx1"));
     s.fx.push_back (std::make_unique<FxSlotUI> (proc.apvts, "mfx2"));
     addAndMakeVisible (s.limiter);
@@ -190,6 +199,9 @@ void MixerPanel::resized()
         auto& s = *strips[(size_t) i];
         auto r = juce::Rectangle<int> (i * w, 0, w, getHeight()).reduced (8, 10);
         s.name.setBounds (r.removeFromTop (20));
+        r.removeFromTop (2);
+        auto chipRow = r.removeFromTop (22);
+        if (s.chip != nullptr) s.chip->setBounds (chipRow.withSizeKeepingCentre (std::min (64, chipRow.getWidth()), 22));
         r.removeFromTop (6);
         for (auto& f : s.fx) { f->setBounds (r.removeFromTop (120)); r.removeFromTop (8); }
         if (s.fx.size() == 1) r.removeFromTop (128);   // returns line up with the tracks
@@ -208,13 +220,13 @@ void MixerPanel::resized()
         }
         else if (s.isMaster)
         {
-            r.removeFromTop (110);
+            r.removeFromTop (110 - 30);
             s.limiter.setBounds (r.removeFromTop (26));
             r.removeFromTop (12);
         }
         else
         {
-            r.removeFromTop (148);
+            r.removeFromTop (148 - 30);
         }
         auto fader = r;
         s.meter.setBounds (fader.removeFromRight (8).withTrimmedBottom (20));

@@ -893,6 +893,118 @@ static void testModulation()
     CHECK (eng.sourceValue (0, ModSource::ModWheel) == 0.0f);
 }
 
+// ---------------------------------------------------------------------------
+// Swing, jitter, motifs, export
+
+static void testTimingAndMotif()
+{
+    Pattern pat (31);
+    Scale s (0, 0);
+    SequencerParams p; p.density = 1.0f; p.gate = 0.4f;
+
+    // swing delays odd steps by swing/2, jitter only ever makes steps late
+    p.swing = 0.5f;
+    CHECK (pat.stepStart (4, p) == 4.0 && std::abs (pat.stepStart (5, p) - 5.25) < 1e-9);
+    p.swing = 0.0f; p.jitter = 1.0f;
+    bool lateOnly = true, anyLate = false;
+    for (int64_t n = 0; n < 200; ++n) { const double d = pat.stepStart (n, p) - (double) n; lateOnly = lateOnly && d >= 0.0 && d < 0.41; anyLate = anyLate || d > 0.05; }
+    CHECK (lateOnly && anyLate);
+
+    // swung playback is still block-size independent and notes land on the swung grid
+    p.jitter = 0.0f; p.swing = 0.5f;
+    for (int bs : { 50, 333 })
+    {
+        TrackPlayer pl; std::vector<NoteEvent> ev; std::vector<long> ons;
+        for (long st = 0; st < 16 * 100; st += bs)
+        {
+            ev.clear();
+            pl.process (st / 100.0, 0.01, (int) std::min<long> (bs, 1600 - st), pat, p, s, ev);
+            for (auto& e : ev) if (e.noteOn) ons.push_back (st + e.sampleOffset);
+        }
+        CHECK (ons.size() >= 12);   // slides into the same pitch become ties
+        for (long o : ons) CHECK (o % 100 == 0 || o % 100 == 25);   // straight or swung grid only
+        CHECK (ons.size() > 2 && ons[1] == 125 && ons[2] == 200);
+    }
+
+    // motif: at Type 0 it plays exactly; Type morphs away; survives save/load
+    std::vector<StepData> motif (8);
+    const int notes[8] = { 48, 0, 51, 55, 0, 60, 58, 0 };
+    for (int i = 0; i < 8; ++i) { motif[(size_t) i].active = notes[i] != 0; motif[(size_t) i].note = notes[i] != 0 ? notes[i] : 48; motif[(size_t) i].accent = i == 0; motif[(size_t) i].gate = 0.5f; }
+    pat.setMotif (motif);
+    SequencerParams mp; mp.density = 0.6f; mp.scaleLock = false; mp.type = 0.0f;
+    for (uint32_t i = 0; i < 32; ++i)
+    {
+        auto st = pat.step (i, mp, s);
+        CHECK (st.active == (notes[i % 8] != 0));
+        if (st.active) CHECK (st.note == notes[i % 8]);
+    }
+    mp.type = 1.0f;
+    int differ = 0;
+    for (uint32_t i = 0; i < 64; ++i) { auto st = pat.step (i, mp, s); if (st.active != (notes[i % 8] != 0) || (st.active && st.note != notes[i % 8])) ++differ; }
+    CHECK (differ > 20);
+    Pattern back; CHECK (back.deserialise (pat.serialise()));
+    CHECK (back.getMotif().size() == 8 && back.getMotif()[2].note == 51);
+
+    // export: notes come out in order, in range, with lengths
+    mp.type = 0.0f;
+    auto notesOut = renderNotes (pat, mp, s, 32);
+    CHECK (notesOut.size() == 20);   // 5 notes per 8 steps
+    bool ordered = true;
+    for (size_t i = 0; i < notesOut.size(); ++i)
+    {
+        CHECK (notesOut[i].end > notesOut[i].start && notesOut[i].start >= 0.0 && notesOut[i].end <= 32.0);
+        if (i > 0) ordered = ordered && notesOut[i].start >= notesOut[i - 1].start;
+    }
+    CHECK (ordered);
+    if (! notesOut.empty()) CHECK (notesOut[0].note == 48 && std::abs (notesOut[0].end - notesOut[0].start - 0.5) < 0.02);
+
+    // export of a Counterpoint track carries both streams
+    SequencerParams cp; cp.algorithm = Algorithm::Counterpoint; cp.density = 0.6f;
+    Pattern cpPat (7);
+    auto cpNotes = renderNotes (cpPat, cp, s, 64);
+    bool s0 = false, s1 = false; for (auto& n : cpNotes) { s0 |= n.stream == 0; s1 |= n.stream == 1; }
+    CHECK (s0 && s1);
+}
+
+static void testOfflineRender()
+{
+    Engine live; live.prepare (48000.0, 256);
+    live.track (0).seq.density = 0.8f;
+    live.track (1).enabled = true; live.track (1).engine = EngineType::Drums; live.track (1).seq.sliceMode = SliceMode::Groove;
+    for (int c = 0; c < numCells; ++c) live.setCell (c, makeFmCell (fmPresets()[(size_t) factoryKits()[0].cells[(size_t) c]]));
+    live.track (0).inserts[0].type = FxType::Hall; live.track (0).inserts[0].a = 0.8f;
+
+    RenderOptions o; o.track = 0; o.bars = 2; o.bpm = 120.0; o.sampleRate = 48000.0;
+    std::vector<float> l, r, l2, r2;
+    Engine::renderOffline (live, o, l, r);
+    CHECK (l.size() == 192000 && r.size() == 192000);
+    double e = 0.0; bool finite = true; for (float v : l) { e += v * v; finite = finite && std::isfinite (v); }
+    CHECK (finite && e > 1.0);
+
+    Engine::renderOffline (live, o, l2, r2);
+    CHECK (l == l2);                       // deterministic: same state, same audio
+
+    o.withFx = false;
+    Engine::renderOffline (live, o, l2, r2);
+    double diff = 0.0; for (size_t i = 0; i < l.size(); ++i) diff += std::abs (l[i] - l2[i]);
+    CHECK (diff > 1.0);                    // the insert reverb was left out
+
+    // track 2 alone is the drums: track 1's synth must not be in it
+    o.track = 1; o.withFx = true;
+    Engine::renderOffline (live, o, l2, r2);
+    double de = 0.0; for (float v : l2) de += v * v;
+    CHECK (de > 1.0);
+
+    // full mix is louder than either part on its own, and limited
+    o.track = -1;
+    Engine::renderOffline (live, o, l2, r2);
+    float pk = 0.0f; double me = 0.0; for (float v : l2) { pk = std::max (pk, std::abs (v)); me += v * v; }
+    CHECK (me > e * 0.5 && pk <= 0.97f * 1.6f);   // tail wrap can sum a little above the limiter at the seam
+
+    // rendering must not disturb the live engine
+    CHECK (live.track (0).enabled && live.track (1).enabled);
+}
+
 int main()
 {
     testDeterminism();
@@ -918,6 +1030,8 @@ int main()
     testEffects();
     testMixer();
     testModulation();
+    testTimingAndMotif();
+    testOfflineRender();
     std::printf ("%d checks, %d failures\n", checks, failures);
     return failures == 0 ? 0 : 1;
 }

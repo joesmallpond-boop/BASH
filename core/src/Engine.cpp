@@ -1,6 +1,7 @@
 #include "bash/Engine.h"
 
 #include <algorithm>
+#include <memory>
 #include <cmath>
 #include <mutex>
 
@@ -513,5 +514,96 @@ namespace bash
         L.sendB = unit (L.sendB + d (ModDest::SendB));
         L.inserts[0].gnarl = unit (L.inserts[0].gnarl + d (ModDest::Fx1Gnarl));
         L.inserts[1].gnarl = unit (L.inserts[1].gnarl + d (ModDest::Fx2Gnarl));
+    }
+}
+
+namespace bash
+{
+    void Engine::copyStateFrom (Engine& other)
+    {
+        tracks  = other.tracks;
+        globals = other.globals;
+        for (int t = 0; t < numTracks; ++t)
+        {
+            std::string text;
+            {
+                auto& src = other.patterns[(size_t) t];
+                std::lock_guard<SpinMutex> g (src.mutex());
+                text = src.serialise();
+            }
+            {
+                auto& dst = patterns[(size_t) t];
+                std::lock_guard<SpinMutex> g (dst.mutex());
+                dst.deserialise (text);
+            }
+            setSlices (t, other.slices (t));
+            setSample (t, other.sample (t));
+            for (int d = 0; d < numModDests; ++d)
+                for (int s = 0; s < numModSources; ++s)
+                    matrices[(size_t) t].set ((ModDest) d, (ModSource) s, other.matrices[(size_t) t].get ((ModDest) d, (ModSource) s));
+        }
+        for (int c = 0; c < numCells; ++c)
+            setCell (c, other.cell (c));
+    }
+
+    void Engine::renderOffline (Engine& live, const RenderOptions& o, std::vector<float>& left, std::vector<float>& right)
+    {
+        auto e = std::make_unique<Engine>();
+        constexpr int block = 512;
+        e->prepare (o.sampleRate, block);
+        e->copyStateFrom (live);
+
+        auto& g = e->globals;
+        g.hostSync = false;
+        g.playing  = true;
+        g.tempo    = o.bpm;
+        for (auto& t : e->tracks) { t.mute = false; t.solo = false; }
+
+        if (o.track >= 0)
+        {
+            for (int t = 0; t < numTracks; ++t)
+                if (t != o.track) { e->tracks[(size_t) t].enabled = false; e->tracks[(size_t) t].sendA = e->tracks[(size_t) t].sendB = 0.0f; }
+            e->tracks[(size_t) o.track].enabled = true;
+            g.masterFx[0].type = g.masterFx[1].type = FxType::None;
+            g.limiter = false;
+            g.master  = 1.0f;
+            if (! o.withFx)
+            {
+                auto& tr = e->tracks[(size_t) o.track];
+                tr.inserts[0].type = tr.inserts[1].type = FxType::None;
+                tr.sendA = tr.sendB = 0.0f;
+            }
+        }
+        else if (! o.withFx)
+        {
+            for (auto& tr : e->tracks) { tr.inserts[0].type = tr.inserts[1].type = FxType::None; tr.sendA = tr.sendB = 0.0f; }
+            g.masterFx[0].type = g.masterFx[1].type = FxType::None;
+        }
+
+        const double barSeconds = 4.0 * 60.0 / std::max (20.0, o.bpm);
+        const auto loopFrames = (size_t) std::llround (barSeconds * std::max (1, o.bars) * o.sampleRate);
+        const auto tailFrames = (size_t) std::llround (std::max (0.0, o.tailSeconds) * o.sampleRate);
+        std::vector<float> l (loopFrames + tailFrames + block, 0.0f), r (l.size(), 0.0f);
+        std::vector<MidiOut> midi;
+        Transport none;
+        size_t pos = 0;
+        while (pos < loopFrames + tailFrames)
+        {
+            const int n = (int) std::min<size_t> (block, loopFrames + tailFrames - pos);
+            // stop sequencing at the loop end; let voices and effects ring into the tail
+            if (pos >= loopFrames) { for (auto& t : e->tracks) t.enabled = false; }
+            midi.clear();
+            e->process (l.data() + pos, r.data() + pos, n, none, midi);
+            pos += (size_t) n;
+        }
+
+        // wrap the tail onto the start so the loop plays seamlessly
+        left.assign (l.begin(), l.begin() + (long) loopFrames);
+        right.assign (r.begin(), r.begin() + (long) loopFrames);
+        for (size_t i = 0; i < tailFrames; ++i)
+        {
+            left[i % loopFrames]  += l[loopFrames + i];
+            right[i % loopFrames] += r[loopFrames + i];
+        }
     }
 }

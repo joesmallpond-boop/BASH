@@ -117,12 +117,60 @@ static void testProcessing()
     CHECK (midiEvents > 50);
 }
 
+static void testExports()
+{
+    BashProcessor p;
+    p.setPlayConfigDetails (0, 2, 48000.0, 512);
+    p.prepareToPlay (48000.0, 512);
+    p.apvts.getParameter ("tempo")->setValueNotifyingHost (p.apvts.getParameter ("tempo")->convertTo0to1 (120.0f));
+    p.apvts.getParameter ("sync")->setValueNotifyingHost (0.0f);
+    p.apvts.getParameter ("t1_density")->setValueNotifyingHost (0.8f);
+    p.exportBars = 2;
+
+    // MIDI out, then back in on another track: the phrase survives
+    const auto mid = p.exportMidi (0);
+    CHECK (mid.existsAsFile());
+    CHECK (p.importMidi (2, mid).isEmpty());
+    CHECK (p.hasMotif (2));
+    p.apvts.getParameter ("t3_algo")->setValueNotifyingHost (p.apvts.getParameter ("t1_algo")->getValue());
+    p.apvts.getParameter ("t3_density")->setValueNotifyingHost (0.6f);
+    auto a = p.snapshot (0, 0, 32), b = p.snapshot (2, 0, 32);
+    int matches = 0, activeA = 0;
+    // track 1 loops every 16 steps, so the 2 exported bars are its 16 steps twice
+    for (size_t i = 0; i < b.size(); ++i) { const auto& ai = a[i % 16]; if (ai.active) { ++activeA; if (b[i].active && b[i].note == ai.note) ++matches; } }
+    CHECK (activeA > 5 && matches * 4 >= activeA * 3);   // tied steps export as one longer note
+
+    p.clearMotif (2);
+    CHECK (! p.hasMotif (2));
+
+    // WAV: one track and the full mix
+    juce::AudioFormatManager fm; fm.registerBasicFormats();
+    for (int t : { 0, -1 })
+    {
+        const auto wav = p.exportAudio (t);
+        CHECK (wav.existsAsFile());
+        std::unique_ptr<juce::AudioFormatReader> r (fm.createReaderFor (wav));
+        CHECK (r != nullptr);
+        if (r != nullptr)
+        {
+            CHECK (r->numChannels == 2 && r->bitsPerSample == 24);
+            CHECK (r->lengthInSamples == 192000);   // 2 bars at 120 bpm, 48 kHz
+            juce::AudioBuffer<float> buf (2, (int) r->lengthInSamples);
+            r->read (&buf, 0, buf.getNumSamples(), 0, true, true);
+            CHECK (buf.getMagnitude (0, buf.getNumSamples()) > 0.01f);
+        }
+        wav.deleteFile();
+    }
+    mid.deleteFile();
+}
+
 int main()
 {
     juce::ScopedJuceInitialiser_GUI init;
     testDice();
     testState();
     testProcessing();
+    testExports();
     std::printf ("%d plugin checks, %d failures\n", checks, failures);
     return failures == 0 ? 0 : 1;
 }

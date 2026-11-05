@@ -10,14 +10,32 @@
 #include "DrumPanel.h"
 #include "MixerPanel.h"
 #include "ModPanel.h"
+#include "ExportUI.h"
 
 namespace bashui
 {
     /** The step grid: pitch bars, accents, slides, locks and the playhead. */
-    class StepView : public juce::Component
+    class StepView : public juce::Component, public juce::FileDragAndDropTarget
     {
     public:
         explicit StepView (BashProcessor& p) : proc (p) {}
+        std::function<void (const juce::String&)> onMessage;
+        bool isInterestedInFileDrag (const juce::StringArray& files) override
+        {
+            for (auto& f : files) if (f.endsWithIgnoreCase (".mid") || f.endsWithIgnoreCase (".midi")) return true;
+            return false;
+        }
+        void filesDropped (const juce::StringArray& files, int, int) override
+        {
+            for (auto& f : files)
+                if (f.endsWithIgnoreCase (".mid") || f.endsWithIgnoreCase (".midi"))
+                {
+                    const auto err = proc.importMidi (track, juce::File (f));
+                    if (onMessage) onMessage (err.isEmpty() ? "Imported " + juce::File (f).getFileName() + ": Type 0 plays it, turn Type up to morph away" : err);
+                    refresh();
+                    return;
+                }
+        }
         void setTrack (int t) { track = t; refresh(); }
         void refresh();
         void paint (juce::Graphics&) override;
@@ -78,7 +96,8 @@ private:
     // tracks
     std::array<juce::TextButton, bash::numTracks> trackButtons;
     bashui::StepView stepView;
-    juce::TextButton regenButton { "Regenerate" }, clearButton { "Clear locks" };
+    juce::TextButton regenButton { "Regenerate" }, clearButton { "Clear locks" }, clearMidiButton { "Clear MIDI" };
+    std::unique_ptr<bashui::ExportBar> exportBar;
     juce::Label hint;
 
     // per-track controls (re-bound when the track changes)

@@ -85,10 +85,28 @@ namespace bash
         int  velocity;
     };
 
+    struct RenderOptions
+    {
+        int    track = -1;          // -1 = the whole mix (master bus), else one track
+        int    bars = 4;
+        double bpm = 120.0;
+        double sampleRate = 48000.0;
+        bool   withFx = true;       // track: its inserts + its sends through the returns. mix: everything
+        double tailSeconds = 4.0;   // rendered past the end, then wrapped to the start for seamless loops
+    };
+
     class Engine
     {
     public:
         Engine();
+
+        /** Copy everything that defines the sound (settings, patterns, slices, samples, kit,
+            modulation) from another engine. Message thread; sample data is shared, so the
+            caller keeps it alive for as long as this engine renders. */
+        void copyStateFrom (Engine& other);
+
+        /** Render bars of audio offline from a copy of `live`. Message thread. */
+        static void renderOffline (Engine& live, const RenderOptions&, std::vector<float>& left, std::vector<float>& right);
 
         void prepare (double sampleRate, int maxBlockSize);
 

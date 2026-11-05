@@ -213,7 +213,21 @@ namespace bash
             }
         }
 
-        if (p.scaleLock && p.algorithm != Algorithm::Arpeggiator)
+        // An imported motif replaces the structured layer; Type still morphs away from it.
+        if (! motif.empty() && p.algorithm != Algorithm::Counterpoint && p.algorithm != Algorithm::Arpeggiator)
+        {
+            const auto& m = motif[(size_t) (i % (uint32_t) motif.size())];
+            if (unitFloat (seed, i, salt::motifChaos) >= t)
+            {
+                s.active = (m.active ? 0.02f : 0.97f) < density;
+                s.note   = m.note;
+                s.accent = m.accent;
+                s.gate   = std::clamp (m.gate, 0.05f, 2.0f);
+                s.slide  = false;
+            }
+        }
+
+        if (p.scaleLock && p.algorithm != Algorithm::Arpeggiator && ! p.drumTrack)
         {
             s.note = scale.quantize (s.note);
             s.bassNote = scale.quantize (s.bassNote);
@@ -280,6 +294,11 @@ namespace bash
                     break;
                 }
             }
+            if (p.drumTrack && ! motif.empty())
+            {
+                // imported drum MIDI: the motif note picks the pad
+                s.slice = std::clamp (s.note - drumBaseNoteValue, 0, (int) n - 1);
+            }
             if (p.drumTrack)
             {
                 s.note = drumBaseNoteValue + s.slice;
@@ -316,6 +335,14 @@ namespace bash
             s.velocity = velocityFor (s.accent, p.accentAmount);
         }
         return s;
+    }
+
+    double Pattern::stepStart (int64_t n, const SequencerParams& p) const noexcept
+    {
+        double delay = 0.0;
+        if (p.swing > 0.0f && (n & 1) != 0) delay += std::clamp (p.swing, 0.0f, 0.75f) * 0.5;
+        if (p.jitter > 0.0f) delay += unitFloat (seed, (uint64_t) n, salt::jitter) * std::clamp (p.jitter, 0.0f, 1.0f) * 0.4;
+        return (double) n + delay;
     }
 
     uint32_t Pattern::indexForPosition (int64_t n, const SequencerParams& p) const noexcept
@@ -368,11 +395,14 @@ namespace bash
     std::string Pattern::serialise() const
     {
         std::ostringstream o;
-        o << "bashpat2 " << seed << ' ' << locks.size();
+        o << "bashpat3 " << seed << ' ' << locks.size();
         for (auto& [idx, l] : locks)
             o << ' ' << idx << ' ' << (int) l.mask << ' ' << (int) l.value.active << ' ' << l.value.note
               << ' ' << (int) l.value.accent << ' ' << (int) l.value.slide << ' ' << l.value.gate
               << ' ' << l.value.slice;
+        o << ' ' << motif.size();
+        for (auto& m : motif)
+            o << ' ' << (int) m.active << ' ' << m.note << ' ' << (int) m.accent << ' ' << m.gate;
         return o.str();
     }
 
@@ -382,9 +412,9 @@ namespace bash
         std::string tag;
         uint64_t s = 0;
         size_t n = 0;
-        if (! (in >> tag >> s >> n) || (tag != "bashpat1" && tag != "bashpat2"))
+        if (! (in >> tag >> s >> n) || (tag != "bashpat1" && tag != "bashpat2" && tag != "bashpat3"))
             return false;
-        const bool hasSlice = tag == "bashpat2";
+        const bool hasSlice = tag != "bashpat1";
 
         std::map<uint32_t, StepLock> loaded;
         for (size_t k = 0; k < n; ++k)
@@ -401,8 +431,21 @@ namespace bash
             l.value.accent = acc != 0; l.value.slide = sl != 0; l.value.gate = g; l.value.slice = slice;
             loaded[idx] = l;
         }
+        std::vector<StepData> loadedMotif;
+        size_t motifCount = 0;
+        if (tag == "bashpat3" && (in >> motifCount))
+        {
+            for (size_t k = 0; k < motifCount && k < 65536; ++k)
+            {
+                int a, note, acc; float g;
+                if (! (in >> a >> note >> acc >> g)) return false;
+                StepData m; m.active = a != 0; m.note = note; m.accent = acc != 0; m.gate = g;
+                loadedMotif.push_back (m);
+            }
+        }
         seed = s;
         locks = std::move (loaded);
+        motif = std::move (loadedMotif);
         return true;
     }
 
@@ -456,7 +499,9 @@ namespace bash
         {
             if (started) reset (&out, 0);
             started = true;
-            lastBoundary = (int64_t) std::ceil (posStart - 1e-9) - 1;
+            // a swung/jittered step can start up to ~0.8 of a step late: look one step back
+            lastBoundary = (int64_t) std::ceil (posStart - 1e-9) - 2;
+            while (pattern.stepStart (lastBoundary + 1, p) < posStart - 1e-9) ++lastBoundary;
         }
         expectedPos = posEnd;
 
@@ -467,11 +512,12 @@ namespace bash
             return std::clamp (s, 0, numSamples - 1);
         };
 
-        for (int64_t b = lastBoundary + 1; (double) b < posEnd - 1e-9; ++b)
+        for (int64_t b = lastBoundary + 1; pattern.stepStart (b, p) < posEnd - 1e-9; ++b)
         {
+            const double start = pattern.stepStart (b, p);   // grid position + swing + jitter
             // Release notes whose gate ended before this step.
-            releasePoly ((double) b, posStart, stepsPerSample, numSamples, out);
-            if (heldNote >= 0 && heldOffPos <= (double) b)
+            releasePoly (start, posStart, stepsPerSample, numSamples, out);
+            if (heldNote >= 0 && heldOffPos <= start)
             {
                 out.push_back ({ offsetAt (heldOffPos), false, heldNote, 0, false, false });
                 heldNote = -1;
@@ -485,13 +531,13 @@ namespace bash
 
             if (p.algorithm == Algorithm::Counterpoint || (p.drumTrack && p.sliceMode == SliceMode::Groove))
             {
-                const int at = offsetAt ((double) b);
+                const int at = offsetAt (start);
                 if (heldNote >= 0) { out.push_back ({ at, false, heldNote, 0, false, false }); heldNote = -1; heldSlides = false; }
                 if (s.active)
                 {
                     releasePoly (0.0, posStart, stepsPerSample, numSamples, out, 0, at);
                     out.push_back ({ at, true, s.note, s.velocity, false, s.accent, s.slice, 0 });
-                    polyHeld.push_back ({ s.note, (double) b + s.gate, 0 });
+                    polyHeld.push_back ({ s.note, start + s.gate, 0 });
                     for (int c = 0; c < s.chordExtra; ++c)
                     {
                         const int cn = s.chord[(size_t) c];
@@ -499,25 +545,25 @@ namespace bash
                         for (int d = 0; d < c; ++d) dup = dup || s.chord[(size_t) d] == cn;
                         if (dup) continue;
                         out.push_back ({ at, true, cn, std::max (1, s.velocity - 12), false, s.accent, s.slice, 0 });
-                        polyHeld.push_back ({ cn, (double) b + s.gate, 0 });
+                        polyHeld.push_back ({ cn, start + s.gate, 0 });
                     }
                 }
                 if (s.bassActive)
                 {
                     releasePoly (0.0, posStart, stepsPerSample, numSamples, out, 1, at);
                     out.push_back ({ at, true, s.bassNote, s.velocity, false, s.accent, s.slice, 1 });
-                    polyHeld.push_back ({ s.bassNote, (double) b + std::min (s.gate, 0.9f), 1 });
+                    polyHeld.push_back ({ s.bassNote, start + std::min (s.gate, 0.9f), 1 });
                 }
                 continue;
             }
 
             if (! polyHeld.empty())   // switched away from Counterpoint
-                releasePoly (0.0, posStart, stepsPerSample, numSamples, out, -1, offsetAt ((double) b));
+                releasePoly (0.0, posStart, stepsPerSample, numSamples, out, -1, offsetAt (start));
 
             if (! s.active)
                 continue;
 
-            const int at = offsetAt ((double) b);
+            const int at = offsetAt (start);
             const bool legato = heldNote >= 0 && heldSlides;
 
             if (heldNote >= 0 && ! legato)
@@ -543,27 +589,70 @@ namespace bash
             if (s.slide && next.active)
             {
                 heldSlides = true;
-                heldOffPos = (double) b + 1.05;   // overlap into the next step
+                heldOffPos = pattern.stepStart (b + 1, p) + 0.05;   // overlap into the next step
             }
             else
             {
                 heldSlides = false;
-                heldOffPos = (double) b + s.gate;
+                heldOffPos = start + s.gate;
             }
         }
 
         {
             // poly notes ending inside this block (but not past the next step)
-            const double limit = std::min (posEnd - 1e-9, (double) (lastBoundary + 1));
+            const double limit = std::min (posEnd - 1e-9, pattern.stepStart (lastBoundary + 1, p));
             releasePoly (limit, posStart, stepsPerSample, numSamples, out);
         }
 
-        if (heldNote >= 0 && heldOffPos < posEnd && heldOffPos <= (double) (lastBoundary + 1))
+        if (heldNote >= 0 && heldOffPos < posEnd && heldOffPos <= pattern.stepStart (lastBoundary + 1, p))
         {
             out.push_back ({ offsetAt (heldOffPos), false, heldNote, 0, false, false });
             heldNote = -1;
             heldSlides = false;
         }
+    }
+
+    std::vector<ExportNote> renderNotes (const Pattern& pattern, const SequencerParams& p, const Scale& scale, int64_t numSteps)
+    {
+        constexpr int ticksPerStep = 96;
+        TrackPlayer player;
+        std::vector<NoteEvent> ev;
+        std::vector<ExportNote> out;
+        std::vector<std::pair<size_t, int>> open;   // index into out, stream
+
+        auto handle = [&] (const NoteEvent& e, double pos)
+        {
+            if (e.noteOn)
+            {
+                out.push_back ({ pos, pos, e.note, e.velocity, e.stream });
+                open.push_back ({ out.size() - 1, e.stream });
+            }
+            else
+            {
+                for (auto it = open.begin(); it != open.end(); ++it)
+                    if (out[it->first].note == e.note && it->second == e.stream)
+                    {
+                        out[it->first].end = pos;
+                        open.erase (it);
+                        break;
+                    }
+            }
+        };
+
+        const int block = ticksPerStep * 4;
+        const int64_t total = numSteps * ticksPerStep;
+        for (int64_t t0 = 0; t0 < total; t0 += block)
+        {
+            const int n = (int) std::min<int64_t> (block, total - t0);
+            ev.clear();
+            player.process ((double) t0 / ticksPerStep, 1.0 / ticksPerStep, n, pattern, p, scale, ev);
+            for (auto& e : ev) handle (e, (double) (t0 + e.sampleOffset) / ticksPerStep);
+        }
+        ev.clear();
+        player.reset (&ev, 0);
+        for (auto& e : ev) handle (e, (double) numSteps);
+        for (auto& o : out) if (o.end <= o.start) o.end = std::min ((double) numSteps, o.start + 0.25);
+        return out;
     }
 
     const char* algorithmName (Algorithm a)

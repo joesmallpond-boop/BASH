@@ -291,7 +291,14 @@ BashEditor::BashEditor (BashProcessor& p)
     regenButton.setColour (juce::TextButton::buttonColourId, colour::coral.withAlpha (0.85f));
     addAndMakeVisible (regenButton);
     addAndMakeVisible (clearButton);
-    hint.setText ("Click a step to lock it so Regenerate keeps it. Right-click or hold to mute or unmute a step.",
+    addChildComponent (clearMidiButton);
+    clearMidiButton.onClick = [this] { proc.clearMotif (currentTrack); stepView.refresh(); };
+    exportBar = std::make_unique<bashui::ExportBar> (proc, [this] { return currentTrack; });
+    addAndMakeVisible (*exportBar);
+    auto showMessage = [this] (const juce::String& m) { hint.setText (m, juce::dontSendNotification); };
+    exportBar->onMessage = showMessage;
+    stepView.onMessage = showMessage;
+    hint.setText ("Click a step to lock it. Right-click or hold to mute it. Drop a MIDI file here to use it as the motif.",
                   juce::dontSendNotification);
     hint.setColour (juce::Label::textColourId, colour::quiet);
     hint.setFont (juce::FontOptions (12.0f));
@@ -312,7 +319,7 @@ BashEditor::BashEditor (BashProcessor& p)
 
     const std::vector<std::pair<const char*, const char*>> seqDefs {
         { "type", "TYPE" }, { "density", "DENSITY" }, { "steps", "STEPS" }, { "offset", "OFFSET" },
-        { "accent", "ACCENT" }, { "gate", "GATE" }, { "octave", "OCTAVE" } };
+        { "accent", "ACCENT" }, { "gate", "GATE" }, { "octave", "OCTAVE" }, { "swing", "SWING" }, { "jitter", "JITTER" } };
     for (auto& [id, name] : seqDefs)
     {
         auto k = std::make_unique<Knob>();
@@ -323,6 +330,7 @@ BashEditor::BashEditor (BashProcessor& p)
     addChildComponent (synthPanel);
     addChildComponent (drumPanel);
     addChildComponent (mixerPanel);
+    mixerPanel.onMessage = [this] (const juce::String& m) { hint.setText (m, juce::dontSendNotification); };
     addChildComponent (modPanel);
     addAndMakeVisible (diceButton);
     diceButton.currentTrack = [this] { return currentTrack; };
@@ -352,7 +360,7 @@ std::vector<juce::Component*> BashEditor::trackViewComponents()
 {
     std::vector<juce::Component*> c { &stepView, &regenButton, &clearButton, &hint, &onButton, &scaleLockButton,
                                       &engineBox, &algoBox, &cycleBox, &directionBox, &rateBox,
-                                      &engineLabel, &algoLabel, &rateLabel, &directionLabel, &cycleLabel };
+                                      &engineLabel, &algoLabel, &rateLabel, &directionLabel, &cycleLabel, exportBar.get() };
     for (auto& k : seqKnobs) { c.push_back (&k->slider); c.push_back (&k->label); }
     return c;
 }
@@ -437,6 +445,7 @@ void BashEditor::updateEnginePanel()
 
 void BashEditor::timerCallback()
 {
+    clearMidiButton.setVisible (view == 0 && proc.hasMotif (currentTrack));
     if (proc.engineType (currentTrack) != shownEngine)
         updateEnginePanel();
     if (samplerPanel.isVisible())
@@ -519,12 +528,15 @@ void BashEditor::resized()
     regenButton.setBounds (buttons.removeFromLeft (130));
     buttons.removeFromLeft (8);
     clearButton.setBounds (buttons.removeFromLeft (110));
-    buttons.removeFromLeft (16);
+    buttons.removeFromLeft (8);
+    clearMidiButton.setBounds (buttons.removeFromLeft (100));
+    buttons.removeFromLeft (12);
     hint.setBounds (buttons);
 
     // sequencer panel
     area.removeFromTop (12);
     seqPanel = area.removeFromTop (224);
+    exportBar->setBounds (seqPanel.getRight() - 16 - 440, seqPanel.getY() + 6, 440, 26);
     auto inner = seqPanel.reduced (16).withTrimmedTop (22);
     auto combos = inner.removeFromTop (52);
     onButton.setBounds (combos.removeFromLeft (110).removeFromBottom (30));
@@ -549,7 +561,7 @@ void BashEditor::resized()
     scaleLockButton.setBounds (combos.removeFromLeft (120).removeFromBottom (30));
 
     inner.removeFromTop (12);
-    for (auto& k : seqKnobs) { placeKnob (*k, inner.removeFromLeft (84)); inner.removeFromLeft (8); }
+    for (auto& k : seqKnobs) { placeKnob (*k, inner.removeFromLeft (100)); inner.removeFromLeft (8); }
 
     // voice panel
     area.removeFromTop (12);

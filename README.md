@@ -55,6 +55,14 @@ Full spec: *BASH! — Software Requirements Specification* (Claude doc).
 - MOD view: LFO 1 and LFO 2 (sine, triangle, saw, square, S&H, smooth; free Hz or synced 1/16 to 32 bars), a Life drift generator per track (smooth wandering noise, its own rate), and a matrix per track: 21 destinations (Type, Density, Steps, Offset, Accent, Gate, Cutoff, Resonance, Character, Timbre, Env Mod, Decay, Drive, Tune, Window, Level, Pan, Sends, FX Gnarl) × 7 sources (LFO 1, LFO 2, Life, Velocity, Aftertouch/MPE slide, Mod wheel, Pitch bend). Drag a cell to set its amount
 - Roll the Dice (top-right die): click to roll, right-click for scope (everything / this track / its sequencer / its sound / its effects), chaos amount (10%–anything goes), whether key, tempo, levels and patterns are included, and Undo (16 rolls). Right-click any knob to protect it from the dice (its label turns coral). Track on/off, engine choice, mute/solo, master and the limiter are never rolled
 
+**Milestone 7 — MIDI and audio in/out** ✅
+
+- Drag out: every track has MIDI and WAV drag chips (track view, top-right of the Sequencer panel) and each mixer strip has a WAV chip; the master strip's MIX chip renders all 8 tracks with returns and master FX as one WAV. Drag into your DAW or onto the desktop; click a chip to save the file to Music/BASH Exports and show it
+- Pick 1–32 bars and whether to render with FX. Audio renders offline (faster than real time) at the session tempo, 24-bit WAV, with effect tails wrapped round to the start so loops are seamless
+- MIDI export keeps swing, jitter, gate lengths, direction and odd lengths; Counterpoint bass goes on channel 2
+- MIDI import: drop a .mid on the step grid. Its notes, rhythm and accents become the track's motif: Type 0 plays it exactly, turning Type up morphs away from it (Clear MIDI removes it). Drum tracks map notes 36–51 to the pads
+- Swing and Jitter per track
+
 Next: modulation, Life, Roll the Dice, mixer + FX → MIDI import/export → iPad → Max for Live companion.
 
 ## Getting builds

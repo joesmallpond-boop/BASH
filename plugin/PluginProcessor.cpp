@@ -194,6 +194,8 @@ APVTS::ParameterLayout BashProcessor::createLayout()
         g->addChild (floatParam (id ("accent"),    n + "Accent",  NormalisableRange<float> (0.0f, 1.0f), 0.6f, 2));
         g->addChild (floatParam (id ("gate"),      n + "Gate",    NormalisableRange<float> (0.05f, 2.0f), 0.5f, 2));
         g->addChild (std::make_unique<AudioParameterInt>    (id ("octave"),    n + "Octave",  0, 6, 2));
+        g->addChild (floatParam (id ("swing"),  n + "Swing",  NormalisableRange<float> (0.0f, 0.75f), 0.0f, 2));
+        g->addChild (floatParam (id ("jitter"), n + "Jitter", NormalisableRange<float> (0.0f, 1.0f), 0.0f, 2));
         g->addChild (std::make_unique<AudioParameterBool>   (id ("scalelock"), n + "Scale Lock", true));
 
         g->addChild (std::make_unique<AudioParameterChoice> (id ("machine"), n + "Machine", machineNames(), 0));
@@ -281,7 +283,7 @@ BashProcessor::BashProcessor()
         p.scaleLock = get ("scalelock"); p.wave = get ("wave"); p.cutoff = get ("cutoff"); p.reso = get ("reso");
         p.envMod = get ("envmod"); p.decay = get ("decay"); p.drive = get ("drive"); p.glide = get ("glide");
         p.level = get ("level"); p.pan = get ("pan");
-        p.lifeRate = get ("liferate");
+        p.lifeRate = get ("liferate"); p.swing = get ("swing"); p.jitter = get ("jitter");
         p.mute = get ("mute"); p.solo = get ("solo"); p.sendA = get ("senda"); p.sendB = get ("sendb");
         p.fx[0] = fxPtrs (pid (t, "fx1")); p.fx[1] = fxPtrs (pid (t, "fx2"));
         p.machine = get ("machine"); p.timbre = get ("timbre"); p.ftype = get ("ftype");
@@ -333,6 +335,8 @@ bash::SequencerParams BashProcessor::seqParams (int t) const
     s.windowStart  = (uint32_t) juce::jmax (0, (int) load (p.winStart) - 1);
     s.windowSize   = (uint32_t) juce::jmax (1, (int) load (p.winSize));
     s.sliceCount   = 0;   // the engine fills this in on the audio thread
+    s.swing        = load (p.swing);
+    s.jitter       = load (p.jitter);
     return s;
 }
 
@@ -440,6 +444,7 @@ void BashProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBu
                 transport.hostPpq       = *pos->getPpqPosition();
                 transport.hostBpm       = *pos->getBpm();
                 transport.hostPlaying   = pos->getIsPlaying();
+                lastHostBpm.store (transport.hostBpm);
             }
         }
     }
@@ -1022,4 +1027,172 @@ bool BashProcessor::undoDice()
         pat.setSeed (snap.seeds[(size_t) t]);
     }
     return true;
+}
+
+// ---- MIDI import / export, audio export (message thread) -------------------------
+juce::File BashProcessor::exportFolder()
+{
+   #if JUCE_IOS
+    auto dir = juce::File::getSpecialLocation (juce::File::userDocumentsDirectory).getChildFile ("BASH Exports");
+   #else
+    auto dir = juce::File::getSpecialLocation (juce::File::userMusicDirectory).getChildFile ("BASH Exports");
+   #endif
+    dir.createDirectory();
+    return dir;
+}
+
+double BashProcessor::exportBpm() const
+{
+    const bool synced = load (pSync) > 0.5f && lastHostBpm.load() > 0.0;
+    return synced ? lastHostBpm.load() : (double) load (pTempo);
+}
+
+static double stepsPerQuarterFor (int rateIndex)
+{
+    const auto& rates = bash::allRates();
+    return rates[(size_t) juce::jlimit (0, (int) rates.size() - 1, rateIndex)].stepsPerQuarter;
+}
+
+juce::String BashProcessor::importMidi (int t, const juce::File& file)
+{
+    juce::FileInputStream in (file);
+    juce::MidiFile mf;
+    if (! in.openedOk() || ! mf.readFrom (in)) return "Couldn't read " + file.getFileName();
+    const int tpq = mf.getTimeFormat() > 0 ? mf.getTimeFormat() : 960;
+    juce::MidiMessageSequence found;
+    bool any = false;
+    for (int i = 0; i < mf.getNumTracks() && ! any; ++i)
+    {
+        const auto* tr = mf.getTrack (i);
+        for (int e = 0; e < tr->getNumEvents(); ++e)
+            if (tr->getEventPointer (e)->message.isNoteOn()) { found = *tr; any = true; break; }
+    }
+    if (! any) return file.getFileName() + " has no notes";
+    found.updateMatchedPairs();
+    const juce::MidiMessageSequence* seq = &found;
+
+    const double spq = stepsPerQuarterFor ((int) load (tp[(size_t) t].rate));
+    double lastBeat = 0.0;
+    struct N { double step, len; int note, vel; };
+    std::vector<N> notes;
+    for (int e = 0; e < seq->getNumEvents(); ++e)
+    {
+        const auto* ev = seq->getEventPointer (e);
+        if (! ev->message.isNoteOn()) continue;
+        const double startBeat = ev->message.getTimeStamp() / tpq;
+        const double endBeat = ev->noteOffObject != nullptr ? ev->noteOffObject->message.getTimeStamp() / tpq : startBeat + 0.25;
+        notes.push_back ({ startBeat * spq, (endBeat - startBeat) * spq, ev->message.getNoteNumber(), ev->message.getVelocity() });
+        lastBeat = std::max (lastBeat, endBeat);
+    }
+
+    const int stepsPerBar = (int) std::lround (spq * 4.0);
+    int length = (int) std::ceil (lastBeat * spq / stepsPerBar - 1.0e-6) * stepsPerBar;
+    length = juce::jlimit (1, 4096, std::max (length, stepsPerBar));
+    std::vector<bash::StepData> motif ((size_t) length);
+    for (auto& m : motif) { m.active = false; m.note = notes.front().note; m.gate = 0.5f; }
+    for (const auto& n : notes)
+    {
+        const int s = (int) std::lround (n.step);
+        if (s < 0 || s >= length) continue;
+        auto& m = motif[(size_t) s];
+        if (m.active) continue;   // first note on a step wins
+        m.active = true;
+        m.note = n.note;
+        m.accent = n.vel >= 100;
+        m.gate = (float) juce::jlimit (0.05, 2.0, n.len);
+    }
+    {
+        auto& pat = engine.pattern (t);
+        std::lock_guard<bash::SpinMutex> g (pat.mutex());
+        pat.setMotif (std::move (motif));
+    }
+    auto* steps = apvts.getParameter (pid (t, "steps"));
+    steps->setValueNotifyingHost (steps->convertTo0to1 ((float) std::min (length, 256)));
+    auto* type = apvts.getParameter (pid (t, "type"));
+    type->setValueNotifyingHost (0.0f);   // start exactly on the imported phrase
+    return {};
+}
+
+void BashProcessor::clearMotif (int t)
+{
+    auto& pat = engine.pattern (t);
+    std::lock_guard<bash::SpinMutex> g (pat.mutex());
+    pat.clearMotif();
+}
+
+bool BashProcessor::hasMotif (int t)
+{
+    auto& pat = engine.pattern (t);
+    std::lock_guard<bash::SpinMutex> g (pat.mutex());
+    return ! pat.getMotif().empty();
+}
+
+juce::String BashProcessor::exportName (int t, const juce::String& ext) const
+{
+    const auto when = juce::Time::getCurrentTime().formatted ("%H%M%S");
+    const juce::String what = t < 0 ? juce::String ("Mix") : "Track " + juce::String (t + 1);
+    return "BASH " + what + " " + juce::String (exportBars) + " bars " + juce::String (exportBpm(), 0) + "bpm " + when + ext;
+}
+
+juce::File BashProcessor::exportMidi (int t)
+{
+    const double spq = stepsPerQuarterFor ((int) load (tp[(size_t) t].rate));
+    const int64_t steps = (int64_t) std::llround (spq * 4.0 * exportBars);
+    std::vector<bash::ExportNote> notes;
+    {
+        auto& pat = engine.pattern (t);
+        const auto params = uiSeqParams (t);
+        const auto sc = scaleNow();
+        std::lock_guard<bash::SpinMutex> g (pat.mutex());
+        notes = bash::renderNotes (pat, params, sc, steps);
+    }
+
+    const int tpq = 960;
+    juce::MidiMessageSequence seq;
+    seq.addEvent (juce::MidiMessage::tempoMetaEvent ((int) std::lround (60000000.0 / exportBpm())), 0.0);
+    seq.addEvent (juce::MidiMessage::timeSignatureMetaEvent (4, 4), 0.0);
+    for (const auto& n : notes)
+    {
+        const int ch = n.stream == 1 ? 2 : 1;
+        seq.addEvent (juce::MidiMessage::noteOn (ch, n.note, (juce::uint8) juce::jlimit (1, 127, n.velocity)), n.start / spq * tpq);
+        seq.addEvent (juce::MidiMessage::noteOff (ch, n.note), n.end / spq * tpq);
+    }
+    seq.addEvent (juce::MidiMessage::endOfTrack(), (double) steps / spq * tpq);
+    seq.sort();
+    seq.updateMatchedPairs();
+
+    juce::MidiFile mf;
+    mf.setTicksPerQuarterNote (tpq);
+    mf.addTrack (seq);
+    auto file = exportFolder().getChildFile (exportName (t, ".mid"));
+    juce::FileOutputStream out (file);
+    if (! out.openedOk() || ! mf.writeTo (out)) return {};
+    return file;
+}
+
+juce::File BashProcessor::exportAudio (int t)
+{
+    bash::RenderOptions o;
+    o.track = t;
+    o.bars = exportBars;
+    o.bpm = exportBpm();
+    o.sampleRate = getSampleRate() > 0.0 ? getSampleRate() : 48000.0;
+    o.withFx = exportWithFx;
+    o.tailSeconds = exportWithFx ? 6.0 : 1.0;
+    std::vector<float> l, r;
+    bash::Engine::renderOffline (engine, o, l, r);
+
+    juce::AudioBuffer<float> buf (2, (int) l.size());
+    buf.copyFrom (0, 0, l.data(), (int) l.size());
+    buf.copyFrom (1, 0, r.data(), (int) r.size());
+
+    auto file = exportFolder().getChildFile (exportName (t, ".wav"));
+    std::unique_ptr<juce::OutputStream> stream (file.createOutputStream().release());
+    if (stream == nullptr) return {};
+    juce::WavAudioFormat wav;
+    std::unique_ptr<juce::AudioFormatWriter> writer (wav.createWriterFor (stream.get(), o.sampleRate, 2, 24, {}, 0));
+    if (writer == nullptr) return {};
+    stream.release();   // the writer owns it now
+    writer->writeFromAudioSampleBuffer (buf, 0, buf.getNumSamples());
+    return file;
 }

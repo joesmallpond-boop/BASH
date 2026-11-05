@@ -105,6 +105,16 @@ public:
     int  diceUndoCount() const                         { return (int) diceHistory.size(); }
     static const juce::StringArray& diceScopeNames();
 
+    // MIDI import / export, audio export
+    juce::String importMidi (int track, const juce::File&);   // error or empty
+    void clearMotif (int track);
+    bool hasMotif (int track);
+    juce::File exportMidi (int track);              // writes to exportFolder(); empty File on failure
+    juce::File exportAudio (int track);             // track -1 = full mix
+    static juce::File exportFolder();
+    int  exportBars = 4;
+    bool exportWithFx = true;
+
     static const juce::StringArray& cycleNames();
     static uint32_t cycleMultiplier (int index);
 
@@ -126,6 +136,9 @@ private:
     void timerCallback() override;
     std::shared_ptr<bash::SampleData> decode (const juce::File&, double maxSeconds, juce::String& error);
     void retireCellSample (int i);
+    double exportBpm() const;
+    juce::String exportName (int track, const juce::String& ext) const;
+    std::atomic<double> lastHostBpm { 0.0 };
     juce::ValueTree kitToTree();
     void kitFromTree (const juce::ValueTree&);
 
@@ -138,7 +151,7 @@ private:
                            *accent, *gate, *octave, *scaleLock,
                            *wave, *cutoff, *reso, *envMod, *decay, *drive, *glide, *level, *pan,
                            *machine, *timbre, *ftype, *aAtk, *aDec, *aSus, *aRel,
-                           *mute, *solo, *sendA, *sendB, *lifeRate,
+                           *mute, *solo, *sendA, *sendB, *lifeRate, *swing, *jitter,
                            *engine, *sliceMode, *winStart, *winSize, *pitchFollow, *tune, *sAttack, *sRelease, *reverse;
         std::array<FxPtrs, 2> fx;
     };

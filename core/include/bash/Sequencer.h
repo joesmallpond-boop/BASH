@@ -59,6 +59,8 @@ namespace bash
         uint32_t  windowStart = 0;
         uint32_t  windowSize  = 4;
         bool      drumTrack   = false;  // slices are drum cells; note = 36 + cell
+        float     swing       = 0.0f;   // 0..0.75: delays every second step
+        float     jitter      = 0.0f;   // 0..1: seeded random lateness per step (humanise)
 
         // arpeggiator input: notes currently held on MIDI in (ascending)
         std::array<int, 16> held {};
@@ -122,6 +124,9 @@ namespace bash
         /** The step as it plays: generated, with any locks applied. */
         StepData step (uint32_t index, const SequencerParams&, const Scale&) const;
 
+        /** When absolute step n starts, in steps (grid + swing + jitter). Always in [n, n + 0.8). */
+        double stepStart (int64_t n, const SequencerParams&) const noexcept;
+
         /** Which pattern index plays at absolute step position n (after offset + direction). */
         uint32_t indexForPosition (int64_t n, const SequencerParams&) const noexcept;
 
@@ -139,8 +144,15 @@ namespace bash
 
         SpinMutex& mutex() noexcept { return guard; }
 
+        /** An imported phrase (e.g. from a MIDI file): it becomes the Type = 0 layer,
+            and Type morphs away from it. Empty = fully generative. */
+        void setMotif (std::vector<StepData> m)           { motif = std::move (m); }
+        const std::vector<StepData>& getMotif() const     { return motif; }
+        void clearMotif()                                 { motif.clear(); }
+
     private:
         uint64_t seed;
+        std::vector<StepData> motif;
         std::map<uint32_t, StepLock> locks;
         mutable SpinMutex guard;
     };
@@ -189,6 +201,10 @@ namespace bash
         bool     heldSlides  = false;
         uint32_t lastIndex   = 0;
     };
+
+    /** Offline render of a track's notes for export: positions in steps from the start. */
+    struct ExportNote { double start, end; int note, velocity, stream; };
+    std::vector<ExportNote> renderNotes (const Pattern&, const SequencerParams&, const Scale&, int64_t numSteps);
 
     const char* algorithmName (Algorithm);
     const char* directionName (Direction);

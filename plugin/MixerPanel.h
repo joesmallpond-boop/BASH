@@ -2,6 +2,7 @@
 
 #include "PluginProcessor.h"
 #include "UiCommon.h"
+#include "ExportUI.h"
 
 namespace bashui
 {
@@ -61,6 +62,7 @@ namespace bashui
             LevelMeter meter;
             std::vector<std::unique_ptr<SliderAttachment>> atts;
             std::vector<std::unique_ptr<ButtonAttachment>> buttonAtts;
+            std::unique_ptr<DragChip> chip;
             bool isTrack = false, isMaster = false;
             int track = -1;
         };
@@ -72,5 +74,7 @@ namespace bashui
 
         BashProcessor& proc;
         std::vector<std::unique_ptr<Strip>> strips;
+    public:
+        std::function<void (const juce::String&)> onMessage;
     };
 }
