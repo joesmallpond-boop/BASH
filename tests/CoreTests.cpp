@@ -9,6 +9,7 @@
 #include "bash/Modulation.h"
 #include "bash/StepSeq.h"
 #include "bash/Warp.h"
+#include "bash/Library.h"
 
 #include <cmath>
 #include <mutex>
@@ -1355,6 +1356,89 @@ static void testWarp()
         CHECK (errMs <= 12.0);
     }
     CHECK (stretch (loop100, 1.0)->left == loop100.left);   // no-op at the same tempo
+    // tempo in file names
+    CHECK (warp::tempoFromName ("Reese 174") == 174.0);
+    CHECK (warp::tempoFromName ("dark_loop_140bpm_Fmin") == 140.0);
+    CHECK (warp::tempoFromName ("Break 86.5 BPM") == 86.5);
+    CHECK (warp::tempoFromName ("kick 01") == 0.0);
+    CHECK (warp::tempoFromName ("909 hat") == 0.0);
+    CHECK (warp::tempoFromName ("song 2024 mix") == 0.0);
+    CHECK (warp::tempoFromName ("loop_120") == 120.0);
+}
+
+// ---- factory library and grooves ------------------------------------------------
+static void testLibrary()
+{
+    const auto& shots = library::oneShots();
+    CHECK (shots.size() >= 120);
+    std::set<std::string> names;
+    for (const auto& s : shots)
+    {
+        CHECK (names.insert (s.category + "/" + s.name).second);   // unique
+        auto d = s.render();
+        bool finite = d->numFrames() > 32 && d->right.size() == d->left.size();
+        float peak = 0.0f;
+        for (uint32_t i = 0; i < d->numFrames() && finite; ++i)
+        {
+            finite = std::isfinite (d->left[i]) && std::isfinite (d->right[i]);
+            peak = std::max ({ peak, std::abs (d->left[i]), std::abs (d->right[i]) });
+        }
+        if (! finite || peak > 0.95f || peak < 0.05f) std::printf ("  bad one-shot %s/%s peak %.2f\n", s.category.c_str(), s.name.c_str(), peak);
+        CHECK (finite && peak <= 0.95f && peak >= 0.05f);
+        CHECK (d->sampleRate == library::renderRate);
+    }
+    // the same recipe renders the same sound every time
+    CHECK (shots[0].render()->left == shots[0].render()->left);
+
+    for (const auto& l : library::loops())
+    {
+        auto d = l.render();
+        CHECK (std::abs ((double) d->numFrames() - l.bars * 4.0 * 60.0 / l.bpm * d->sampleRate) <= 1.0);
+        CHECK (l.name.find (std::to_string ((int) l.bpm)) != std::string::npos);   // tempo in the name
+        // (library loops load with their tempo from the name, so detection isn't needed for them)
+        CHECK (std::abs (warp::tempoFromName (l.name) - l.bpm) < 1.0e-9);
+    }
+    CHECK (library::loops().size() >= 25);
+
+    CHECK (library::kits().size() >= 10);
+    for (const auto& k : library::kits())
+    {
+        int used = 0;
+        for (const auto& p : k.pads)
+        {
+            if (p.sound.empty()) continue;
+            ++used;
+            if (library::findOneShot (p.sound) == nullptr) std::printf ("  kit %s: no sound %s\n", k.name.c_str(), p.sound.c_str());
+            CHECK (library::findOneShot (p.sound) != nullptr);
+        }
+        CHECK (used >= 12);
+        CHECK (k.pads[0].sound.rfind ("Kicks/", 0) == 0);   // lane 1 is a kick in every kit
+    }
+
+    // grooves
+    const auto& gs = grooves::all();
+    CHECK (gs.size() >= 40);
+    std::set<std::string> styles;
+    for (const auto& g : gs)
+    {
+        styles.insert (g.style);
+        StepPattern p;
+        grooves::apply (g, p);
+        CHECK (p.activeLanes() >= 3);
+        CHECK (p.lanes[0].steps[0].on || p.lanes[1].steps[0].on || g.lanes[0].empty() || g.lanes[0][0] != '.');
+        for (int l = 0; l < stepLanes; ++l)
+        {
+            const auto& str = g.lanes[(size_t) l];
+            for (char c : str) CHECK (std::string (".xXgortRfn2<>").find (c) != std::string::npos);
+            if (! str.empty()) CHECK (p.lanes[(size_t) l].length == str.size());
+        }
+        CHECK (g.bpm >= 80 && g.bpm <= 180 && g.swing >= 0.0f && g.swing <= 0.75f);
+    }
+    CHECK (styles.size() >= 10);
+    // a groove's letters become the right steps
+    StepPattern p;
+    grooves::apply (gs[0], p);
+    CHECK (p.lanes[0].steps[0].on && ! p.lanes[0].steps[1].on && p.lanes[0].steps[10].on);
 }
 
 int main()
@@ -1387,6 +1471,7 @@ int main()
     testNoDronesOrLopsidedTails();
     testStepSequencer();
     testWarp();
+    testLibrary();
     std::printf ("%d checks, %d failures\n", checks, failures);
     return failures == 0 ? 0 : 1;
 }

@@ -45,6 +45,9 @@ if(BASH_BUILD_PLUGIN)
         target_include_directories(bash_plugin_tests PRIVATE $<TARGET_PROPERTY:BASH,INCLUDE_DIRECTORIES>)
         target_compile_definitions(bash_plugin_tests PRIVATE $<TARGET_PROPERTY:BASH,COMPILE_DEFINITIONS>)
 
+        add_executable(bash_library_render tools/LibraryRender.cpp)
+        target_link_libraries(bash_library_render PRIVATE bash_core)
+
         add_executable(bash_hum_hunt tools/HumHunt.cpp)
         target_link_libraries(bash_hum_hunt PRIVATE BASH juce::juce_recommended_config_flags)
         target_include_directories(bash_hum_hunt PRIVATE $<TARGET_PROPERTY:BASH,INCLUDE_DIRECTORIES>)

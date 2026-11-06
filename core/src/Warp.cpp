@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <cmath>
 #include <numeric>
+#include <cctype>
+#include <cstdlib>
 
 namespace bash
 {
@@ -143,6 +145,28 @@ namespace bash
             while (acBpm > maxBpm) acBpm *= 0.5;
             out.bpm = std::round (acBpm * 100.0) / 100.0;
             return out;
+        }
+
+        double tempoFromName (const std::string& name)
+        {
+            std::string low;
+            for (char c : name) low += (char) std::tolower ((unsigned char) c);
+            double standalone = 0.0;
+            for (size_t i = 0; i < low.size();)
+            {
+                if (! std::isdigit ((unsigned char) low[i])) { ++i; continue; }
+                const size_t start = i;
+                while (i < low.size() && (std::isdigit ((unsigned char) low[i]) || low[i] == '.')) ++i;
+                const std::string num = low.substr (start, i - start);
+                const double v = std::atof (num.c_str());
+                const bool leftOk = start == 0 || ! std::isalpha ((unsigned char) low[start - 1]);
+                size_t j = i; while (j < low.size() && (low[j] == ' ' || low[j] == '_' || low[j] == '-')) ++j;
+                const bool saysBpm = low.compare (j, 3, "bpm") == 0;
+                if (saysBpm && v >= 40.0 && v <= 300.0) return v;
+                const bool rightOk = i == low.size() || ! std::isalpha ((unsigned char) low[i]);
+                if (leftOk && rightOk && num[0] != '0' && v >= 60.0 && v <= 200.0 && standalone == 0.0) standalone = v;
+            }
+            return standalone;
         }
 
         std::shared_ptr<SampleData> stretch (const SampleData& in, double ratio)

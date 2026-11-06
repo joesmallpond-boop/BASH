@@ -769,7 +769,9 @@ juce::String BashProcessor::loadSample (int t, const juce::File& file, bool auto
     // Warp: find the file's tempo (or use the one saved with the session) and stretch it to ours
     auto& w = warps[(size_t) t];
     w.original = data;
-    w.sourceBpm = knownBpm > 0.0 ? knownBpm : bash::warp::detectTempo (*data).bpm;
+    // tempo: saved with the session, else written in the file name ("Reese 174"), else detected
+    const double fromName = bash::warp::tempoFromName (file.getFileNameWithoutExtension().toStdString());
+    w.sourceBpm = knownBpm > 0.0 ? knownBpm : fromName > 0.0 ? fromName : bash::warp::detectTempo (*data).bpm;
     const double ratio = desiredWarpRatio (t);
     w.requested = ratio;
     auto playing = std::abs (ratio - 1.0) > 1.0e-4 ? bash::warp::stretch (*data, ratio) : data;

@@ -9,7 +9,10 @@ add_library(bash_core STATIC
     src/Sequencer.cpp
     src/Slices.cpp
     src/StepSeq.cpp
-    src/Warp.cpp)
+    src/Warp.cpp
+    src/Library.cpp
+    src/LibraryLoops.cpp
+    src/Grooves.cpp)
 
 target_include_directories(bash_core PUBLIC include)
 target_compile_features(bash_core PUBLIC cxx_std_17)

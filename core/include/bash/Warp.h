@@ -5,6 +5,7 @@
 #include "bash/Slices.h"
 
 #include <memory>
+#include <string>
 
 namespace bash
 {
@@ -19,6 +20,10 @@ namespace bash
 
         /** Estimates the tempo of a sample (70-180 bpm range; loops snap to their exact length). */
         TempoEstimate detectTempo (const SampleData&);
+
+        /** A tempo written in a file name ("Reese 174", "loop_140bpm", "86.5 BPM"), or 0.
+            A number counts if it says bpm, or stands alone in 60-200 and isn't a year or "01". */
+        double tempoFromName (const std::string& name);
 
         /** Time-stretch without changing pitch (WSOLA). ratio = output length / input length,
             e.g. sourceBpm / targetBpm. The result keeps the source's sample rate and path. */
