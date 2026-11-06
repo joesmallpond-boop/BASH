@@ -73,6 +73,8 @@ namespace bashui
         explicit DiceButton (BashProcessor& p) : proc (p) { setTooltip ("Roll this track's sequencer (right-click for options)"); }
         std::function<int()> currentTrack;
         std::function<void()> onRolled;
+        /** Set these to make the die roll something else (the GRANULAR section's die). */
+        std::function<void()> rollAction, menuAction;
         void paint (juce::Graphics&) override;
         void mouseDown (const juce::MouseEvent&) override;
         void mouseUp (const juce::MouseEvent&) override;

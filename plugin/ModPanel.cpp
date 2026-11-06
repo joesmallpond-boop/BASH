@@ -267,7 +267,7 @@ void DiceButton::paint (juce::Graphics& g)
 
 void DiceButton::mouseDown (const juce::MouseEvent& e)
 {
-    if (e.mods.isPopupMenu()) { showMenu(); return; }
+    if (e.mods.isPopupMenu()) { if (menuAction) menuAction(); else showMenu(); return; }
     pressed = true;
     repaint();
 }
@@ -278,7 +278,7 @@ void DiceButton::mouseUp (const juce::MouseEvent& e)
     pressed = false;
     if (getLocalBounds().contains (e.getPosition()))
     {
-        proc.rollDice (currentTrack ? currentTrack() : 0);
+        if (rollAction) rollAction(); else proc.rollDice (currentTrack ? currentTrack() : 0);
         face = 1 + juce::Random::getSystemRandom().nextInt (6);
         if (onRolled) onRolled();
     }

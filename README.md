@@ -71,6 +71,16 @@ Full spec: *BASH! — Software Requirements Specification* (Claude doc).
 
 - `m4l/BASH Key Lock.amxd`: put it before BASH! on the track and BASH! follows the set's key and scale (any Live scale maps to BASH!'s nearest). See `m4l/README.md`
 
+**0.4.0** ✅ — GRANULAR
+
+- A new **GRANULAR** window (after MOD): an experimental section on the master, after the mixer, before the safety limiter. Off by default; switch it off and BASH! is exactly as before
+- **Live capture**: the last 16 s of the master as a waveform that moves with your music; **Freeze** holds it
+- **4 playheads** you drag on the waveform, each with position, size (1 ms to 2 s), density, pitch (+-24, key-locked if you like), pitch spray, position spray, scan, reverse chance, drift, level and pan; grain shape (smooth, flat, perc, swell) and stereo spread
+- **Filter** (LP/BP/HP), **resonator** tuned to the session key (chords, octave, decay all the way to infinite), ping-pong **delay** (synced), **reverb** with shimmer and infinite freeze
+- **Glitch**: tempo-synced repeat, reverse, tape stop, crush and chop at a chance per division, plus a **Stutter** button to hold
+- **Recorder / looper**: Record what the section plays (up to 60 s), loop it, drag the **TAKE** out as a WAV, send it to any track's slice sampler, or feed it back into the grains. **MIX** drags out the whole mix through the section
+- Its own **die** (only rolls this section; right-click to undo)
+
 **0.3.0** ✅ — the BASH! library
 
 - **133 drum sounds**, all synthesised by BASH! (nothing sampled from anyone's records), voiced for UK bass, DnB, dubstep, UKG, broken beat, techno, electro, IDM and beat tape: sub kicks tuned to F/G/A/A#, halfstep, roller, garage, warehouse (with rumble), dusty and broken kicks; halfstep, roller, garage, dusty, ghost and industrial snares and rims; claps; closed/open hats; rides and crashes; shakers; congas, bongos, timbales, woodblocks, bleeps, zaps, metal and glass hits; toms; FX (sub drop, impact, horn stab, dub siren, reese and wobble stabs, risers); glitch. Drum panel > **Library** puts any of them on the selected pad (the menu stays open so you can click through and hear them)
