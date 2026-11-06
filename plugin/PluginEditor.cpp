@@ -266,7 +266,7 @@ void StepView::mouseUp (const juce::MouseEvent& e)
 
 // ============================================================================
 BashView::BashView (BashProcessor& p)
-    : proc (p), stepView (p), samplerPanel (p), synthPanel (p), drumPanel (p), mixerPanel (p), modPanel (p), diceButton (p)
+    : proc (p), stepView (p), samplerPanel (p), synthPanel (p), drumPanel (p), mixerPanel (p), modPanel (p), diceButton (p), stepPanel (p)
 {
     setLookAndFeel (&lnf);
     auto& apvts = proc.apvts;
@@ -345,7 +345,19 @@ BashView::BashView (BashProcessor& p)
     addChildComponent (modPanel);
     addAndMakeVisible (diceButton);
     diceButton.currentTrack = [this] { return currentTrack; };
-    diceButton.onRolled = [this] { stepView.refresh(); repaint(); };
+    diceButton.onRolled = [this] { stepView.refresh(); stepPanel.refresh(); repaint(); };
+    addChildComponent (stepPanel);
+    stepPanel.onMessage = [this] (const juce::String& m) { hint.setText (m, juce::dontSendNotification); };
+    for (auto* b : { &genModeButton, &stepModeButton })
+    {
+        b->setClickingTogglesState (false);
+        b->setRadioGroupId (0);
+        addAndMakeVisible (*b);
+    }
+    genModeButton.setTooltip ("The generative acid sequencer");
+    stepModeButton.setTooltip ("A step sequencer: 16 lanes, ratchets, conditions, fills");
+    genModeButton.onClick  = [this] { setStepMode (false); };
+    stepModeButton.onClick = [this] { setStepMode (true); };
     for (auto* b : { &trackViewButton, &mixerViewButton, &modViewButton })
     {
         b->setClickingTogglesState (false);
@@ -371,9 +383,50 @@ std::vector<juce::Component*> BashView::trackViewComponents()
 {
     std::vector<juce::Component*> c { &stepView, &regenButton, &clearButton, &hint, &onButton, &scaleLockButton,
                                       &engineBox, &algoBox, &directionBox, &rateBox,
-                                      &engineLabel, &algoLabel, &rateLabel, &directionLabel, exportBar.get() };
+                                      &engineLabel, &algoLabel, &rateLabel, &directionLabel, exportBar.get(),
+                                      &genModeButton, &stepModeButton, &diceButton, &stepPanel };
     for (auto& k : seqKnobs) { c.push_back (&k->slider); c.push_back (&k->label); }
     return c;
+}
+
+void BashView::applyVisibility()
+{
+    const bool track = view == 0;
+    const bool step = shownStepMode;
+    // generative-only and step-only parts of the sequencer box
+    std::vector<juce::Component*> genOnly { &stepView, &regenButton, &clearButton, &algoBox, &directionBox, &scaleLockButton,
+                                            &engineLabel, &algoLabel, &rateLabel, &directionLabel };
+    for (auto& k : seqKnobs) { genOnly.push_back (&k->slider); genOnly.push_back (&k->label); }
+    for (auto* c : trackViewComponents()) c->setVisible (track);
+    if (track)
+    {
+        for (auto* c : genOnly) c->setVisible (! step);
+        stepPanel.setVisible (step);
+    }
+    clearMidiButton.setVisible (track && ! step && proc.hasMotif (currentTrack));
+    if (step != hintIsStep)
+    {
+        hintIsStep = step;
+        hint.setText (step ? "Click steps to switch them on, drag across to paint, Shift-drag for velocity, right-click a step for ratchets, conditions and chance."
+                           : "Click a step to lock it. Right-click or hold to mute it. Drop a MIDI file here to use it as the motif.",
+                      juce::dontSendNotification);
+    }
+    genModeButton.setToggleState (! step, juce::dontSendNotification);
+    stepModeButton.setToggleState (step, juce::dontSendNotification);
+}
+
+void BashView::setStepMode (bool step)
+{
+    if (auto* p = proc.apvts.getParameter (BashProcessor::pid (currentTrack, "mode")))
+    {
+        p->beginChangeGesture();
+        p->setValueNotifyingHost (step ? 1.0f : 0.0f);
+        p->endChangeGesture();
+    }
+    shownStepMode = step;
+    applyVisibility();
+    resized();
+    repaint();
 }
 
 void BashView::setView (int v)
@@ -384,7 +437,7 @@ void BashView::setView (int v)
     trackViewButton.setToggleState (v == 0, juce::dontSendNotification);
     mixerViewButton.setToggleState (v == 1, juce::dontSendNotification);
     modViewButton.setToggleState (v == 2, juce::dontSendNotification);
-    for (auto* c : trackViewComponents()) c->setVisible (! mixer);
+    applyVisibility();
     mixerPanel.setVisible (v == 1);
     modPanel.setVisible (v == 2);
     if (mixer)
@@ -408,6 +461,10 @@ void BashView::selectTrack (int t)
         trackButtons[(size_t) i].setToggleState (i == t, juce::dontSendNotification);
     bindTrack();
     stepView.setTrack (t);
+    stepPanel.setTrack (t);
+    shownStepMode = proc.stepMode (t);
+    applyVisibility();
+    resized();
     samplerPanel.setTrack (t);
     synthPanel.setTrack (t);
     drumPanel.setTrack (t);
@@ -415,8 +472,6 @@ void BashView::selectTrack (int t)
     diceLocks.clear();
     for (size_t i = 0; i < seqKnobs.size(); ++i)
         diceLocks.bind (seqKnobs[i]->slider, seqKnobs[i]->label, BashProcessor::pid (t, seqKnobIds[i].toRawUTF8()));
-    synthPanel.forEachKnob ([this] (bashui::Knob& k, const juce::String& id) { diceLocks.bind (k.slider, k.label, id); });
-    samplerPanel.forEachKnob ([this] (bashui::Knob& k, const juce::String& id) { diceLocks.bind (k.slider, k.label, id); });
     updateEnginePanel();
 }
 
@@ -456,7 +511,11 @@ void BashView::updateEnginePanel()
 
 void BashView::timerCallback()
 {
-    clearMidiButton.setVisible (view == 0 && proc.hasMotif (currentTrack));
+    if (proc.stepMode (currentTrack) != shownStepMode)
+        setStepMode (proc.stepMode (currentTrack));   // changed by automation or a loaded session
+    clearMidiButton.setVisible (view == 0 && ! shownStepMode && proc.hasMotif (currentTrack));
+    if (stepPanel.isVisible())
+        stepPanel.refresh();
     if (proc.engineType (currentTrack) != shownEngine)
         updateEnginePanel();
     if (samplerPanel.isVisible())
@@ -532,6 +591,7 @@ void BashView::resized()
     area.removeFromTop (12);
     mixerPanel.setBounds (area.withTrimmedBottom (14));
     modPanel.setBounds (area.withTrimmedBottom (14));
+    const auto stepModeBox = area.withHeight (176 + 44 + 12 + 224);   // step mode: one big sequencer box
     stepView.setBounds (area.removeFromTop (176));
     auto buttons = area.removeFromTop (44).withTrimmedTop (8);
     regenButton.setBounds (buttons.removeFromLeft (130));
@@ -546,31 +606,53 @@ void BashView::resized()
     area.removeFromTop (12);
     seqPanel = area.removeFromTop (224);
     exportBar->setBounds (seqPanel.getRight() - 16 - 440, seqPanel.getY() + 6, 440, 26);
-    diceButton.setBounds (seqPanel.getX() + 108, seqPanel.getY() + 4, 32, 32);   // beside the SEQUENCER title
-    auto inner = seqPanel.reduced (16).withTrimmedTop (22);
-    auto combos = inner.removeFromTop (52);
-    onButton.setBounds (combos.removeFromLeft (110).removeFromBottom (30));
-    combos.removeFromLeft (12);
+    if (shownStepMode)
     {
-        auto r = combos.removeFromLeft (110);
-        engineLabel.setBounds (r.removeFromTop (18));
-        engineBox.setBounds (r.removeFromTop (30));
-        combos.removeFromLeft (12);
+        seqPanel = stepModeBox;
+        exportBar->setBounds (seqPanel.getRight() - 16 - 440, seqPanel.getY() + 6, 440, 26);
     }
-    auto placeCombo = [&combos] (juce::Label& l, juce::ComboBox& b, int w)
+    diceButton.setBounds (seqPanel.getX() + 108, seqPanel.getY() + 4, 32, 32);   // beside the SEQUENCER title
+    genModeButton.setBounds (seqPanel.getX() + 150, seqPanel.getY() + 7, 104, 24);
+    stepModeButton.setBounds (seqPanel.getX() + 256, seqPanel.getY() + 7, 60, 24);
+    if (shownStepMode)
     {
-        auto r = combos.removeFromLeft (w);
-        l.setBounds (r.removeFromTop (18));
-        b.setBounds (r.removeFromTop (30));
+        auto inner = seqPanel.reduced (16).withTrimmedTop (26);
+        hint.setBounds (inner.removeFromBottom (16));
+        inner.removeFromBottom (4);
+        stepPanel.setBounds (inner);
+        // ON / ENGINE / RATE sit in the left of the step toolbar
+        auto bar = inner.withHeight (28);
+        onButton.setBounds (bar.removeFromLeft (92)); bar.removeFromLeft (6);
+        engineBox.setBounds (bar.removeFromLeft (100)); bar.removeFromLeft (6);
+        rateBox.setBounds (bar.removeFromLeft (90));
+    }
+    else
+    {
+        auto inner = seqPanel.reduced (16).withTrimmedTop (22);
+        auto combos = inner.removeFromTop (52);
+        onButton.setBounds (combos.removeFromLeft (110).removeFromBottom (30));
         combos.removeFromLeft (12);
-    };
-    placeCombo (algoLabel, algoBox, 150);
-    placeCombo (rateLabel, rateBox, 100);
-    placeCombo (directionLabel, directionBox, 130);
-    scaleLockButton.setBounds (combos.removeFromLeft (120).removeFromBottom (30));
+        {
+            auto r = combos.removeFromLeft (110);
+            engineLabel.setBounds (r.removeFromTop (18));
+            engineBox.setBounds (r.removeFromTop (30));
+            combos.removeFromLeft (12);
+        }
+        auto placeCombo = [&combos] (juce::Label& l, juce::ComboBox& b, int w)
+        {
+            auto r = combos.removeFromLeft (w);
+            l.setBounds (r.removeFromTop (18));
+            b.setBounds (r.removeFromTop (30));
+            combos.removeFromLeft (12);
+        };
+        placeCombo (algoLabel, algoBox, 150);
+        placeCombo (rateLabel, rateBox, 100);
+        placeCombo (directionLabel, directionBox, 130);
+        scaleLockButton.setBounds (combos.removeFromLeft (120).removeFromBottom (30));
 
-    inner.removeFromTop (12);
-    for (auto& k : seqKnobs) { placeKnob (*k, inner.removeFromLeft (100)); inner.removeFromLeft (8); }
+        inner.removeFromTop (12);
+        for (auto& k : seqKnobs) { placeKnob (*k, inner.removeFromLeft (100)); inner.removeFromLeft (8); }
+    }
 
     // voice panel
     area.removeFromTop (12);

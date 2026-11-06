@@ -11,6 +11,7 @@
 #include "MixerPanel.h"
 #include "ModPanel.h"
 #include "ExportUI.h"
+#include "StepPanel.h"
 
 namespace bashui
 {
@@ -114,6 +115,11 @@ private:
     bashui::MixerPanel mixerPanel;
     bashui::ModPanel modPanel;
     bashui::DiceButton diceButton;
+    bashui::StepPanel stepPanel;
+    juce::TextButton genModeButton { "GENERATIVE" }, stepModeButton { "STEP" };
+    bool shownStepMode = false, hintIsStep = false;
+    void setStepMode (bool step);
+    void applyVisibility();
     juce::TextButton trackViewButton { "TRACKS" }, mixerViewButton { "MIXER" }, modViewButton { "MOD" };
     int view = 0;   // 0 tracks, 1 mixer, 2 mod
     bool mixerView = false;

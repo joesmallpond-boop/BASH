@@ -24,6 +24,18 @@ int main (int argc, char** argv)
         p->setValueNotifyingHost (p->convertTo0to1 ((float) juce::String (argv[3]).getIntValue()));
     }
 
+    if (std::getenv ("BASH_SNAPSHOT_STEP"))
+    {
+        proc.apvts.getParameter ("t" + juce::String (track) + "_mode")->setValueNotifyingHost (1.0f);
+        proc.rollDice (track - 1);   // starter groove
+        proc.editSteps (track - 1, [] (bash::StepPattern& sp)
+        {
+            sp.lanes[1].steps[14].ratchet = 3; sp.lanes[1].steps[14].on = true; sp.lanes[1].steps[14].cond = bash::TrigCond::Fill;
+            sp.lanes[5].length = 12; sp.lanes[5].speed = 5; sp.lanes[5].steps[3].on = true; sp.lanes[5].steps[3].prob = 50;
+            sp.lanes[6].mute = true; sp.lanes[6].steps[2].on = true;
+        });
+    }
+
     // run the internal clock for a while so the UI shows a playhead
     const int blocks = argc > 4 ? juce::String (argv[4]).getIntValue() : 0;
     if (blocks > 0)
