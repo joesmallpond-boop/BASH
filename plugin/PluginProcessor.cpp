@@ -154,6 +154,7 @@ APVTS::ParameterLayout BashProcessor::createLayout()
     global->addChild (std::make_unique<AudioParameterBool>   (ParameterID { "play", 1 },   "Play", false));
     global->addChild (floatParam (ParameterID { "master", 1 }, "Master", NormalisableRange<float> (0.0f, 1.0f), 0.8f, 2));
     global->addChild (std::make_unique<AudioParameterBool> (ParameterID { "limiter", 1 }, "Limiter", true));
+    global->addChild (std::make_unique<AudioParameterBool> (ParameterID { "sepouts", 1 }, "Separate Track Outs", false));
     global->addChild (floatParam (ParameterID { "lim_drive", 1 }, "Limiter Drive", NormalisableRange<float> (0.0f, 18.0f, 0.1f), 0.0f, 1, " dB"));
     global->addChild (floatParam (ParameterID { "lim_ceil", 1 }, "Limiter Ceiling", NormalisableRange<float> (-12.0f, 0.0f, 0.1f), -0.3f, 1, " dB"));
     global->addChild (floatParam (ParameterID { "lim_rel", 1 }, "Limiter Release", skewed (1.0f, 1000.0f, 100.0f), 120.0f, 0, " ms"));
@@ -312,6 +313,7 @@ BashProcessor::BashProcessor()
     pPlay   = apvts.getRawParameterValue ("play");
     pMaster = apvts.getRawParameterValue ("master");
     pLimiter = apvts.getRawParameterValue ("limiter");
+    pSepOuts = apvts.getRawParameterValue ("sepouts");
     pRetALevel = apvts.getRawParameterValue ("retalevel");
     pRetBLevel = apvts.getRawParameterValue ("retblevel");
     retA = fxPtrs ("reta"); retB = fxPtrs ("retb");
@@ -441,6 +443,7 @@ void BashProcessor::pullParameters()
     g.glue.makeupDb     = load (pGlueMakeup);
     g.glue.mix          = load (pGlueMix);
     g.glue.sidechainHpf = (int) load (pGlueHpf);
+    g.separateOuts = load (pSepOuts) > 0.5f;
     {
         auto m = [this] (int i) { return load (microP[(size_t) i]); };
         auto& mp = g.micro;
@@ -523,10 +526,11 @@ void BashProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBu
     {
         if (auto pos = ph->getPosition())
         {
-            if (pos->getPpqPosition().hasValue() && pos->getBpm().hasValue())
+            if (pos->getBpm().hasValue() && *pos->getBpm() > 0.0)
             {
                 transport.hostAvailable = true;
-                transport.hostPpq       = *pos->getPpqPosition();
+                transport.hostPpqValid  = pos->getPpqPosition().hasValue();
+                transport.hostPpq       = pos->getPpqPosition().orFallback (0.0);
                 transport.hostBpm       = *pos->getBpm();
                 transport.hostPlaying   = pos->getIsPlaying();
                 lastHostBpm.store (transport.hostBpm);

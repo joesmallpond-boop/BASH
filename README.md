@@ -71,6 +71,11 @@ Full spec: *BASH! — Software Requirements Specification* (Claude doc).
 
 - `m4l/BASH Key Lock.amxd`: put it before BASH! on the track and BASH! follows the set's key and scale (any Live scale maps to BASH!'s nearest). See `m4l/README.md`
 
+**0.5.2** ✅ — DAW fixes
+
+- Fixed: no sound from the plugin in DAWs that switch on all of BASH!'s outputs (Ableton, Reaper, Logic multi-output): every track went only to its own output. The main output now always carries the full mix and the per-track outputs carry copies. **Sep. outs** on the master strip takes tracks on their own outputs out of the main mix, for routing them separately
+- Sync locks to the DAW tempo at all times: the Tempo knob shows the DAW's tempo (DAW TEMPO). While the DAW plays, BASH! follows its position; with the DAW stopped, BASH!'s own Play still runs at the DAW's tempo
+
 **0.5.1** ✅
 
 - Small **M** (mute) and **S** (solo) buttons next to each track button at the top, the same as the mixer's, so you can mute and solo from any view

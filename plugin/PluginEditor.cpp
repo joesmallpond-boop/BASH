@@ -285,6 +285,12 @@ BashView::BashView (BashProcessor& p)
     styleKnob (master, "MASTER");
     for (auto* k : { &tempo, &master }) { addAndMakeVisible (k->slider); addAndMakeVisible (k->label); }
     tempoAtt  = std::make_unique<SliderAttachment> (apvts, "tempo", tempo.slider);
+    dawTempoLabel.setJustificationType (juce::Justification::centred);
+    dawTempoLabel.setFont (juce::FontOptions (14.0f, juce::Font::bold));
+    dawTempoLabel.setColour (juce::Label::textColourId, colour::accent);
+    dawTempoLabel.setColour (juce::Label::backgroundColourId, colour::background);
+    dawTempoLabel.setTooltip ("Following the DAW's tempo (switch Sync off to set your own)");
+    addChildComponent (dawTempoLabel);
     masterAtt = std::make_unique<SliderAttachment> (apvts, "master", master.slider);
 
     // tracks
@@ -529,6 +535,14 @@ void BashView::updateEnginePanel()
 
 void BashView::timerCallback()
 {
+    {
+        const double daw = proc.dawTempo();
+        const bool follow = daw > 0.0;
+        dawTempoLabel.setVisible (follow);
+        tempo.slider.setEnabled (! follow);
+        tempo.label.setText (follow ? "DAW TEMPO" : "TEMPO", juce::dontSendNotification);
+        if (follow) dawTempoLabel.setText (juce::String (daw, 1) + " bpm", juce::dontSendNotification);
+    }
     if (proc.stepMode (currentTrack) != shownStepMode)
         setStepMode (proc.stepMode (currentTrack));   // changed by automation or a loaded session
     clearMidiButton.setVisible (view == 0 && ! shownStepMode && proc.hasMotif (currentTrack));
@@ -591,6 +605,7 @@ void BashView::resized()
     placeKnob (master, header.removeFromRight (72));
     header.removeFromRight (8);
     placeKnob (tempo, header.removeFromRight (72));
+    dawTempoLabel.setBounds (tempo.slider.getBounds().removeFromBottom (20).expanded (10, 0));
     header.removeFromRight (12);
     auto row = header.withSizeKeepingCentre (header.getWidth(), 32);
     playButton.setBounds (row.removeFromRight (74)); row.removeFromRight (8);

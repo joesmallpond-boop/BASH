@@ -245,6 +245,15 @@ static void testEngine()
     double tail = 0.0;
     for (int i = 0; i < 480; ++i) tail = std::max (tail, (double) std::abs (l[i]));
     CHECK (tail < 1.0e-3);
+    CHECK (! eng.isRunning());
+
+    // Synced with the DAW stopped, BASH!'s own Play still runs (at the DAW's tempo).
+    eng.global().playing = true;
+    eng.process (l.data(), r.data(), 480, tp, midi);
+    CHECK (eng.isRunning());
+    eng.global().playing = false;
+    eng.process (l.data(), r.data(), 480, tp, midi);
+    CHECK (! eng.isRunning());
 
     // Internal clock runs without a host.
     Transport none;
@@ -817,8 +826,9 @@ static void testMixer()
     CHECK (pk > 1.0e-3f);
     eng.track (0).inserts[0].type = FxType::None;
 
-    // direct output takes the track out of the main mix
+    // with "separate outs", a direct output takes the track out of the main mix
     eng.track (0).enabled = true;
+    eng.global().separateOuts = true;
     std::vector<float> dl (480, 0.0f), dr (480, 0.0f), l (480), r (480);
     std::vector<MidiOut> midi;
     double mainE = 0.0, directE = 0.0;
@@ -832,6 +842,7 @@ static void testMixer()
     }
     eng.setDirectOutput (0, nullptr, nullptr);
     CHECK (directE > 0.1 && mainE < 0.01 * directE);
+    eng.global().separateOuts = false;
 
     // limiter keeps the master under the ceiling even with everything cranked
     for (int t = 0; t < numTracks; ++t) { eng.track (t).enabled = true; eng.track (t).level = 1.0f; eng.track (t).seq.density = 1.0f; eng.track (t).voice.drive = 1.0f; }
@@ -1444,6 +1455,36 @@ static void testLibrary()
 
 // ---- master: glue compressor and limiter -----------------------------------------
 
+static void testDirectOuts()
+{
+    // a host that switches every output on must still hear everything on the main output
+    for (bool separate : { false, true })
+    {
+        Engine eng; eng.prepare (48000.0, 512);
+        eng.global().hostSync = false; eng.global().playing = true;
+        eng.track (0).enabled = true; eng.track (0).seq.density = 0.9f;
+        std::vector<std::vector<float>> outs (16, std::vector<float> (512));
+        std::vector<float> l (512), r (512);
+        std::vector<MidiOut> midi; Transport none;
+        double mainE = 0, directE = 0;
+        for (int b = 0; b < 200; ++b)
+        {
+            for (int t = 0; t < numTracks; ++t)
+            {
+                std::fill (outs[(size_t) (2 * t)].begin(), outs[(size_t) (2 * t)].end(), 0.0f);
+                std::fill (outs[(size_t) (2 * t + 1)].begin(), outs[(size_t) (2 * t + 1)].end(), 0.0f);
+                eng.setDirectOutput (t, outs[(size_t) (2 * t)].data(), outs[(size_t) (2 * t + 1)].data());
+            }
+            eng.global().separateOuts = separate;
+            eng.process (l.data(), r.data(), 512, none, midi);
+            for (int i = 0; i < 512; ++i) { mainE += (double) l[(size_t) i] * l[(size_t) i]; directE += (double) outs[0][(size_t) i] * outs[0][(size_t) i]; }
+        }
+        CHECK (directE > 1.0e-3);
+        if (separate) CHECK (mainE < directE * 0.01);
+        else          CHECK (mainE > directE * 0.3);
+    }
+}
+
 static void testMicro()
 {
     const double sr = 48000.0; const int bs = 128;
@@ -1693,6 +1734,7 @@ int main()
     testLibrary();
     testMasterDynamics();
     testMicro();
+    testDirectOuts();
     std::printf ("%d checks, %d failures\n", checks, failures);
     return failures == 0 ? 0 : 1;
 }

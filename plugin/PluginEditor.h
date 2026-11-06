@@ -96,6 +96,7 @@ private:
     juce::ComboBox keyBox, scaleBox;
     juce::ToggleButton syncButton { "Sync" }, playButton { "Play" };
     bashui::Knob tempo, master;
+    juce::Label dawTempoLabel;   // over the tempo value while it follows the DAW
     std::unique_ptr<ComboAttachment>  keyAtt, scaleAtt;
     std::unique_ptr<ButtonAttachment> syncAtt, playAtt;
     std::unique_ptr<SliderAttachment> tempoAtt, masterAtt;

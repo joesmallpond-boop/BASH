@@ -70,6 +70,7 @@ namespace bash
 
         std::array<FxParams, 2> returns {};          // return A / B effect
         std::array<float, 2>    returnLevel { 0.8f, 0.8f };
+        bool          separateOuts = false;   // true: tracks on an enabled direct output leave the main mix
         MicroParams   micro {};           // MICRO: everything from the tracks + returns, before the master
         GlueParams    glue {};            // master bus compressor (before the limiter)
         LimiterParams limiter {};
@@ -81,6 +82,7 @@ namespace bash
         bool   hostAvailable = false;
         bool   hostPlaying   = false;
         double hostPpq       = 0.0;
+        bool   hostPpqValid  = true;    // false: the host gives a tempo but no position
         double hostBpm       = 120.0;
     };
 

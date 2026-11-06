@@ -68,7 +68,7 @@ namespace bashui
             std::vector<std::unique_ptr<FxSlotUI>> fx;
             MiniKnob sendA, sendB, pan;
             juce::TextButton mute { "M" }, solo { "S" };
-            juce::ToggleButton limiter { "LIMIT" }, glue { "GLUE" }, microOn { "On" };
+            juce::ToggleButton limiter { "LIMIT" }, glue { "GLUE" }, microOn { "On" }, sepOuts { "Sep. outs" };
             MiniKnob glueThr, glueMakeup, glueMix, limDrive, limCeil, limRel, microMix;
             juce::ComboBox glueRatio, glueAtt, glueRel, glueHpf, microAlgo;
             juce::Label glueRatioL, glueAttL, glueRelL, glueHpfL;

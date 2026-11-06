@@ -99,6 +99,8 @@ public:
     void loadFactoryKit (int k);
 
     // master meters (dB of gain reduction)
+    /** The DAW's tempo while Sync is on and the host reports one, else 0. */
+    double dawTempo() const noexcept { return *apvts.getRawParameterValue ("sync") > 0.5f ? lastHostBpm.load() : 0.0; }
     float glueReduction() const noexcept    { return engine.glueReduction(); }
     float limiterReduction() const noexcept { return engine.limiterReduction(); }
 
@@ -178,6 +180,7 @@ private:
     static bash::FxParams fxFrom (const FxPtrs&);
     FxPtrs retA, retB;
     std::vector<std::atomic<float>*> microP;
+    std::atomic<float>* pSepOuts = nullptr;
     std::atomic<float> *pLimDrive = nullptr, *pLimCeil = nullptr, *pLimRel = nullptr, *pGlueOn = nullptr, *pGlueThr = nullptr,
                        *pGlueRatio = nullptr, *pGlueAtt = nullptr, *pGlueRel = nullptr, *pGlueMakeup = nullptr, *pGlueMix = nullptr, *pGlueHpf = nullptr;
     std::atomic<float> *pLimiter = nullptr, *pRetALevel = nullptr, *pRetBLevel = nullptr;

@@ -231,6 +231,9 @@ void MixerPanel::buildMasterStrip (Strip& s)
         label->setJustificationType (juce::Justification::centred);
         addAndMakeVisible (*box); addAndMakeVisible (*label);
     }
+    s.sepOuts.setTooltip ("Separate track outs: when your DAW uses BASH!'s per-track outputs, take those tracks out of the main mix. Off: the main output always has everything");
+    addAndMakeVisible (s.sepOuts);
+    s.buttonAtts.push_back (std::make_unique<ButtonAttachment> (apvts, "sepouts", s.sepOuts));
     addAndMakeVisible (s.glueGr);
     addAndMakeVisible (s.limGr);
     addCommon (s);
@@ -358,8 +361,10 @@ void MixerPanel::resized()
             r.removeFromTop (4);
             auto lk = r.removeFromTop (50);
             for (auto* m : { &s.limDrive, &s.limCeil, &s.limRel }) m->place (lk.removeFromLeft (third));
-            r.removeFromTop (14);
-            const int used = 22 + 4 + 50 + 2 + 2 * 38 + 16 + 22 + 4 + 50 + 14;
+            r.removeFromTop (10);
+            s.sepOuts.setBounds (r.removeFromTop (22));
+            r.removeFromTop (6);
+            const int used = 22 + 4 + 50 + 2 + 2 * 38 + 16 + 22 + 4 + 50 + 10 + 22 + 6;
             r.removeFromTop (std::max (0, 398 - used));
         }
         else

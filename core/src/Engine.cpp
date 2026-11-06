@@ -184,10 +184,13 @@ namespace bash
                 auditionPlayer.stopVoicesUsing (old);
             }
 
-        const bool useHost = globals.hostSync && tp.hostAvailable;
-        const bool run     = useHost ? tp.hostPlaying : globals.playing;
-        const double bpm   = std::max (1.0, useHost ? tp.hostBpm : globals.tempo);
-        double ppq         = useHost ? tp.hostPpq : internalPpq;
+        // Sync: always the DAW's tempo. While the DAW plays, follow its position; while it is
+        // stopped, BASH!'s own Play still runs (at the DAW's tempo).
+        const bool hostTempo = globals.hostSync && tp.hostAvailable;
+        const bool useHost   = hostTempo && tp.hostPlaying && tp.hostPpqValid;
+        const bool run       = useHost || globals.playing;
+        const double bpm     = std::max (1.0, hostTempo ? tp.hostBpm : globals.tempo);
+        double ppq           = useHost ? tp.hostPpq : internalPpq;
 
         if (run && ! wasRunning && ! useHost)
             ppq = internalPpq = 0.0;            // internal clock restarts from bar 1
@@ -461,8 +464,13 @@ namespace bash
 
         float* dl = directOuts[(size_t) (2 * t)];
         float* dr = directOuts[(size_t) (2 * t + 1)];
-        float* outL = dl != nullptr ? dl + offsetInBlock : l;
-        float* outR = dr != nullptr ? dr + offsetInBlock : r;
+        // the main mix always gets every track unless "separate outs" is on; an enabled
+        // direct output gets its own copy (hosts often switch all outputs on by default)
+        const bool direct = dl != nullptr && dr != nullptr;
+        float* outL = direct && globals.separateOuts ? dl + offsetInBlock : l;
+        float* outR = direct && globals.separateOuts ? dr + offsetInBlock : r;
+        float* copyL = direct && ! globals.separateOuts ? dl + offsetInBlock : nullptr;
+        float* copyR = direct && ! globals.separateOuts ? dr + offsetInBlock : nullptr;
         const float sa = ts.sendA, sb = ts.sendB;
         auto& aL = retL[0]; auto& aR = retR[0]; auto& bL = retL[1]; auto& bR = retR[1];
 
@@ -471,6 +479,7 @@ namespace bash
         {
             const float yl = bufL[(size_t) i] * gl, yr = bufR[(size_t) i] * gr;
             outL[i] += yl; outR[i] += yr;
+            if (copyL != nullptr) { copyL[i] += yl; copyR[i] += yr; }
             aL[(size_t) i] += yl * sa; aR[(size_t) i] += yr * sa;
             bL[(size_t) i] += yl * sb; bR[(size_t) i] += yr * sb;
             peak = std::max (peak, std::max (std::abs (yl), std::abs (yr)));
