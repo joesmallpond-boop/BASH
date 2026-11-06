@@ -7,7 +7,8 @@ add_library(bash_core STATIC
     src/Fx.cpp
     src/Scale.cpp
     src/Sequencer.cpp
-    src/Slices.cpp)
+    src/Slices.cpp
+    src/StepSeq.cpp)
 
 target_include_directories(bash_core PUBLIC include)
 target_compile_features(bash_core PUBLIC cxx_std_17)

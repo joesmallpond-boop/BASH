@@ -262,7 +262,7 @@ namespace bash
             default:
             {
                 auto& v = synths[(size_t) t];
-                v.setPolyphonic (ts.seq.algorithm == Algorithm::Counterpoint);
+                v.setPolyphonic (ts.stepMode || ts.seq.algorithm == Algorithm::Counterpoint);   // step lanes can play chords
                 if (e.noteOn) v.noteOn (e.note, e.velocity, e.accent, e.legato);
                 else          v.noteOff (e.note);
                 return;
@@ -322,17 +322,33 @@ namespace bash
             ts.seq.heldCount = heldInCount;
             ts.seq.held = heldIn;
 
+            auto& stepPlayer = stepPlayers[(size_t) t];
             if (run && ts.enabled)
             {
                 const double spq = allRates()[(size_t) std::clamp (ts.rateIndex, 0, (int) allRates().size() - 1)].stepsPerQuarter;
-                auto& pat = patterns[(size_t) t];
-                std::lock_guard<SpinMutex> g (pat.mutex());
-                player.process (ppq * spq, bpm / 60.0 / sr * spq, n, pat, ts.seq, currentScale, events);
-                playIdx[(size_t) t].store (player.currentIndex());
+                if (ts.stepMode)
+                {
+                    player.reset (&events, 0);   // releases anything the generative side held
+                    const auto ctx = stepContext (t, ts, spq);
+                    auto& store = stepStores[(size_t) t];
+                    std::lock_guard<SpinMutex> g (store.m);
+                    stepPlayer.process (ppq * spq, bpm / 60.0 / sr * spq, n, store.pattern, ctx, events);
+                    for (int l = 0; l < stepLanes; ++l) lanePos[(size_t) t][(size_t) l].store (stepPlayer.laneStep (l));
+                }
+                else
+                {
+                    stepPlayer.reset (&events, 0);
+                    auto& pat = patterns[(size_t) t];
+                    std::lock_guard<SpinMutex> g (pat.mutex());
+                    player.process (ppq * spq, bpm / 60.0 / sr * spq, n, pat, ts.seq, currentScale, events);
+                    playIdx[(size_t) t].store (player.currentIndex());
+                }
             }
             else
             {
                 player.reset (&events, 0);
+                stepPlayer.reset (&events, 0);
+                for (auto& lp : lanePos[(size_t) t]) lp.store (-1);
             }
 
             auto& synth  = synths[(size_t) t];
@@ -522,6 +538,40 @@ namespace bash
 
 namespace bash
 {
+    StepContext Engine::stepContext (int t, const TrackSettings& ts, double spq) const
+    {
+        StepContext c;
+        c.stepsPerQuarter = spq;
+        c.fill = ts.fill;
+        c.autoFillBars = ts.autoFillBars;
+        c.swing = ts.seq.swing;
+        c.gate = ts.seq.gate;
+        c.oneShot = ts.engine == EngineType::Drums;
+        for (int l = 0; l < stepLanes; ++l)
+        {
+            switch (ts.engine)
+            {
+                case EngineType::Drums:
+                    c.laneNote[(size_t) l] = drumBaseNote + l;
+                    c.laneSlice[(size_t) l] = l;
+                    break;
+                case EngineType::Slicer:
+                    // lane 1 plays the window's first slice, lane 2 the next, ...
+                    c.laneNote[(size_t) l] = ts.seq.baseNote;
+                    c.laneSlice[(size_t) l] = (int) ts.seq.windowStart + l;
+                    break;
+                case EngineType::Synth:
+                default:
+                    // lanes are scale notes upwards from the track's root and octave
+                    c.laneNote[(size_t) l] = std::clamp (ts.seq.scaleLock ? currentScale.stepFrom (ts.seq.baseNote, l) : ts.seq.baseNote + l, 0, 127);
+                    c.laneSlice[(size_t) l] = 0;
+                    break;
+            }
+        }
+        (void) t;
+        return c;
+    }
+
     void Engine::copyStateFrom (Engine& other)
     {
         tracks  = other.tracks;
@@ -538,6 +588,15 @@ namespace bash
                 auto& dst = patterns[(size_t) t];
                 std::lock_guard<SpinMutex> g (dst.mutex());
                 dst.deserialise (text);
+            }
+            {
+                StepPattern sp;
+                {
+                    std::lock_guard<SpinMutex> g (other.stepMutex (t));
+                    sp = other.stepPattern (t);
+                }
+                std::lock_guard<SpinMutex> g (stepMutex (t));
+                stepPattern (t) = sp;
             }
             setSlices (t, other.slices (t));
             setSample (t, other.sample (t));

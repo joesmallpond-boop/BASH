@@ -186,9 +186,9 @@ APVTS::ParameterLayout BashProcessor::createLayout()
         g->addChild (std::make_unique<AudioParameterChoice> (id ("algo"),      n + "Algorithm", algorithmNames(), t % 2));
         g->addChild (floatParam (id ("type"),      n + "Type",    NormalisableRange<float> (0.0f, 1.0f), 0.15f, 2));
         g->addChild (floatParam (id ("density"),   n + "Density", NormalisableRange<float> (0.0f, 1.0f), 0.6f, 2));
-        g->addChild (std::make_unique<AudioParameterInt>    (id ("steps"),     n + "Steps",   1, 256, 16));
+        g->addChild (std::make_unique<AudioParameterInt>    (id ("steps"),     n + "Steps",   1, 64, 16));
         g->addChild (std::make_unique<AudioParameterChoice> (id ("cycle"),     n + "Cycle",   cycleNames(), 0));
-        g->addChild (std::make_unique<AudioParameterInt>    (id ("offset"),    n + "Offset",  0, 255, 0));
+        g->addChild (std::make_unique<AudioParameterInt>    (id ("offset"),    n + "Offset",  0, 63, 0));
         g->addChild (std::make_unique<AudioParameterChoice> (id ("direction"), n + "Direction", directionNames(), 0));
         g->addChild (std::make_unique<AudioParameterChoice> (id ("rate"),      n + "Rate",    rateNames(), 1));
         g->addChild (floatParam (id ("accent"),    n + "Accent",  NormalisableRange<float> (0.0f, 1.0f), 0.6f, 2));
@@ -323,7 +323,7 @@ bash::SequencerParams BashProcessor::seqParams (int t) const
     s.algorithm    = (bash::Algorithm) juce::jlimit (0, (int) bash::Algorithm::count - 1, (int) load (p.algo));
     s.type         = load (p.type);
     s.density      = load (p.density);
-    const uint64_t len = (uint64_t) juce::jmax (1, (int) load (p.steps)) * cycleMultiplier ((int) load (p.cycle));
+    const uint64_t len = (uint64_t) juce::jlimit (1, 64, (int) load (p.steps));
     s.length       = (uint32_t) std::min<uint64_t> (len, 0xFFFFFFFFull);
     s.offset       = (uint32_t) juce::jmax (0, (int) load (p.offset));
     s.direction    = (bash::Direction) juce::jlimit (0, (int) bash::Direction::count - 1, (int) load (p.direction));
@@ -1065,7 +1065,7 @@ juce::String BashProcessor::importMidi (int t, const juce::File& file)
         pat.setMotif (std::move (motif));
     }
     auto* steps = apvts.getParameter (pid (t, "steps"));
-    steps->setValueNotifyingHost (steps->convertTo0to1 ((float) std::min (length, 256)));
+    steps->setValueNotifyingHost (steps->convertTo0to1 ((float) std::min (length, 64)));
     auto* type = apvts.getParameter (pid (t, "type"));
     type->setValueNotifyingHost (0.0f);   // start exactly on the imported phrase
     return {};

@@ -11,6 +11,7 @@
 #include "bash/Scale.h"
 #include "bash/Sequencer.h"
 #include "bash/Slices.h"
+#include "bash/StepSeq.h"
 
 #include <array>
 #include <atomic>
@@ -50,6 +51,11 @@ namespace bash
         float sendA = 0.0f, sendB = 0.0f; // post-fader sends to the two return buses
         bool  mute = false, solo = false;
         float lifeRate = 0.08f;           // Hz, the track's Life drift speed
+
+        // step sequencer (instead of the generative one)
+        bool  stepMode = false;
+        bool  fill = false;               // Fill latched
+        int   autoFillBars = 0;           // 0 off, else the last bar of every N is a fill
     };
 
     struct GlobalSettings
@@ -123,6 +129,12 @@ namespace bash
         GlobalSettings& global()             { return globals; }
         Pattern&        pattern (int t)      { return patterns[(size_t) t]; }
 
+        /** Step sequencer pattern for a track: lock stepMutex(t) while reading or editing. */
+        StepPattern&    stepPattern (int t)  { return stepStores[(size_t) t].pattern; }
+        SpinMutex&      stepMutex (int t)    { return stepStores[(size_t) t].m; }
+        /** Step each lane is on (UI playhead), -1 when stopped. */
+        int  stepLanePosition (int t, int lane) const { return lanePos[(size_t) t][(size_t) lane].load(); }
+
         /** Steps for the UI, computed under the pattern lock. The UI passes its own
             copy of the params and scale so it never reads audio-thread state. */
         std::vector<StepData> snapshot (int t, const SequencerParams&, const Scale&,
@@ -190,6 +202,11 @@ namespace bash
         std::array<TrackSettings, numTracks> tracks;
         std::array<Pattern,       numTracks> patterns;
         std::array<TrackPlayer,   numTracks> players;
+        struct StepStore { SpinMutex m; StepPattern pattern; };
+        std::array<StepStore,     numTracks> stepStores;
+        std::array<StepPlayer,    numTracks> stepPlayers;
+        std::array<std::array<std::atomic<int>, stepLanes>, numTracks> lanePos {};
+        StepContext stepContext (int t, const TrackSettings&, double stepsPerQuarter) const;
         std::array<MachineSynth,  numTracks> synths;
         std::array<SliceVoice,    numTracks> slicers;
         std::array<SliceStore,    numTracks> sliceStores;

@@ -318,7 +318,7 @@ BashView::BashView (BashProcessor& p)
     // per-track controls
     addAndMakeVisible (onButton);
     addAndMakeVisible (scaleLockButton);
-    for (auto* b : { &engineBox, &algoBox, &cycleBox, &directionBox, &rateBox }) addAndMakeVisible (*b);
+    for (auto* b : { &engineBox, &algoBox, &directionBox, &rateBox }) addAndMakeVisible (*b);
     styleComboLabel (engineLabel, "ENGINE");
     addAndMakeVisible (engineLabel);
     addChildComponent (samplerPanel);
@@ -326,7 +326,7 @@ BashView::BashView (BashProcessor& p)
     styleComboLabel (rateLabel, "RATE");
     styleComboLabel (directionLabel, "DIRECTION");
     styleComboLabel (cycleLabel, "CYCLE");
-    for (auto* l : { &algoLabel, &rateLabel, &directionLabel, &cycleLabel }) addAndMakeVisible (*l);
+    for (auto* l : { &algoLabel, &rateLabel, &directionLabel }) addAndMakeVisible (*l);
 
     const std::vector<std::pair<const char*, const char*>> seqDefs {
         { "type", "TYPE" }, { "density", "DENSITY" }, { "steps", "STEPS" }, { "offset", "OFFSET" },
@@ -370,8 +370,8 @@ BashView::~BashView()
 std::vector<juce::Component*> BashView::trackViewComponents()
 {
     std::vector<juce::Component*> c { &stepView, &regenButton, &clearButton, &hint, &onButton, &scaleLockButton,
-                                      &engineBox, &algoBox, &cycleBox, &directionBox, &rateBox,
-                                      &engineLabel, &algoLabel, &rateLabel, &directionLabel, &cycleLabel, exportBar.get() };
+                                      &engineBox, &algoBox, &directionBox, &rateBox,
+                                      &engineLabel, &algoLabel, &rateLabel, &directionLabel, exportBar.get() };
     for (auto& k : seqKnobs) { c.push_back (&k->slider); c.push_back (&k->label); }
     return c;
 }
@@ -567,7 +567,6 @@ void BashView::resized()
     placeCombo (algoLabel, algoBox, 150);
     placeCombo (rateLabel, rateBox, 100);
     placeCombo (directionLabel, directionBox, 130);
-    placeCombo (cycleLabel, cycleBox, 100);
     scaleLockButton.setBounds (combos.removeFromLeft (120).removeFromBottom (30));
 
     inner.removeFromTop (12);

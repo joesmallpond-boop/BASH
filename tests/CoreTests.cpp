@@ -7,8 +7,10 @@
 #include "bash/Drums.h"
 #include "bash/Fx.h"
 #include "bash/Modulation.h"
+#include "bash/StepSeq.h"
 
 #include <cmath>
+#include <mutex>
 #include <cstdio>
 #include <set>
 #include <string>
@@ -1059,6 +1061,216 @@ static void testNoDronesOrLopsidedTails()
         }
 }
 
+// ---- step sequencer -------------------------------------------------------------
+namespace
+{
+    struct Hit { int64_t at; bool on; int note, vel; };
+
+    // run a StepPlayer for `samples` at 120 bpm, 48 kHz, 1/16 steps; absolute sample times
+    std::vector<Hit> runSteps (const StepPattern& p, StepContext c, int64_t samples, int block)
+    {
+        StepPlayer pl;
+        std::vector<NoteEvent> ev;
+        std::vector<Hit> hits;
+        const double sps = 120.0 / 60.0 / 48000.0 * c.stepsPerQuarter;
+        for (int64_t start = 0; start < samples; start += block)
+        {
+            const int n = (int) std::min<int64_t> (block, samples - start);
+            ev.clear();
+            pl.process ((double) start * sps, sps, n, p, c, ev);
+            for (auto& e : ev) hits.push_back ({ start + e.sampleOffset, e.noteOn, e.note, e.velocity });
+        }
+        return hits;
+    }
+    StepContext drumCtx()
+    {
+        StepContext c; c.stepsPerQuarter = 4.0; c.oneShot = true;
+        for (int l = 0; l < stepLanes; ++l) { c.laneNote[(size_t) l] = drumBaseNote + l; c.laneSlice[(size_t) l] = l; }
+        return c;
+    }
+    int countOn (const std::vector<Hit>& h, int note = -1)
+    {
+        int n = 0; for (auto& x : h) if (x.on && (note < 0 || x.note == note)) ++n; return n;
+    }
+}
+
+static void testStepSequencer()
+{
+    using namespace stepgen;
+    // Euclid
+    auto e38 = euclid (3, 8, 0);
+    CHECK ((e38 == std::vector<bool> { true, false, false, true, false, false, true, false }));
+    auto e4 = euclid (4, 16, 0);
+    for (int i = 0; i < 16; ++i) CHECK (e4[(size_t) i] == (i % 4 == 0));
+    for (int p = 0; p <= 16; ++p) { int n = 0; for (bool b : euclid (p, 16, 5)) n += b; CHECK (n == p); }
+    CHECK (euclid (1, 8, 3)[3]);
+
+    // four on the floor: exact sample positions (a 1/16 step = 6000 samples at 120 bpm)
+    StepPattern p;
+    for (int s : { 0, 4, 8, 12 }) { p.lanes[0].steps[(size_t) s].on = true; }
+    auto h = runSteps (p, drumCtx(), 192000, 480);
+    CHECK (countOn (h) == 8);
+    for (size_t i = 0; i < h.size(); ++i) CHECK (h[i].at == (int64_t) i * 24000 && h[i].note == drumBaseNote);
+
+    // block-size independent
+    auto h64 = runSteps (p, drumCtx(), 192000, 64), h997 = runSteps (p, drumCtx(), 192000, 997);
+    CHECK (h64.size() == h.size() && h997.size() == h.size());
+    for (size_t i = 0; i < std::min (h.size(), h997.size()); ++i) CHECK (h64[i].at == h[i].at && h997[i].at == h[i].at);
+
+    // ratchet: 4 hits inside one step, velocity rising
+    StepPattern rp;
+    auto& rs = rp.lanes[3].steps[2]; rs.on = true; rs.ratchet = 4; rs.shape = RatchetShape::Up; rs.vel = 120;
+    auto rh = runSteps (rp, drumCtx(), 96000, 480);
+    CHECK (countOn (rh) == 4);
+    if (rh.size() == 4)
+    {
+        for (int i = 0; i < 4; ++i) CHECK (rh[(size_t) i].at == 12000 + i * 1500 && rh[(size_t) i].note == drumBaseNote + 3);
+        CHECK (rh[0].vel < rh[1].vel && rh[1].vel < rh[2].vel && rh[3].vel == 120);
+    }
+
+    // nudge: -25% of a step = 1500 samples early
+    StepPattern np; np.lanes[1].steps[4].on = true; np.lanes[1].steps[4].nudge = -25;
+    auto nh = runSteps (np, drumCtx(), 96000, 333);
+    CHECK (! nh.empty() && nh[0].at == 24000 - 1500);
+
+    // conditions: 1:2 on a 4-step lane plays every other loop
+    StepPattern cp; cp.lanes[0].length = 4; cp.lanes[0].steps[0].on = true; cp.lanes[0].steps[0].cond = TrigCond::R1of2;
+    auto ch = runSteps (cp, drumCtx(), 8 * 24000, 480);
+    CHECK (countOn (ch) == 4);
+    for (auto& x : ch) CHECK (x.at % 48000 == 0);
+
+    // fill: Fill steps only with the button; Not fill only without; auto fill every 2 bars plays in bar 2
+    StepPattern fp;
+    fp.lanes[0].steps[0].on = true; fp.lanes[0].steps[0].cond = TrigCond::Fill;
+    fp.lanes[1].steps[0].on = true; fp.lanes[1].steps[0].cond = TrigCond::NotFill;
+    auto c0 = drumCtx();
+    auto f0 = runSteps (fp, c0, 4 * 96000, 480);
+    CHECK (countOn (f0, drumBaseNote) == 0 && countOn (f0, drumBaseNote + 1) == 4);
+    c0.fill = true;
+    auto f1 = runSteps (fp, c0, 4 * 96000, 480);
+    CHECK (countOn (f1, drumBaseNote) == 4 && countOn (f1, drumBaseNote + 1) == 0);
+    c0.fill = false; c0.autoFillBars = 2;
+    auto f2 = runSteps (fp, c0, 4 * 96000, 480);
+    CHECK (countOn (f2, drumBaseNote) == 2 && countOn (f2, drumBaseNote + 1) == 2);
+    for (auto& x : f2) if (x.note == drumBaseNote) CHECK ((x.at / 96000) % 2 == 1);
+
+    // probability: ~50% over many loops, the same every time
+    StepPattern pp; pp.lanes[0].length = 1; pp.lanes[0].steps[0].on = true; pp.lanes[0].steps[0].prob = 50; pp.lanes[0].seed = 99;
+    auto p1 = runSteps (pp, drumCtx(), 600 * 6000, 4800), p2 = runSteps (pp, drumCtx(), 600 * 6000, 512);
+    CHECK (countOn (p1) > 240 && countOn (p1) < 360);
+    CHECK (p1.size() == p2.size());
+
+    // polymeter + speed: a 3-step lane against 16, and x2 speed doubles the hits
+    StepPattern mp; mp.lanes[0].length = 3; mp.lanes[0].steps[0].on = true;
+    mp.lanes[1].steps[0].on = true; mp.lanes[1].speed = 5;   // x2
+    auto mh = runSteps (mp, drumCtx(), 96000 * 3, 480);
+    CHECK (countOn (mh, drumBaseNote) == 16);
+    CHECK (countOn (mh, drumBaseNote + 1) == 6);
+    CHECK (std::string (laneSpeeds()[5].first) == "x2");
+
+    // mute
+    mp.lanes[0].mute = true;
+    CHECK (countOn (runSteps (mp, drumCtx(), 96000, 480), drumBaseNote) == 0);
+
+    // melodic lanes: every note-on gets a note-off, nothing left hanging
+    StepPattern sp; sp.lanes[2].steps[0].on = true; sp.lanes[5].steps[8].on = true; sp.lanes[5].steps[8].ratchet = 2;
+    auto sc = drumCtx(); sc.oneShot = false; sc.gate = 0.9f;
+    for (int l = 0; l < stepLanes; ++l) sc.laneNote[(size_t) l] = 48 + l;
+    auto sh = runSteps (sp, sc, 96000 * 2, 480);
+    int ons = 0, offs = 0;
+    for (auto& x : sh) (x.on ? ons : offs)++;
+    CHECK (ons == 6 && offs == ons);
+
+    // evolve: loop 0 is the written pattern, later loops vary, always the same way
+    Lane ev; ev.length = 16; for (int s : { 0, 4, 8, 12 }) ev.steps[(size_t) s].on = true; ev.evolve = 1.0f; ev.seed = 5;
+    bool differs = false, same = true;
+    for (int s = 0; s < 16; ++s) same = same && StepPlayer::stepPlays (ev, 0, s, 0, false) == ev.steps[(size_t) s].on;
+    for (int loop = 1; loop < 8; ++loop)
+        for (int s = 0; s < 16; ++s)
+        {
+            const bool a = StepPlayer::stepPlays (ev, 0, s, loop, false);
+            differs = differs || a != ev.steps[(size_t) s].on;
+            CHECK (a == StepPlayer::stepPlays (ev, 0, s, loop, false));
+        }
+    CHECK (same && differs);
+
+    // generators
+    Lane kick; kick.algo = LaneAlgo::Groove; kick.density = 0.0f;
+    generate (kick, LaneRole::Kick, 1);
+    for (int s = 0; s < 16; ++s) CHECK (kick.steps[(size_t) s].on == (s % 4 == 0));
+    Lane eu; eu.algo = LaneAlgo::Euclid; eu.pulses = 5; eu.length = 13;
+    generate (eu, LaneRole::Perc, 3);
+    { int n = 0; for (int s = 0; s < 13; ++s) n += eu.steps[(size_t) s].on; CHECK (n == 5); }
+    for (int s = 13; s < maxSteps; ++s) CHECK (! eu.steps[(size_t) s].on);
+    Lane r1, r2; r1.algo = r2.algo = LaneAlgo::Euclid;
+    rollLane (r1, LaneRole::Snare, 42); rollLane (r2, LaneRole::Snare, 42);
+    CHECK (r1.steps == r2.steps && r1.pulses == r2.pulses);
+    Lane rolls; rolls.algo = LaneAlgo::Rolls; rolls.density = 0.9f;
+    generate (rolls, LaneRole::ClosedHat, 7);
+    bool anyRatchet = false, fillRoll = false;
+    for (auto& st : rolls.steps) { anyRatchet = anyRatchet || st.ratchet > 1; fillRoll = fillRoll || (st.on && st.cond == TrigCond::Fill); }
+    CHECK (anyRatchet && fillRoll);
+    for (int a = 0; a < (int) LaneAlgo::count; ++a)
+        for (int role = 0; role <= (int) LaneRole::Melodic; ++role)
+        {
+            Lane l; l.algo = (LaneAlgo) a; l.length = (uint8_t) (5 + 7 * role % 60);
+            rollLane (l, (LaneRole) role, (uint64_t) (a * 31 + role));
+            for (int s = l.length; s < maxSteps; ++s) CHECK (! l.steps[(size_t) s].on || l.algo == LaneAlgo::Mutate || l.algo == LaneAlgo::Humanize);
+        }
+
+    // save / load
+    StepPattern full;
+    for (int l = 0; l < stepLanes; ++l) { full.lanes[(size_t) l].algo = LaneAlgo::Rolls; full.lanes[(size_t) l].length = (uint8_t) (16 + l); rollLane (full.lanes[(size_t) l], drumLaneRole (l), (uint64_t) l); }
+    full.lanes[3].steps[7].nudge = -13; full.lanes[3].steps[7].prob = 37; full.lanes[3].mute = true; full.lanes[4].evolve = 0.3f;
+    StepPattern back;
+    CHECK (back.deserialise (full.serialise()));
+    bool equal = true;
+    for (int l = 0; l < stepLanes; ++l)
+    {
+        const auto& a = full.lanes[(size_t) l]; const auto& b = back.lanes[(size_t) l];
+        equal = equal && a.steps == b.steps && a.length == b.length && a.speed == b.speed && a.mute == b.mute && a.algo == b.algo
+                && a.seed == b.seed && std::abs (a.evolve - b.evolve) < 1e-4f;
+    }
+    CHECK (equal);
+    CHECK (! back.deserialise ("nonsense"));
+
+    // export matches playback
+    auto exp = renderStepNotes (p, drumCtx(), 32);
+    CHECK ((int) exp.size() == 8 && std::abs (exp[1].start - 4.0) < 1e-9);
+
+    // engine: a drum track in step mode plays its pads and stops cleanly
+    Engine eng;
+    eng.prepare (48000.0, 256);
+    eng.global().hostSync = false; eng.global().playing = true; eng.global().tempo = 120.0;
+    for (int t = 0; t < numTracks; ++t) eng.track (t).enabled = false;
+    eng.setCell (0, makeFmCell (fmPresets()[0]));
+    eng.setCell (3, makeFmCell (fmPresets()[3]));
+    auto& tr = eng.track (2);
+    tr.enabled = true; tr.engine = EngineType::Drums; tr.stepMode = true; tr.rateIndex = 1;
+    {
+        std::lock_guard<SpinMutex> g (eng.stepMutex (2));
+        auto& sp2 = eng.stepPattern (2);
+        for (int s : { 0, 4, 8, 12 }) sp2.lanes[0].steps[(size_t) s].on = true;
+        for (int s = 2; s < 16; s += 4) sp2.lanes[3].steps[(size_t) s].on = true;
+    }
+    std::vector<float> l (480), r (480);
+    std::vector<MidiOut> midi;
+    double peak = 0;
+    for (int b = 0; b < 200; ++b)   // 2 s = 1 bar at 120
+    {
+        eng.process (l.data(), r.data(), 480, Transport{}, midi);
+        for (int i = 0; i < 480; ++i) peak = std::max (peak, (double) std::abs (l[(size_t) i]));
+    }
+    int kicks = 0, hats = 0;
+    for (auto& m : midi) if (m.noteOn && m.channel == 3) { if (m.note == drumBaseNote) ++kicks; if (m.note == drumBaseNote + 3) ++hats; }
+    CHECK (kicks == 4 && hats == 4);
+    CHECK (peak > 0.01);
+    CHECK (eng.stepLanePosition (2, 0) >= 0);
+    eng.global().playing = false;
+    eng.process (l.data(), r.data(), 480, Transport{}, midi);
+    CHECK (eng.stepLanePosition (2, 0) == -1);
+}
+
 int main()
 {
     testDeterminism();
@@ -1087,6 +1299,7 @@ int main()
     testTimingAndMotif();
     testOfflineRender();
     testNoDronesOrLopsidedTails();
+    testStepSequencer();
     std::printf ("%d checks, %d failures\n", checks, failures);
     return failures == 0 ? 0 : 1;
 }
