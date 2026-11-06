@@ -58,6 +58,7 @@ namespace bash
         for (auto& f : returnFx) f.prepare (sr, maxBlock);
         for (auto& f : masterFx) f.prepare (sr, maxBlock);
         limiter.prepare (sr);
+        granular.prepare (sr, maxBlock);
         events.reserve (256);
         for (auto& v : synths)  v.prepare (sr);
         for (auto& v : slicers) v.prepare (sr);
@@ -434,6 +435,8 @@ namespace bash
         for (int k = 0; k < 2; ++k)
             masterFx[(size_t) k].process (l, r, n, globals.masterFx[(size_t) k], bpm);
         for (int i = 0; i < n; ++i) { l[i] *= globals.master; r[i] *= globals.master; }
+        if (globals.granular.on)
+            granular.process (l, r, n, globals.granular, currentScale, bpm, ppq, run);
         if (globals.limiter)
             limiter.process (l, r, n);
     }
@@ -621,6 +624,9 @@ namespace bash
         g.tempo    = o.bpm;
         for (auto& t : e->tracks) { t.mute = false; t.solo = false; }
 
+        e->granular.copyBufferFrom (live.granular);   // the grains start from what you're hearing
+        g.granular.loopPlay = false;
+        if (o.track >= 0 || ! o.withFx) g.granular.on = false;
         if (o.track >= 0)
         {
             for (int t = 0; t < numTracks; ++t)

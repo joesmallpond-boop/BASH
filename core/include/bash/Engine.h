@@ -12,6 +12,7 @@
 #include "bash/Sequencer.h"
 #include "bash/Slices.h"
 #include "bash/StepSeq.h"
+#include "bash/Granular.h"
 
 #include <array>
 #include <atomic>
@@ -72,6 +73,7 @@ namespace bash
         std::array<FxParams, 2> masterFx {};
         bool   limiter     = true;
         std::array<LfoParams, 2> lfo {};
+        GranularParams granular {};       // the GRANULAR section after the master (off by default)
     };
 
     struct Transport
@@ -132,6 +134,8 @@ namespace bash
         TrackSettings&  track (int t)        { return tracks[(size_t) t]; }
         GlobalSettings& global()             { return globals; }
         Pattern&        pattern (int t)      { return patterns[(size_t) t]; }
+        /** The GRANULAR section (its UI meters, recorder and take live here). */
+        GranularEngine& granularEngine()     { return granular; }
 
         /** Step sequencer pattern for a track: lock stepMutex(t) while reading or editing. */
         StepPattern&    stepPattern (int t)  { return stepStores[(size_t) t].pattern; }
@@ -241,6 +245,7 @@ namespace bash
         std::array<std::vector<float>, 2> retL, retR;
         std::array<std::array<FxSlot, 2>, numTracks> trackFx;
         std::array<FxSlot, 2> returnFx, masterFx;
+        GranularEngine granular;
         Limiter limiter;
         bool anySolo = false;
         std::array<float*, 2 * numTracks> directOuts {};

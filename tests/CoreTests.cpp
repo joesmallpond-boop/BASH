@@ -10,6 +10,7 @@
 #include "bash/StepSeq.h"
 #include "bash/Warp.h"
 #include "bash/Library.h"
+#include "bash/Granular.h"
 
 #include <cmath>
 #include <mutex>
@@ -1441,6 +1442,197 @@ static void testLibrary()
     CHECK (p.lanes[0].steps[0].on && ! p.lanes[0].steps[1].on && p.lanes[0].steps[10].on);
 }
 
+// ---- granular section ----------------------------------------------------------
+namespace
+{
+    struct GranRun
+    {
+        GranularEngine g; Scale sc { 0, 0 };
+        double sr = 48000.0, ppq = 0.0;
+        GranRun() { g.prepare (sr, 128); }
+        /** Feed `seconds` of input (fn(t) -> sample, or silence); returns the output. */
+        template <typename Fn>
+        std::vector<float> run (const GranularParams& p, double seconds, Fn&& in, std::vector<float>* right = nullptr)
+        {
+            std::vector<float> out;
+            const int total = (int) (seconds * sr);
+            std::vector<float> l (128), r (128);
+            for (int pos = 0; pos < total; pos += 128)
+            {
+                const int n = std::min (128, total - pos);
+                for (int i = 0; i < n; ++i) { l[(size_t) i] = r[(size_t) i] = in ((pos + i) / sr); }
+                g.process (l.data(), r.data(), n, p, sc, 120.0, ppq, true);
+                ppq += n * 2.0 / sr;
+                out.insert (out.end(), l.begin(), l.begin() + n);
+                if (right) right->insert (right->end(), r.begin(), r.begin() + n);
+            }
+            return out;
+        }
+    };
+    /** Strongest frequency among candidates (Goertzel). */
+    double hzOf (const std::vector<float>& x, double sr, size_t from, std::initializer_list<double> candidates)
+    {
+        double best = 0, bestHz = 0;
+        for (double f : candidates)
+        {
+            const double w = 2.0 * 3.141592653589793 * f / sr, c = 2.0 * std::cos (w);
+            double s1 = 0, s2 = 0;
+            for (size_t i = from; i < x.size(); ++i) { const double s0 = x[i] + c * s1 - s2; s2 = s1; s1 = s0; }
+            const double p = s1 * s1 + s2 * s2 - c * s1 * s2;
+            if (p > best) { best = p; bestHz = f; }
+        }
+        return bestHz;
+    }
+    double rmsOf (const std::vector<float>& x, size_t from, size_t to)
+    {
+        double s = 0; to = std::min (to, x.size()); for (size_t i = from; i < to; ++i) s += (double) x[i] * x[i]; return std::sqrt (s / std::max<size_t> (1, to - from));
+    }
+    GranularParams grainsOnly()
+    {
+        GranularParams p; p.on = true; p.mix = 1.0f; p.revMix = 0.0f; p.keyLock = false; p.spread = 0.0f;
+        p.heads[0].on = true; p.heads[0].position = 0.5f; p.heads[0].posSpray = 0.0f; p.heads[0].size = 0.6f; p.heads[0].density = 0.8f;
+        return p;
+    }
+}
+
+static void testGranular()
+{
+    auto sine440 = [] (double t) { return 0.5f * (float) std::sin (2.0 * 3.141592653589793 * 440.0 * t); };
+
+    // grains of a 440 Hz tone pitched up an octave are at 880 Hz
+    {
+        GranRun g;
+        auto p = grainsOnly();
+        g.run (p, 9.0, sine440);
+        p.heads[0].pitch = 12.0f;
+        auto out = g.run (p, 2.0, sine440);
+        CHECK (hzOf (out, g.sr, out.size() / 2, { 440.0, 660.0, 830.6, 880.0, 932.3 }) == 880.0);
+        CHECK (rmsOf (out, out.size() / 2, out.size()) > 0.02);
+    }
+    // key lock snaps +1 semitone (not in C minor) onto the scale
+    {
+        GranRun g;
+        auto p = grainsOnly(); p.keyLock = true; p.heads[0].pitch = 1.0f;
+        g.run (p, 9.0, sine440);
+        auto out = g.run (p, 2.0, sine440);
+        const double hz = hzOf (out, g.sr, out.size() / 2, { 440.0, 466.2, 493.9 });
+        CHECK (hz == 440.0 || hz == 493.9);   // A or B (in C minor), never A#
+    }
+    // live: after the music stops, the grains fade to silence (no drones)
+    {
+        GranRun g;
+        auto p = grainsOnly(); p.revMix = 0.3f;
+        g.run (p, 4.0, sine440);
+        auto out = g.run (p, 22.0, [] (double) { return 0.0f; });
+        CHECK (rmsOf (out, out.size() - 48000, out.size()) < 1.0e-4);
+    }
+    // freeze: the buffer keeps playing after the input stops
+    {
+        GranRun g;
+        auto p = grainsOnly();
+        g.run (p, 12.0, sine440);
+        p.freeze = true;
+        auto out = g.run (p, 6.0, [] (double) { return 0.0f; });
+        CHECK (rmsOf (out, out.size() - 48000, out.size()) > 0.02);
+        CHECK (g.g.activeGrains() > 0);
+    }
+    // the resonator at infinite decay keeps singing, bounded
+    {
+        GranRun g;
+        auto p = grainsOnly(); p.resMix = 1.0f; p.resDecay = 1.0f; p.heads[0].on = false;
+        p.mix = 1.0f;
+        // feed it noise straight through (a playhead with tiny grains at the newest audio)
+        p.heads[0].on = true; p.heads[0].position = 0.99f; p.heads[0].size = 0.1f; p.heads[0].density = 0.9f;
+        uint32_t seed = 1;
+        g.run (p, 2.0, [&seed] (double) { seed = seed * 1664525u + 1013904223u; return ((float) (seed >> 8) / 8388608.0f - 1.0f) * 0.3f; });
+        p.heads[0].on = false;
+        auto out = g.run (p, 4.0, [] (double) { return 0.0f; });
+        float peak = 0.0f; for (float v : out) peak = std::max (peak, std::abs (v));
+        CHECK (rmsOf (out, out.size() - 48000, out.size()) > 0.005);
+        CHECK (peak < 1.5f);
+    }
+    // fuzz: random settings never blow up
+    {
+        uint32_t seed = 99;
+        auto rnd = [&seed] { seed = seed * 1664525u + 1013904223u; return (float) (seed >> 8) / 16777216.0f; };
+        for (int trial = 0; trial < 12; ++trial)
+        {
+            GranRun g;
+            GranularParams p; p.on = true; p.mix = rnd(); p.freeze = rnd() < 0.3f; p.window = (GrainWindow) (int) (rnd() * 3.99f);
+            p.spread = rnd(); p.keyLock = rnd() < 0.5f; p.cutoff = rnd(); p.reso = rnd(); p.filterType = (int) (rnd() * 2.99f);
+            p.resMix = rnd(); p.resDecay = rnd(); p.resTone = rnd(); p.resChord = (int) (rnd() * 6.99f); p.resOctave = 1 + (int) (rnd() * 5.0f);
+            p.dlyMix = rnd(); p.dlyFb = rnd(); p.dlyDiv = (int) (rnd() * 7.99f); p.revMix = rnd(); p.revSize = rnd(); p.shimmer = rnd(); p.revFreeze = rnd() < 0.2f;
+            p.glitch = rnd(); p.glitchDiv = (int) (rnd() * 7.99f); p.stutter = rnd() < 0.2f;
+            for (auto& h : p.heads)
+            {
+                h.on = rnd() < 0.7f; h.position = rnd(); h.size = rnd(); h.density = rnd(); h.pitch = rnd() * 48.0f - 24.0f; h.pitchSpray = rnd() * 24.0f;
+                h.posSpray = rnd(); h.scan = rnd() * 4.0f - 2.0f; h.reverse = rnd(); h.level = rnd(); h.pan = rnd() * 2.0f - 1.0f; h.drift = rnd();
+            }
+            uint32_t ns = (uint32_t) trial + 7;
+            auto out = g.run (p, 6.0, [&ns] (double t) { ns = ns * 1664525u + 1013904223u; return t < 3.0 ? ((float) (ns >> 8) / 8388608.0f - 1.0f) * 0.5f : 0.0f; });
+            bool finite = true; float peak = 0.0f;
+            for (float v : out) { finite = finite && std::isfinite (v); peak = std::max (peak, std::abs (v)); }
+            if (! finite || peak > 6.0f) std::printf ("  granular fuzz %d: peak %.2f finite %d\n", trial, peak, (int) finite);
+            CHECK (finite && peak <= 6.0f);
+            CHECK (g.g.activeGrains() <= GranularEngine::maxGrains);
+        }
+    }
+    // dry path: mix 0, no glitch -> output is the input
+    {
+        GranRun g;
+        GranularParams p; p.on = true; p.mix = 0.0f; p.out = 1.0f;
+        std::vector<float> in;
+        auto out = g.run (p, 0.5, [&in, &sine440] (double t) { const float v = sine440 (t); in.push_back (v); return v; });
+        float maxErr = 0.0f; for (size_t i = 0; i < out.size(); ++i) maxErr = std::max (maxErr, std::abs (out[i] - in[i]));
+        CHECK (maxErr < 1.0e-6f);
+    }
+    // glitch: with chance 1 the output differs from the input (reverse only)
+    {
+        GranRun g;
+        GranularParams p; p.on = true; p.mix = 0.0f; p.glitch = 1.0f; p.glitchDiv = 6;
+        p.gRepeat = p.gTapeStop = p.gCrush = p.gChop = false;
+        std::vector<float> in;
+        auto out = g.run (p, 3.0, [&in, &sine440] (double t) { const float v = sine440 (t) * (float) (0.5 + 0.5 * std::sin (t * 7.0)); in.push_back (v); return v; });
+        double diff = 0; for (size_t i = 48000; i < out.size(); ++i) diff += std::abs (out[i] - in[i]);
+        CHECK (diff / (out.size() - 48000) > 0.01);
+        CHECK (std::string (g.g.lastGlitch()) == "Reverse");
+    }
+    // recorder: records the output, loops it, feeds it back into the grains
+    {
+        GranRun g;
+        GranularParams p; p.on = true; p.mix = 0.0f;
+        g.g.setRecording (true);
+        g.run (p, 1.0, sine440);
+        g.g.setRecording (false);
+        CHECK (std::abs (g.g.takeSeconds() - 1.0) < 0.01);
+        std::vector<float> tl, tr;
+        g.g.copyTake (tl, tr);
+        CHECK (tl.size() == 48000 && rmsOf (tl, 0, tl.size()) > 0.3);
+        p.loopPlay = true; p.loopLevel = 1.0f;
+        auto looped = g.run (p, 0.5, [] (double) { return 0.0f; });
+        CHECK (rmsOf (looped, 0, looped.size()) > 0.3);
+        // into the grains, frozen
+        g.g.requestTakeToGrains();
+        auto q = grainsOnly(); q.freeze = true; q.heads[0].position = 0.97f;
+        auto out = g.run (q, 2.0, [] (double) { return 0.0f; });
+        CHECK (rmsOf (out, out.size() / 2, out.size()) > 0.02);
+        g.g.clearTake();
+        CHECK (g.g.takeSeconds() == 0.0);
+    }
+    // overview follows the input
+    {
+        GranRun g;
+        auto p = grainsOnly();
+        g.run (p, 17.0, sine440);
+        CHECK (g.g.overview (GranularEngine::overviewBins - 2) > 0.3f);
+    }
+    // in the engine: off by default and then nothing changes; on, the master goes through it
+    {
+        Engine e; e.prepare (48000.0, 256);
+        CHECK (! e.global().granular.on);
+    }
+}
+
 int main()
 {
     testDeterminism();
@@ -1472,6 +1664,7 @@ int main()
     testStepSequencer();
     testWarp();
     testLibrary();
+    testGranular();
     std::printf ("%d checks, %d failures\n", checks, failures);
     return failures == 0 ? 0 : 1;
 }

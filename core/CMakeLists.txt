@@ -12,7 +12,8 @@ add_library(bash_core STATIC
     src/Warp.cpp
     src/Library.cpp
     src/LibraryLoops.cpp
-    src/Grooves.cpp)
+    src/Grooves.cpp
+    src/Granular.cpp)
 
 target_include_directories(bash_core PUBLIC include)
 target_compile_features(bash_core PUBLIC cxx_std_17)
