@@ -12,7 +12,6 @@
 #include "ModPanel.h"
 #include "ExportUI.h"
 #include "StepPanel.h"
-#include "GranularPanel.h"
 
 namespace bashui
 {
@@ -77,7 +76,6 @@ public:
     void showTrack (int t) { selectTrack (t); }
     void showMixer()       { setView (1); }
     void showMod()         { setView (2); }
-    void showGranular()    { setView (3); }
 
 private:
     void timerCallback() override;
@@ -116,15 +114,14 @@ private:
     bashui::DrumPanel drumPanel;
     bashui::MixerPanel mixerPanel;
     bashui::ModPanel modPanel;
-    bashui::GranularPanel granularPanel;
     bashui::DiceButton diceButton;
     bashui::StepPanel stepPanel;
     juce::TextButton genModeButton { "GENERATIVE" }, stepModeButton { "STEP" };
     bool shownStepMode = false, hintIsStep = false;
     void setStepMode (bool step);
     void applyVisibility();
-    juce::TextButton trackViewButton { "TRACKS" }, mixerViewButton { "MIXER" }, modViewButton { "MOD" }, granularViewButton { "GRANULAR" };
-    int view = 0;   // 0 tracks, 1 mixer, 2 mod, 3 granular
+    juce::TextButton trackViewButton { "TRACKS" }, mixerViewButton { "MIXER" }, modViewButton { "MOD" };
+    int view = 0;   // 0 tracks, 1 mixer, 2 mod, 3 micro
     bool mixerView = false;
     void setView (int v);
     std::vector<juce::Component*> trackViewComponents();
@@ -153,7 +150,6 @@ public:
     void showTrack (int t) { view.showTrack (t); }
     void showMixer()       { view.showMixer(); }
     void showMod()         { view.showMod(); }
-    void showGranular()    { view.showGranular(); }
 
 private:
     BashView view;

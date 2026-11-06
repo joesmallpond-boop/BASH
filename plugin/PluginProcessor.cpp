@@ -176,61 +176,6 @@ APVTS::ParameterLayout BashProcessor::createLayout()
     }
     layout.add (std::move (mod));
 
-    // GRANULAR section (after the master)
-    auto gr = std::make_unique<AudioProcessorParameterGroup> ("granular", "Granular", "|");
-    auto unit = [] { return NormalisableRange<float> (0.0f, 1.0f); };
-    gr->addChild (std::make_unique<AudioParameterBool> (ParameterID { "g_on", 1 }, "Granular On", false));
-    gr->addChild (floatParam (ParameterID { "g_mix", 1 }, "Granular Mix", unit(), 1.0f, 2));
-    gr->addChild (std::make_unique<AudioParameterBool> (ParameterID { "g_freeze", 1 }, "Granular Freeze", false));
-    gr->addChild (std::make_unique<AudioParameterChoice> (ParameterID { "g_window", 1 }, "Grain Window", StringArray { "Smooth", "Flat", "Perc", "Swell" }, 0));
-    gr->addChild (floatParam (ParameterID { "g_spread", 1 }, "Grain Spread", unit(), 0.5f, 2));
-    gr->addChild (std::make_unique<AudioParameterBool> (ParameterID { "g_keylock", 1 }, "Grain Key Lock", true));
-    for (int h = 1; h <= bash::grainHeads; ++h)
-    {
-        const String pre = "g_h" + String (h) + "_", n = "Head " + String (h) + " ";
-        auto hid = [&pre] (const char* s) { return ParameterID { pre + s, 1 }; };
-        static constexpr float positions[] = { 0.75f, 0.5f, 0.3f, 0.9f };
-        gr->addChild (std::make_unique<AudioParameterBool> (hid ("on"), n + "On", h == 1));
-        gr->addChild (floatParam (hid ("pos"),    n + "Position", unit(), positions[h - 1], 3));
-        gr->addChild (floatParam (hid ("size"),   n + "Size", unit(), 0.45f, 3));
-        gr->addChild (floatParam (hid ("dens"),   n + "Density", unit(), 0.5f, 3));
-        gr->addChild (floatParam (hid ("pitch"),  n + "Pitch", NormalisableRange<float> (-24.0f, 24.0f, 0.01f), h == 4 ? 12.0f : h == 3 ? -12.0f : 0.0f, 2, " st"));
-        gr->addChild (floatParam (hid ("pspray"), n + "Pitch Spray", NormalisableRange<float> (0.0f, 24.0f, 0.01f), 0.0f, 2, " st"));
-        gr->addChild (floatParam (hid ("spray"),  n + "Position Spray", unit(), 0.05f, 3));
-        gr->addChild (floatParam (hid ("scan"),   n + "Scan", NormalisableRange<float> (-2.0f, 2.0f, 0.01f), 0.0f, 2, "x"));
-        gr->addChild (floatParam (hid ("rev"),    n + "Reverse", unit(), 0.0f, 2));
-        gr->addChild (floatParam (hid ("level"),  n + "Level", unit(), 0.8f, 2));
-        gr->addChild (floatParam (hid ("pan"),    n + "Pan", NormalisableRange<float> (-1.0f, 1.0f), 0.0f, 2));
-        gr->addChild (floatParam (hid ("drift"),  n + "Drift", unit(), 0.0f, 2));
-    }
-    StringArray chords, divs;
-    for (auto& c : bash::resonatorChords()) chords.add (c.first);
-    for (auto& d : bash::granularDivisions()) divs.add (d.first);
-    gr->addChild (floatParam (ParameterID { "g_cutoff", 1 }, "Granular Cutoff", unit(), 1.0f, 3));
-    gr->addChild (floatParam (ParameterID { "g_reso", 1 }, "Granular Resonance", unit(), 0.15f, 2));
-    gr->addChild (std::make_unique<AudioParameterChoice> (ParameterID { "g_ftype", 1 }, "Granular Filter", StringArray { "Low pass", "Band pass", "High pass" }, 0));
-    gr->addChild (floatParam (ParameterID { "g_resmix", 1 }, "Resonator Mix", unit(), 0.0f, 2));
-    gr->addChild (floatParam (ParameterID { "g_resdecay", 1 }, "Resonator Decay", unit(), 0.6f, 2));
-    gr->addChild (floatParam (ParameterID { "g_restone", 1 }, "Resonator Tone", unit(), 0.5f, 2));
-    gr->addChild (std::make_unique<AudioParameterChoice> (ParameterID { "g_reschord", 1 }, "Resonator Chord", chords, 0));
-    gr->addChild (std::make_unique<AudioParameterChoice> (ParameterID { "g_resoct", 1 }, "Resonator Octave", StringArray { "1", "2", "3", "4", "5", "6" }, 2));
-    gr->addChild (floatParam (ParameterID { "g_dlymix", 1 }, "Granular Delay Mix", unit(), 0.0f, 2));
-    gr->addChild (floatParam (ParameterID { "g_dlyfb", 1 }, "Granular Delay Feedback", NormalisableRange<float> (0.0f, 0.97f), 0.45f, 2));
-    gr->addChild (std::make_unique<AudioParameterChoice> (ParameterID { "g_dlydiv", 1 }, "Granular Delay Time", divs, 5));
-    gr->addChild (floatParam (ParameterID { "g_revmix", 1 }, "Granular Reverb Mix", unit(), 0.25f, 2));
-    gr->addChild (floatParam (ParameterID { "g_revsize", 1 }, "Granular Reverb Size", unit(), 0.6f, 2));
-    gr->addChild (floatParam (ParameterID { "g_shimmer", 1 }, "Granular Shimmer", unit(), 0.0f, 2));
-    gr->addChild (std::make_unique<AudioParameterBool> (ParameterID { "g_revfreeze", 1 }, "Granular Reverb Freeze", false));
-    gr->addChild (floatParam (ParameterID { "g_glitch", 1 }, "Glitch Chance", unit(), 0.0f, 2));
-    gr->addChild (std::make_unique<AudioParameterChoice> (ParameterID { "g_gdiv", 1 }, "Glitch Division", divs, 2));
-    for (auto [id, name] : { std::pair { "g_grep", "Glitch Repeat" }, std::pair { "g_grev", "Glitch Reverse" }, std::pair { "g_gtape", "Glitch Tape Stop" },
-                             std::pair { "g_gcrush", "Glitch Crush" }, std::pair { "g_gchop", "Glitch Chop" } })
-        gr->addChild (std::make_unique<AudioParameterBool> (ParameterID { id, 1 }, name, true));
-    gr->addChild (std::make_unique<AudioParameterBool> (ParameterID { "g_stutter", 1 }, "Stutter", false));
-    gr->addChild (std::make_unique<AudioParameterBool> (ParameterID { "g_loop", 1 }, "Looper Play", false));
-    gr->addChild (floatParam (ParameterID { "g_looplvl", 1 }, "Looper Level", unit(), 0.8f, 2));
-    gr->addChild (floatParam (ParameterID { "g_out", 1 }, "Granular Output", NormalisableRange<float> (0.0f, 1.5f), 1.0f, 2));
-    layout.add (std::move (gr));
 
     for (int t = 0; t < bash::numTracks; ++t)
     {
@@ -333,25 +278,6 @@ BashProcessor::BashProcessor()
                              apvts.getRawParameterValue (pre + "sync"), apvts.getRawParameterValue (pre + "div") };
     }
     mfx[0] = fxPtrs ("mfx1"); mfx[1] = fxPtrs ("mfx2");
-    {
-        auto g = [this] (const juce::String& id) { auto* v = apvts.getRawParameterValue (id); jassert (v != nullptr); return v; };
-        auto& G = gPtr;
-        G.on = g ("g_on"); G.mix = g ("g_mix"); G.freeze = g ("g_freeze"); G.window = g ("g_window"); G.spread = g ("g_spread"); G.keyLock = g ("g_keylock");
-        for (int h = 0; h < bash::grainHeads; ++h)
-        {
-            const juce::String pre = "g_h" + juce::String (h + 1) + "_";
-            auto& H = G.heads[(size_t) h];
-            H.on = g (pre + "on"); H.pos = g (pre + "pos"); H.size = g (pre + "size"); H.dens = g (pre + "dens"); H.pitch = g (pre + "pitch");
-            H.pspray = g (pre + "pspray"); H.spray = g (pre + "spray"); H.scan = g (pre + "scan"); H.rev = g (pre + "rev");
-            H.level = g (pre + "level"); H.pan = g (pre + "pan"); H.drift = g (pre + "drift");
-        }
-        G.cutoff = g ("g_cutoff"); G.reso = g ("g_reso"); G.ftype = g ("g_ftype");
-        G.resMix = g ("g_resmix"); G.resDecay = g ("g_resdecay"); G.resTone = g ("g_restone"); G.resChord = g ("g_reschord"); G.resOct = g ("g_resoct");
-        G.dlyMix = g ("g_dlymix"); G.dlyFb = g ("g_dlyfb"); G.dlyDiv = g ("g_dlydiv");
-        G.revMix = g ("g_revmix"); G.revSize = g ("g_revsize"); G.shimmer = g ("g_shimmer"); G.revFreeze = g ("g_revfreeze");
-        G.glitch = g ("g_glitch"); G.gDiv = g ("g_gdiv"); G.gRep = g ("g_grep"); G.gRev = g ("g_grev"); G.gTape = g ("g_gtape"); G.gCrush = g ("g_gcrush"); G.gChop = g ("g_gchop");
-        G.stutter = g ("g_stutter"); G.loop = g ("g_loop"); G.loopLvl = g ("g_looplvl"); G.out = g ("g_out");
-    }
 
     for (int t = 0; t < bash::numTracks; ++t)
     {
@@ -460,29 +386,6 @@ void BashProcessor::pullParameters()
     g.returnLevel[1] = load (pRetBLevel);
     g.masterFx[0] = fxFrom (mfx[0]);
     g.masterFx[1] = fxFrom (mfx[1]);
-    {
-        const auto& G = gPtr;
-        auto& q = g.granular;
-        auto on = [] (std::atomic<float>* v) { return load (v) > 0.5f; };
-        q.on = on (G.on); q.mix = load (G.mix); q.freeze = on (G.freeze);
-        q.window = (bash::GrainWindow) juce::jlimit (0, 3, (int) load (G.window));
-        q.spread = load (G.spread); q.keyLock = on (G.keyLock);
-        for (int h = 0; h < bash::grainHeads; ++h)
-        {
-            const auto& H = G.heads[(size_t) h];
-            auto& d = q.heads[(size_t) h];
-            d.on = on (H.on); d.position = load (H.pos); d.size = load (H.size); d.density = load (H.dens); d.pitch = load (H.pitch);
-            d.pitchSpray = load (H.pspray); d.posSpray = load (H.spray); d.scan = load (H.scan); d.reverse = load (H.rev);
-            d.level = load (H.level); d.pan = load (H.pan); d.drift = load (H.drift);
-        }
-        q.cutoff = load (G.cutoff); q.reso = load (G.reso); q.filterType = (int) load (G.ftype);
-        q.resMix = load (G.resMix); q.resDecay = load (G.resDecay); q.resTone = load (G.resTone); q.resChord = (int) load (G.resChord); q.resOctave = 1 + (int) load (G.resOct);
-        q.dlyMix = load (G.dlyMix); q.dlyFb = load (G.dlyFb); q.dlyDiv = (int) load (G.dlyDiv);
-        q.revMix = load (G.revMix); q.revSize = load (G.revSize); q.shimmer = load (G.shimmer); q.revFreeze = on (G.revFreeze);
-        q.glitch = load (G.glitch); q.glitchDiv = (int) load (G.gDiv);
-        q.gRepeat = on (G.gRep); q.gReverse = on (G.gRev); q.gTapeStop = on (G.gTape); q.gCrush = on (G.gCrush); q.gChop = on (G.gChop);
-        q.stutter = on (G.stutter); q.loopPlay = on (G.loop); q.loopLevel = load (G.loopLvl); q.out = load (G.out);
-    }
     for (int i = 0; i < 2; ++i)
     {
         auto& lp = g.lfo[(size_t) i];
@@ -1061,82 +964,6 @@ void BashProcessor::loadFactoryKit (int k)
         if (kits[(size_t) k].cells[(size_t) i] >= 0)
             setCellFm (i, kits[(size_t) k].cells[(size_t) i]);
     kitName = kits[(size_t) k].name;
-}
-
-// ---- granular section (message thread) -------------------------------------------
-void BashProcessor::setGranularRecording (bool on) { engine.granularEngine().setRecording (on); }
-bool BashProcessor::granularRecording() const     { return const_cast<bash::Engine&> (engine).granularEngine().recording(); }
-double BashProcessor::granularTakeSeconds() const { return const_cast<bash::Engine&> (engine).granularEngine().takeSeconds(); }
-
-juce::File BashProcessor::exportGranularTake()
-{
-    auto& g = engine.granularEngine();
-    if (g.recording() || g.takeSeconds() <= 0.0) return {};
-    std::vector<float> l, r;
-    g.copyTake (l, r);
-    auto file = exportFolder().getChildFile ("BASH Granular Take " + juce::Time::getCurrentTime().formatted ("%Y-%m-%d %H-%M-%S") + ".wav");
-    file.deleteFile();
-    juce::WavAudioFormat wav;
-    std::unique_ptr<juce::OutputStream> stream (file.createOutputStream());
-    if (stream == nullptr) return {};
-    std::unique_ptr<juce::AudioFormatWriter> writer (wav.createWriterFor (stream.get(), g.sampleRate(), 2, 24, {}, 0));
-    if (writer == nullptr) return {};
-    stream.release();
-    const float* chans[] = { l.data(), r.data() };
-    writer->writeFromFloatArrays (chans, 2, (int) l.size());
-    return file;
-}
-
-juce::String BashProcessor::granularTakeToSlicer (int t)
-{
-    const auto file = exportGranularTake();
-    if (! file.existsAsFile()) return "Record a take first";
-    if (auto* p = apvts.getParameter (pid (t, "engine")))
-        p->setValueNotifyingHost (p->convertTo0to1 ((float) (int) bash::EngineType::Slicer));
-    if (auto* p = apvts.getParameter (pid (t, "warp")))
-        p->setValueNotifyingHost (0.0f);   // it's already at the session tempo
-    return loadSample (t, file, true, exportBpm());
-}
-
-void BashProcessor::granularTakeToGrains()
-{
-    engine.granularEngine().requestTakeToGrains();
-    if (auto* p = apvts.getParameter ("g_freeze")) p->setValueNotifyingHost (1.0f);
-}
-
-bool BashProcessor::isGranularDiceParam (const juce::String& id)
-{
-    static const juce::StringArray keep { "g_on", "g_mix", "g_freeze", "g_stutter", "g_loop", "g_looplvl", "g_out", "g_keylock", "g_revfreeze" };
-    return id.startsWith ("g_") && ! keep.contains (id) && ! id.endsWith ("_on");
-}
-
-void BashProcessor::rollGranularDice()
-{
-    GranularSnapshot snap;
-    juce::Random rnd;
-    const float chaos = juce::jlimit (0.0f, 1.0f, dice.chaos);
-    for (auto* p : getParameters())
-        if (auto* rp = dynamic_cast<juce::RangedAudioParameter*> (p))
-        {
-            const auto id = rp->getParameterID();
-            if (! isGranularDiceParam (id) || diceLocked.contains (id)) continue;
-            snap.emplace_back (id, rp->getValue());
-            const float cur = rp->getValue();
-            float next = chaos >= 0.999f ? rnd.nextFloat() : juce::jlimit (0.0f, 1.0f, cur + (rnd.nextFloat() * 2.0f - 1.0f) * chaos);
-            if (dynamic_cast<juce::AudioParameterBool*> (rp) != nullptr) next = rnd.nextFloat() < 0.5f ? 0.0f : 1.0f;
-            rp->beginChangeGesture(); rp->setValueNotifyingHost (next); rp->endChangeGesture();
-        }
-    granularHistory.push_back (std::move (snap));
-    if (granularHistory.size() > 16) granularHistory.erase (granularHistory.begin());
-}
-
-bool BashProcessor::undoGranularDice()
-{
-    if (granularHistory.empty()) return false;
-    for (const auto& [id, v] : granularHistory.back())
-        if (auto* p = apvts.getParameter (id)) { p->beginChangeGesture(); p->setValueNotifyingHost (v); p->endChangeGesture(); }
-    granularHistory.pop_back();
-    return true;
 }
 
 // ---- factory library (message thread) --------------------------------------------

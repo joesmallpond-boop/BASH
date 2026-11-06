@@ -52,7 +52,6 @@ target_sources(BASH PRIVATE
     ModPanel.cpp
     StepPanel.cpp
     FactoryLibrary.cpp
-    GranularPanel.cpp
     ExportUI.cpp)
 
 if(CMAKE_SYSTEM_NAME STREQUAL "iOS")

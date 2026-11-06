@@ -53,23 +53,11 @@ int main (int argc, char** argv)
         for (int i = 0; i < blocks; ++i) proc.processBlock (buf, midi);
     }
 
-    if (argc > 6 && juce::String (argv[6]) == "granular")
-    {
-        // switch the section on and play a while so the buffer and grains show
-        for (auto [id, v] : { std::pair { "g_on", 1.0f }, std::pair { "g_h2_on", 1.0f }, std::pair { "g_h3_on", 1.0f } })
-            proc.apvts.getParameter (id)->setValueNotifyingHost (v);
-        proc.apvts.getParameter ("play")->setValueNotifyingHost (1.0f);
-        proc.apvts.getParameter ("sync")->setValueNotifyingHost (0.0f);
-        juce::AudioBuffer<float> buf (2, 512);
-        juce::MidiBuffer midi;
-        for (int i = 0; i < 1200; ++i) proc.processBlock (buf, midi);
-    }
     std::unique_ptr<juce::AudioProcessorEditor> editor (proc.createEditor());
     if (auto* ed = dynamic_cast<BashEditor*> (editor.get()))
     {
         ed->showTrack (track - 1);
         if (argc > 6 && juce::String (argv[6]) == "mixer") ed->showMixer();
-        if (argc > 6 && juce::String (argv[6]) == "granular") ed->showGranular();
         if (argc > 6 && juce::String (argv[6]) == "mod")
         {
             proc.matrix (track - 1).set (bash::ModDest::Cutoff, bash::ModSource::Lfo1, 0.6f);

@@ -98,19 +98,6 @@ public:
     void clearCell (int i);
     void loadFactoryKit (int k);
 
-    // GRANULAR section
-    bash::GranularEngine& granular()                   { return engine.granularEngine(); }
-    void   setGranularRecording (bool on);
-    bool   granularRecording() const;
-    double granularTakeSeconds() const;
-    juce::File exportGranularTake();                   // the take as a WAV in BASH Exports
-    juce::String granularTakeToSlicer (int track);     // the take into a track's slice sampler
-    void   granularTakeToGrains();                     // the take into the grain buffer (frozen)
-    void   rollGranularDice();                         // the granular die: only this section
-    bool   undoGranularDice();
-    int    granularUndoCount() const                   { return (int) granularHistory.size(); }
-    static bool isGranularDiceParam (const juce::String& id);
-
     // factory library (rendered to disk in the background on first run)
     FactoryLibrary& library()                          { return *factoryLibrary; }
     /** Load library kit k onto the pads; optionally its starter beat onto `track` (step mode). */
@@ -232,17 +219,6 @@ private:
     };
     std::array<WarpState, bash::numTracks> warps;
     juce::SharedResourcePointer<FactoryLibrary> factoryLibrary;
-    using GranularSnapshot = std::vector<std::pair<juce::String, float>>;
-    std::vector<GranularSnapshot> granularHistory;
-    struct GranularHeadPtrs { std::atomic<float> *on {}, *pos {}, *size {}, *dens {}, *pitch {}, *pspray {}, *spray {}, *scan {}, *rev {}, *level {}, *pan {}, *drift {}; };
-    struct GranularPtrs
-    {
-        std::atomic<float> *on {}, *mix {}, *freeze {}, *window {}, *spread {}, *keyLock {};
-        std::array<GranularHeadPtrs, bash::grainHeads> heads {};
-        std::atomic<float> *cutoff {}, *reso {}, *ftype {}, *resMix {}, *resDecay {}, *resTone {}, *resChord {}, *resOct {};
-        std::atomic<float> *dlyMix {}, *dlyFb {}, *dlyDiv {}, *revMix {}, *revSize {}, *shimmer {}, *revFreeze {};
-        std::atomic<float> *glitch {}, *gDiv {}, *gRep {}, *gRev {}, *gTape {}, *gCrush {}, *gChop {}, *stutter {}, *loop {}, *loopLvl {}, *out {};
-    } gPtr;
     juce::String kitName;
     double lastWarpTarget = 0.0;
     juce::uint32 warpTargetChanged = 0;

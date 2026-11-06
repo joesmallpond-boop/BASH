@@ -266,7 +266,7 @@ void StepView::mouseUp (const juce::MouseEvent& e)
 
 // ============================================================================
 BashView::BashView (BashProcessor& p)
-    : proc (p), stepView (p), samplerPanel (p), synthPanel (p), drumPanel (p), mixerPanel (p), modPanel (p), granularPanel (p), diceButton (p), stepPanel (p)
+    : proc (p), stepView (p), samplerPanel (p), synthPanel (p), drumPanel (p), mixerPanel (p), modPanel (p), diceButton (p), stepPanel (p)
 {
     setLookAndFeel (&lnf);
     auto& apvts = proc.apvts;
@@ -343,7 +343,6 @@ BashView::BashView (BashProcessor& p)
     addChildComponent (mixerPanel);
     mixerPanel.onMessage = [this] (const juce::String& m) { hint.setText (m, juce::dontSendNotification); };
     addChildComponent (modPanel);
-    addChildComponent (granularPanel);
     addAndMakeVisible (diceButton);
     diceButton.currentTrack = [this] { return currentTrack; };
     diceButton.onRolled = [this] { stepView.refresh(); stepPanel.refresh(); repaint(); };
@@ -359,7 +358,7 @@ BashView::BashView (BashProcessor& p)
     stepModeButton.setTooltip ("A step sequencer: 16 lanes, ratchets, conditions, fills");
     genModeButton.onClick  = [this] { setStepMode (false); };
     stepModeButton.onClick = [this] { setStepMode (true); };
-    for (auto* b : { &trackViewButton, &mixerViewButton, &modViewButton, &granularViewButton })
+    for (auto* b : { &trackViewButton, &mixerViewButton, &modViewButton })
     {
         b->setClickingTogglesState (false);
         addAndMakeVisible (*b);
@@ -367,8 +366,6 @@ BashView::BashView (BashProcessor& p)
     trackViewButton.onClick = [this] { setView (0); };
     mixerViewButton.onClick = [this] { setView (1); };
     modViewButton.onClick   = [this] { setView (2); };
-    granularViewButton.onClick = [this] { setView (3); };
-    granularViewButton.setTooltip ("The granular / glitch / looper section after the master");
     trackViewButton.setToggleState (true, juce::dontSendNotification);
 
     selectTrack (0);
@@ -440,11 +437,9 @@ void BashView::setView (int v)
     trackViewButton.setToggleState (v == 0, juce::dontSendNotification);
     mixerViewButton.setToggleState (v == 1, juce::dontSendNotification);
     modViewButton.setToggleState (v == 2, juce::dontSendNotification);
-    granularViewButton.setToggleState (v == 3, juce::dontSendNotification);
     applyVisibility();
     mixerPanel.setVisible (v == 1);
     modPanel.setVisible (v == 2);
-    granularPanel.setVisible (v == 3);
     if (mixer)
     {
         samplerPanel.setVisible (false);
@@ -533,8 +528,6 @@ void BashView::timerCallback()
         mixerPanel.refresh();
     if (modPanel.isVisible())
         modPanel.refresh();
-    if (granularPanel.isVisible())
-        granularPanel.refresh();
     stepView.refresh();
     for (int t = 0; t < bash::numTracks; ++t)
     {
@@ -588,7 +581,6 @@ void BashView::resized()
     trackViewButton.setBounds (194, 36, 68, 28);
     mixerViewButton.setBounds (266, 36, 60, 28);
     modViewButton.setBounds (330, 36, 50, 28);
-    granularViewButton.setBounds (384, 36, 86, 28);
 
     // track selector
     auto tracksRow = area.removeFromTop (44).withTrimmedTop (4);
@@ -599,7 +591,6 @@ void BashView::resized()
     area.removeFromTop (12);
     mixerPanel.setBounds (area.withTrimmedBottom (14));
     modPanel.setBounds (area.withTrimmedBottom (14));
-    granularPanel.setBounds (area.withTrimmedBottom (14));
     const auto stepModeBox = area.withHeight (176 + 44 + 12 + 224);   // step mode: one big sequencer box
     stepView.setBounds (area.removeFromTop (176));
     auto buttons = area.removeFromTop (44).withTrimmedTop (8);
