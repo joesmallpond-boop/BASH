@@ -8,11 +8,11 @@ Full spec: *BASH! — Software Requirements Specification* (Claude doc).
 
 ## Status
 
-**Milestone 1 — core engine** ✅ in progress
+**Milestone 1 — core engine** ✅
 
 - 8 tracks, host sync (DAW tempo/transport) or internal clock
 - Global key and scale (15 scales), per-track scale lock and octave
-- Generative sequencer: Core Acid V1 / V2, Type morph, Density, Steps, Cycle (patterns up to 2³² steps), Offset, Direction, Rate, Accent, Gate, slide
+- Generative sequencer: Core Acid V1 / V2, Type morph, Density, Steps (1-64), Offset, Direction, Rate, Accent, Gate, slide
 - Seed locking: click a step to lock it; Regenerate keeps locked steps
 - Acid test voice on every track (saw/square, resonant 24 dB filter, accent, glide)
 - Generated MIDI out on channel = track number
@@ -70,6 +70,16 @@ Full spec: *BASH! — Software Requirements Specification* (Claude doc).
 **Milestone 9 — Ableton key lock** ✅ (untested in Live yet)
 
 - `m4l/BASH Key Lock.amxd`: put it before BASH! on the track and BASH! follows the set's key and scale (any Live scale maps to BASH!'s nearest). See `m4l/README.md`
+
+**0.2.0** ✅
+
+- **Step sequencer** on any track (GENERATIVE / STEP switch in the Sequencer box). 16 lanes: drum pads, slices, or scale notes on synth tracks; up to 64 steps per lane (4 pages). Per step: velocity, chance, ratchet (1-8, flat/up/down), condition (Fill, Not fill, First, Not first, 1:2 ... 4:4), nudge. Per lane: length and speed (polymeter, x1/4 to x4), mute, an algorithm (Euclid, Random, Groove, Rolls, Mutate, Humanize) with its own die, and Evolve (the lane varies a little every loop). Per track: Fill latch and Auto fill every 2/4/8/16 bars. Click to toggle, drag to paint, Shift-drag for velocity, right-click a step for everything else
+- **Roll the Dice** is now per track, on the Sequencer panel, and only rolls that track's sequencer (pattern settings, or in step mode the lanes); right-click for chaos and undo
+- **Warp** (Slice Sampler): dropped audio is tempo-detected and time-stretched, pitch unchanged, to the session tempo; follows tempo changes; Warp switch; editable BPM with /2 and x2. Slices stay on the music
+- Random slicing spreads slices evenly across the whole file; up to 256 slices as before
+- Generative patterns are 1-64 steps
+- Fixed: reverbs could drone forever on the left side (Shimmer feedback leaking into every reverb, unbalanced injection); synth release tails after switching engine played left only
+- App icon: BASH!
 
 **Final UI pass** ✅
 

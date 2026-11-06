@@ -6,7 +6,16 @@ else()
     set(BASH_FORMATS VST3 Standalone)
 endif()
 
+# App icon: the word BASH! in amber on charcoal (design/icon). iOS masks its own corners.
+if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    set(BASH_ICON "${CMAKE_SOURCE_DIR}/design/icon/bash-icon-ios-1024.png")
+else()
+    set(BASH_ICON "${CMAKE_SOURCE_DIR}/design/icon/bash-icon-1024.png")
+endif()
+
 juce_add_plugin(BASH
+    ICON_BIG                "${BASH_ICON}"
+    ICON_SMALL              "${CMAKE_SOURCE_DIR}/design/icon/bash-icon-256.png"
     PRODUCT_NAME            "BASH"
     PLUGIN_NAME             "BASH!"
     DESCRIPTION             "An all-in-one kalabash solution"
