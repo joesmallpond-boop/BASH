@@ -65,11 +65,12 @@ namespace bashui
         juce::Rectangle<int> lfoBoxes[2], lifeBox, lifeTraceArea, matrixBox;
     };
 
-    /** The Roll the Dice button: a die. Click to roll, right-click for options. */
+    /** Roll the Dice: a die on the Sequencer panel. Click to roll the current track's
+        sequencer (only that), right-click for chaos amount and undo. */
     class DiceButton : public juce::Component
     {
     public:
-        explicit DiceButton (BashProcessor& p) : proc (p) { setTooltip ("Roll the Dice (right-click for options)"); }
+        explicit DiceButton (BashProcessor& p) : proc (p) { setTooltip ("Roll this track's sequencer (right-click for options)"); }
         std::function<int()> currentTrack;
         std::function<void()> onRolled;
         void paint (juce::Graphics&) override;

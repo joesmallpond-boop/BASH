@@ -91,19 +91,19 @@ public:
     float  modSourceValue (int t, bash::ModSource s) const { return engine.sourceValue (t, s); }
     double lfoPhase (int i) const                      { return engine.lfoPhase (i); }
 
-    // Roll the Dice
+    // Roll the Dice: one die per track, rolls only that track's sequencer
     struct DiceSettings
     {
-        int   scope = 0;          // 0 everything, 1 track, 2 track seq, 3 track sound, 4 track fx
-        float chaos = 0.5f;       // 0..1
-        bool  includeKey = false, includeTempo = false, includeLevels = false, includePatterns = true;
+        float chaos = 1.0f;          // 0..1: how far a roll may move each sequencer setting
+        bool  includePatterns = true; // also pick a new pattern seed (locked steps are kept)
     };
     DiceSettings dice;
     juce::StringArray diceLocked;  // parameter ids protected from the dice
-    void rollDice (int currentTrack);
-    bool undoDice();
-    int  diceUndoCount() const                         { return (int) diceHistory.size(); }
-    static const juce::StringArray& diceScopeNames();
+    void rollDice (int track);
+    bool undoDice (int track);
+    int  diceUndoCount (int track) const               { return (int) diceHistory[(size_t) juce::jlimit (0, bash::numTracks - 1, track)].size(); }
+    uint64_t patternSeed (int track)                   { auto& pat = engine.pattern (track); std::lock_guard<bash::SpinMutex> g (pat.mutex()); return pat.getSeed(); }
+    static bool isDiceParam (const juce::String& paramId, int track);
 
     // MIDI import / export, audio export
     juce::String importMidi (int track, const juce::File&);   // error or empty
@@ -132,8 +132,8 @@ private:
     std::atomic<float> *pLimiter = nullptr, *pRetALevel = nullptr, *pRetBLevel = nullptr;
     struct LfoPtrs { std::atomic<float> *shape = nullptr, *rate = nullptr, *sync = nullptr, *div = nullptr; };
     std::array<LfoPtrs, 2> lfoP;
-    struct DiceSnapshot { juce::ValueTree params; std::array<uint64_t, bash::numTracks> seeds {}; };
-    std::vector<DiceSnapshot> diceHistory;
+    struct DiceSnapshot { std::vector<std::pair<juce::String, float>> params; uint64_t seed = 0; };
+    std::array<std::vector<DiceSnapshot>, bash::numTracks> diceHistory;
     void pullParameters();
     void timerCallback() override;
     std::shared_ptr<bash::SampleData> decode (const juce::File&, double maxSeconds, juce::String& error);

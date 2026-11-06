@@ -126,10 +126,12 @@ namespace bash
             const double remaining = params.reverse ? pos - lo : hi - pos;
             if (remaining <= 0.0) { active = false; return; }
 
-            const int i0 = (int) pos;
-            const float fr = (float) (pos - i0);
-            float sl = L[i0] + (L[i0 + 1] - L[i0]) * fr;
-            float sr2 = R[i0] + (R[i0 + 1] - R[i0]) * fr;
+            const int last = (int) d.numFrames() - 1;
+            const int i0 = std::clamp ((int) pos, 0, last);
+            const int i1 = std::min (i0 + 1, last);   // never read past the end of the sample
+            const float fr = (float) (pos - std::floor (pos));
+            float sl = L[i0] + (L[i1] - L[i0]) * fr;
+            float sr2 = R[i0] + (R[i1] - R[i0]) * fr;
 
             // envelope: fades + transient shaper
             float g = 1.0f;

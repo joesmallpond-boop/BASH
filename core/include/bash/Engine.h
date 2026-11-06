@@ -217,7 +217,7 @@ namespace bash
         std::array<int, 16> heldIn {};
         int heldInCount = 0;
 
-        std::vector<float>     bufL, bufR;
+        std::vector<float>     bufL, bufR, bufMono;   // bufMono: the mono synth, added to both sides
         std::array<std::vector<float>, 2> retL, retR;
         std::array<std::array<FxSlot, 2>, numTracks> trackFx;
         std::array<FxSlot, 2> returnFx, masterFx;

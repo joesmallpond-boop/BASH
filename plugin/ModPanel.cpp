@@ -287,34 +287,24 @@ void DiceButton::mouseUp (const juce::MouseEvent& e)
 
 void DiceButton::showMenu()
 {
+    const int t = currentTrack ? currentTrack() : 0;
     auto& d = proc.dice;
-    juce::PopupMenu m, scope, chaos;
-    for (int i = 0; i < proc.diceScopeNames().size(); ++i)
-        scope.addItem (100 + i, proc.diceScopeNames()[i], true, d.scope == i);
+    juce::PopupMenu m, chaos;
     const float amounts[] = { 0.1f, 0.25f, 0.5f, 0.75f, 1.0f };
     for (int i = 0; i < 5; ++i)
         chaos.addItem (200 + i, juce::String ((int) (amounts[i] * 100)) + "%" + (i == 4 ? "  (anything goes)" : ""), true, std::abs (d.chaos - amounts[i]) < 0.01f);
-    m.addSectionHeader ("Roll the Dice");
-    m.addSubMenu ("Scope", scope);
+    m.addSectionHeader ("Roll track " + juce::String (t + 1) + "'s sequencer");
     m.addSubMenu ("Chaos", chaos);
+    m.addItem (303, "New pattern too (locked steps kept)", true, d.includePatterns);
     m.addSeparator();
-    m.addItem (300, "Also roll key and scale", true, d.includeKey);
-    m.addItem (301, "Also roll tempo", true, d.includeTempo);
-    m.addItem (302, "Also roll levels and pan", true, d.includeLevels);
-    m.addItem (303, "New patterns (locks kept)", true, d.includePatterns);
-    m.addSeparator();
-    m.addItem (400, "Undo last roll (" + juce::String (proc.diceUndoCount()) + " stored)", proc.diceUndoCount() > 0);
+    m.addItem (400, "Undo last roll on this track (" + juce::String (proc.diceUndoCount (t)) + " stored)", proc.diceUndoCount (t) > 0);
     m.addItem (401, "Clear protected knobs (" + juce::String (proc.diceLocked.size()) + ")", proc.diceLocked.size() > 0);
-    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this), [this, amounts] (int r)
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this), [this, amounts, t] (int r)
     {
         auto& dd = proc.dice;
-        if (r >= 100 && r < 200) dd.scope = r - 100;
-        else if (r >= 200 && r < 300) dd.chaos = amounts[r - 200];
-        else if (r == 300) dd.includeKey = ! dd.includeKey;
-        else if (r == 301) dd.includeTempo = ! dd.includeTempo;
-        else if (r == 302) dd.includeLevels = ! dd.includeLevels;
+        if (r >= 200 && r < 300) dd.chaos = amounts[r - 200];
         else if (r == 303) dd.includePatterns = ! dd.includePatterns;
-        else if (r == 400) { proc.undoDice(); if (onRolled) onRolled(); }
+        else if (r == 400) { proc.undoDice (t); if (onRolled) onRolled(); }
         else if (r == 401) proc.diceLocked.clear();
     });
 }

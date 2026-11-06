@@ -280,6 +280,17 @@ static void testSlicePlacement()
     CHECK (r.size() >= 20 && r.size() <= 32 && r[0] == 0);
     for (size_t i = 1; i < r.size(); ++i) CHECK (r[i] > r[i - 1] && r[i] - r[i - 1] >= 480);
     CHECK (slicing::random (96000, 32, 7, 48000.0) == r);   // seeded
+    // spread over the whole file, not clumped at one end: every eighth holds slices
+    for (uint64_t seed = 1; seed < 50; ++seed)
+    {
+        const auto rs = slicing::random (480000, 32, seed, 48000.0);
+        CHECK (rs.size() == 32);
+        int perEighth[8] = {};
+        for (auto f : rs) ++perEighth[f * 8 / 480000];
+        for (int k = 0; k < 8; ++k) CHECK (perEighth[k] >= 3 && perEighth[k] <= 5);
+        CHECK (rs.back() > 480000 * 9 / 10);
+        CHECK (slicing::random (480000, 32, seed, 48000.0) != slicing::random (480000, 32, seed + 1, 48000.0));
+    }
 
     std::vector<uint32_t> messy { 900, 5, 900, 100000, 30, 400 };
     slicing::normalise (messy, 1000, 32);
@@ -1005,6 +1016,49 @@ static void testOfflineRender()
     CHECK (live.track (0).enabled && live.track (1).enabled);
 }
 
+// Regression: reverbs used to drone forever (shimmer feedback leaking into every reverb)
+// and pile their tail onto the left side. Every reverb and delay must die away when the
+// input stops (unless frozen / pushed into self-oscillation on purpose), and a mono input
+// must give a balanced tail.
+static void testNoDronesOrLopsidedTails()
+{
+    const double sr = 48000.0; const int bs = 128;
+    uint32_t seed = 12345;
+    auto rnd = [&seed] { seed = seed * 1664525u + 1013904223u; return (float) (seed >> 8) / 16777216.0f; };
+    for (int t = (int) FxType::Plate; t <= (int) FxType::GrainDelay; ++t)
+        for (int trial = 0; trial < 6; ++trial)
+        {
+            FxSlot fx; fx.prepare (sr, bs);
+            FxParams p; p.type = (FxType) t; p.a = rnd(); p.b = rnd(); p.gnarl = trial == 0 ? 0.0f : rnd() * 0.9f;
+            if (t >= (int) FxType::TapeDelay) p.b = std::min (p.b, 0.9f);   // knob alone, below self-oscillation
+            std::vector<float> l ((size_t) bs), r ((size_t) bs);
+            double early = 0, late = 0, tailL = 0, tailR = 0;
+            const int blocks = (int) (14.0 * sr / bs);
+            for (int b = 0; b < blocks; ++b)
+            {
+                const double ts = (double) b * bs / sr;
+                for (int i = 0; i < bs; ++i) { const float x = ts < 0.5 ? (rnd() * 2.0f - 1.0f) * 0.5f : 0.0f; l[(size_t) i] = r[(size_t) i] = x; }
+                fx.process (l.data(), r.data(), bs, p, 120.0);
+                for (int i = 0; i < bs; ++i)
+                {
+                    const double e = (double) l[(size_t) i] * l[(size_t) i] + (double) r[(size_t) i] * r[(size_t) i];
+                    if (ts >= 8.0 && ts < 10.0) early += e;
+                    if (ts >= 12.0)             late += e;
+                    if (ts >= 0.5 && ts < 1.5)  { tailL += (double) l[(size_t) i] * l[(size_t) i]; tailR += (double) r[(size_t) i] * r[(size_t) i]; }
+                }
+            }
+            const bool dies = late < 1.0e-9 * sr || late < early * 0.5;
+            if (! dies) std::printf ("  drone: %s a %.2f b %.2f g %.2f\n", fxName ((FxType) t), p.a, p.b, p.gnarl);
+            CHECK (dies);
+            if (t <= (int) FxType::Shimmer && tailL + tailR > 1.0e-6)
+            {
+                const double imbalance = std::abs (10.0 * std::log10 ((tailL + 1e-12) / (tailR + 1e-12)));
+                if (imbalance > 3.5) std::printf ("  lopsided: %s %.1f dB\n", fxName ((FxType) t), imbalance);
+                CHECK (imbalance <= 3.5);
+            }
+        }
+}
+
 int main()
 {
     testDeterminism();
@@ -1032,6 +1086,7 @@ int main()
     testModulation();
     testTimingAndMotif();
     testOfflineRender();
+    testNoDronesOrLopsidedTails();
     std::printf ("%d checks, %d failures\n", checks, failures);
     return failures == 0 ? 0 : 1;
 }

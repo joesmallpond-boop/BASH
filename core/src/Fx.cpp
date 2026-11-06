@@ -318,7 +318,10 @@ namespace bash
         const float damp = onePoleCoef (18000.0 * std::pow (2.0, -p.b * 5.0), sr);
         const double scale = sr / 48000.0;
         const double pre = (p.type == FxType::Hall ? 0.025 : p.type == FxType::Shimmer ? 0.03 : 0.004) * sr;
-        const float shimmerAmt = (p.type == FxType::Shimmer ? 0.35f : 0.0f) + g * 0.3f;
+        // Shimmer: part of each pass round the reverb loop is pitched up an octave. It sits
+        // inside the decaying loop (scaled by the same feedback as everything else), so the
+        // tail climbs in pitch and still dies away at the reverb's own decay time.
+        const float shimmerAmt = p.type == FxType::Shimmer && ! freeze ? 0.35f + g * 0.3f : 0.0f;
         const float loopDrive = 1.0f + g * 2.0f;
 
         double len[8]; float fb[8];
@@ -332,7 +335,7 @@ namespace bash
         {
             float in = (freeze ? 0.12f : 0.5f) * (l[i] + r[i]);   // frozen: infinite wash that still builds
             preDelay.push (in);
-            in = preDelay.tap (pre) + shimmerFb * shimmerAmt;
+            in = preDelay.tap (pre);
 
             if (p.type == FxType::Spring)
                 for (auto& a : springAp) in = a.process (in, 0.65f);   // dispersion "boing"
@@ -355,23 +358,35 @@ namespace bash
                 sum += o[k];
             }
             const float house = sum * 0.25f;   // Householder: 2/N
+            // Input injection pattern: orthogonal to the all-ones mode (which the Householder
+            // matrix never mixes out of) and with the same projection on the L and R output
+            // taps below, so a mono input builds a balanced stereo tail instead of a left-only one.
+            static constexpr float inSign[8] = { 1, 1, 1, -1, 1, -1, -1, -1 };
+            constexpr float invSqrt8 = 0.35355339f;
+
+            float shifted = 0.0f;
+            if (shimmerAmt > 0.0f)
+            {
+                float proj = 0.0f;   // the loop's component along the injection pattern (unit vector)
+                for (int k = 0; k < 8; ++k) proj += o[k] * inSign[k] * invSqrt8;
+                shimmerBuf.push (proj);
+                const double N = 4000.0;   // octave up: read pointer gains one sample per sample
+                shimmerPhase += 1.0 / N;
+                if (shimmerPhase >= 1.0) shimmerPhase -= 1.0;
+                double p2 = shimmerPhase + 0.5; if (p2 >= 1.0) p2 -= 1.0;
+                const float w1 = (float) std::sin (pi * shimmerPhase), w2 = (float) std::sin (pi * p2);
+                // sin^2 windows sum to exactly 1, so the shifter never adds gain
+                shifted = shimmerBuf.tap ((1.0 - shimmerPhase) * N) * w1 * w1 + shimmerBuf.tap ((1.0 - p2) * N) * w2 * w2;
+            }
+
             for (int k = 0; k < 8; ++k)
-                fdn[(size_t) k].push ((o[k] - house) * fb[k] + in * ((k & 1) ? -0.35f : 0.35f));
+            {
+                const float mixed = (o[k] - house) * (1.0f - shimmerAmt) + shifted * shimmerAmt * inSign[k] * invSqrt8;
+                fdn[(size_t) k].push (mixed * fb[k] + in * 0.35f * inSign[k]);
+            }
 
             const float outL = (o[0] - o[1] + o[2] - o[3] + o[4] - o[5] + o[6] - o[7]) * 0.3f;
             const float outR = (o[0] + o[1] - o[2] - o[3] + o[4] + o[5] - o[6] - o[7]) * 0.3f;
-
-            if (shimmerAmt > 0.0f)
-            {
-                shimmerBuf.push (0.5f * (outL + outR));
-                const double N = 4000.0;
-                shimmerPhase += (2.0 - 1.0) / N;
-                if (shimmerPhase >= 1.0) shimmerPhase -= 1.0;
-                double p2 = shimmerPhase + 0.5; if (p2 >= 1.0) p2 -= 1.0;
-                shimmerFb = shimmerBuf.tap ((1.0 - shimmerPhase) * N) * (float) std::sin (pi * shimmerPhase)
-                          + shimmerBuf.tap ((1.0 - p2) * N) * (float) std::sin (pi * p2);
-                shimmerFb = std::tanh (shimmerFb);
-            }
 
             l[i] = outL;
             r[i] = outR;
@@ -385,7 +400,9 @@ namespace bash
         const auto& divs = delayDivisions();
         const int di = std::clamp ((int) (p.a * (float) divs.size()), 0, (int) divs.size() - 1);
         const double base = std::min (divs[(size_t) di].second * 60.0 / std::max (20.0, bpm) * sr, (double) dlL.size() - 8.0);
-        const float fbAmt = p.b * 1.05f + g * 0.35f;                          // can exceed 1: the soft clip keeps it bounded
+        // Feedback knob alone tops out just below 100% so echoes always die away; Gnarl can
+        // push it past 100% into deliberate self-oscillation (the soft clip keeps it bounded).
+        const float fbAmt = p.b * 0.95f + g * 0.2f;
         const float lpC = onePoleCoef (12000.0 * (1.0 - 0.85 * g), sr);
         const float hpC = onePoleCoef (60.0 * (1.0 + 10.0 * g), sr);
         const float drive = 1.0f + g * 3.0f;

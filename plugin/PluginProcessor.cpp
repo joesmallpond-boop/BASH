@@ -900,83 +900,46 @@ void BashProcessor::kitFromTree (const juce::ValueTree& kit)
 }
 
 // ---- Roll the Dice (message thread) --------------------------------------------
-namespace
+// Each track has its own die and it only touches that track's sequencer: rhythm,
+// melody and playback settings plus a new pattern seed. Sound, effects, mixer,
+// key and tempo are never rolled. Algorithm, rate, octave and on/off stay as you set them.
+bool BashProcessor::isDiceParam (const juce::String& id, int track)
 {
-    enum class DiceCat { Never, Key, Tempo, Level, Seq, Sound, Fx, Mod };
-
-    DiceCat categoryOf (const juce::String& id, int& track)
-    {
-        track = -1;
-        if (id == "root" || id == "scale") return DiceCat::Key;
-        if (id == "tempo") return DiceCat::Tempo;
-        if (id == "sync" || id == "play" || id == "master" || id == "limiter") return DiceCat::Never;
-        if (id == "retalevel" || id == "retblevel") return DiceCat::Level;
-        if (id.startsWith ("reta") || id.startsWith ("retb") || id.startsWith ("mfx")) return DiceCat::Fx;
-        if (id.startsWith ("lfo")) return DiceCat::Mod;
-        if (id.startsWith ("t") && id.containsChar ('_'))
-        {
-            track = id.substring (1, id.indexOfChar ('_')).getIntValue() - 1;
-            const auto s = id.fromFirstOccurrenceOf ("_", false, false);
-            static const juce::StringArray never { "on", "engine", "mute", "solo", "cycle" };
-            static const juce::StringArray level { "level", "pan" };
-            static const juce::StringArray seq   { "algo", "type", "density", "steps", "offset", "direction", "rate",
-                                                   "accent", "gate", "octave", "scalelock", "slicemode", "winstart", "winsize" };
-            if (never.contains (s)) return DiceCat::Never;
-            if (level.contains (s)) return DiceCat::Level;
-            if (seq.contains (s))   return DiceCat::Seq;
-            if (s == "liferate")    return DiceCat::Mod;
-            if (s.startsWith ("fx") || s == "senda" || s == "sendb") return DiceCat::Fx;
-            return DiceCat::Sound;
-        }
-        return DiceCat::Never;
-    }
+    const juce::String pre = "t" + juce::String (track + 1) + "_";
+    if (! id.startsWith (pre)) return false;
+    // rate and octave stay put: a roll to a 1-bar step or a sub-bass register sounds broken, not random
+    static const juce::StringArray seq { "type", "density", "steps", "offset", "direction", "accent", "gate",
+                                         "slicemode", "winstart", "winsize", "swing", "jitter" };
+    return seq.contains (id.substring (pre.length()));
 }
 
-const juce::StringArray& BashProcessor::diceScopeNames()
+void BashProcessor::rollDice (int track)
 {
-    static const juce::StringArray n { "Everything", "This track", "This track: sequencer", "This track: sound", "This track: effects" };
-    return n;
-}
+    track = juce::jlimit (0, bash::numTracks - 1, track);
 
-void BashProcessor::rollDice (int currentTrack)
-{
-    // remember how things were, for Undo
     DiceSnapshot snap;
-    snap.params = apvts.copyState();
-    for (int t = 0; t < bash::numTracks; ++t)
+    for (auto* p : getParameters())
+        if (auto* rp = dynamic_cast<juce::RangedAudioParameter*> (p))
+            if (isDiceParam (rp->getParameterID(), track))
+                snap.params.emplace_back (rp->getParameterID(), rp->getValue());
     {
-        auto& pat = engine.pattern (t);
+        auto& pat = engine.pattern (track);
         std::lock_guard<bash::SpinMutex> g (pat.mutex());
-        snap.seeds[(size_t) t] = pat.getSeed();
+        snap.seed = pat.getSeed();
     }
-    diceHistory.push_back (snap);
-    if (diceHistory.size() > 16) diceHistory.erase (diceHistory.begin());
+    auto& history = diceHistory[(size_t) track];
+    history.push_back (std::move (snap));
+    if (history.size() > 16) history.erase (history.begin());
 
     const auto rollSeed = (juce::int64) juce::Random::getSystemRandom().nextInt64();
     juce::Random rnd (rollSeed);
     const float chaos = juce::jlimit (0.0f, 1.0f, dice.chaos);
 
-    auto trackInScope = [&] (int t) { return dice.scope == 0 || t == currentTrack; };
-
     for (auto* p : getParameters())
     {
         auto* rp = dynamic_cast<juce::RangedAudioParameter*> (p);
-        if (rp == nullptr) continue;
-        int t = -1;
-        const auto cat = categoryOf (rp->getParameterID(), t);
-        bool ok = false;
-        switch (cat)
-        {
-            case DiceCat::Never: break;
-            case DiceCat::Key:   ok = dice.includeKey && dice.scope == 0; break;
-            case DiceCat::Tempo: ok = dice.includeTempo && dice.scope == 0; break;
-            case DiceCat::Level: ok = dice.includeLevels && (t < 0 ? dice.scope == 0 : trackInScope (t)); break;
-            case DiceCat::Mod:   ok = t < 0 ? dice.scope == 0 : trackInScope (t) && (dice.scope <= 1); break;
-            case DiceCat::Seq:   ok = trackInScope (t) && (dice.scope <= 2) && dice.scope != 3 && dice.scope != 4; break;
-            case DiceCat::Sound: ok = trackInScope (t) && (dice.scope <= 1 || dice.scope == 3); break;
-            case DiceCat::Fx:    ok = t < 0 ? dice.scope == 0 : trackInScope (t) && (dice.scope <= 1 || dice.scope == 4); break;
-        }
-        if (! ok || diceLocked.contains (rp->getParameterID())) continue;
+        if (rp == nullptr || ! isDiceParam (rp->getParameterID(), track) || diceLocked.contains (rp->getParameterID()))
+            continue;
 
         const float cur = rp->getValue();
         float next;
@@ -996,40 +959,31 @@ void BashProcessor::rollDice (int currentTrack)
     }
 
     if (dice.includePatterns)
-        for (int t = 0; t < bash::numTracks; ++t)
-            if (trackInScope (t) && (dice.scope <= 2))
-            {
-                auto& pat = engine.pattern (t);
-                std::lock_guard<bash::SpinMutex> g (pat.mutex());
-                pat.setSeed (bash::mix64 ((uint64_t) rollSeed + (uint64_t) t));   // locks are kept
-            }
+    {
+        auto& pat = engine.pattern (track);
+        std::lock_guard<bash::SpinMutex> g (pat.mutex());
+        pat.setSeed (bash::mix64 ((uint64_t) rollSeed + (uint64_t) track));   // locks are kept
+    }
 }
 
-bool BashProcessor::undoDice()
+bool BashProcessor::undoDice (int track)
 {
-    if (diceHistory.empty()) return false;
-    const auto snap = diceHistory.back();
-    diceHistory.pop_back();
-    for (const auto& child : snap.params)
-    {
-        if (! child.hasType ("PARAM")) continue;
-        if (auto* p = apvts.getParameter (child.getProperty ("id").toString()))
-        {
-            const float v = p->convertTo0to1 ((float) child.getProperty ("value"));
+    track = juce::jlimit (0, bash::numTracks - 1, track);
+    auto& history = diceHistory[(size_t) track];
+    if (history.empty()) return false;
+    const auto snap = history.back();
+    history.pop_back();
+    for (const auto& [id, v] : snap.params)
+        if (auto* p = apvts.getParameter (id))
             if (std::abs (p->getValue() - v) > 1.0e-6f)
             {
                 p->beginChangeGesture();
                 p->setValueNotifyingHost (v);
                 p->endChangeGesture();
             }
-        }
-    }
-    for (int t = 0; t < bash::numTracks; ++t)
-    {
-        auto& pat = engine.pattern (t);
-        std::lock_guard<bash::SpinMutex> g (pat.mutex());
-        pat.setSeed (snap.seeds[(size_t) t]);
-    }
+    auto& pat = engine.pattern (track);
+    std::lock_guard<bash::SpinMutex> g (pat.mutex());
+    pat.setSeed (snap.seed);
     return true;
 }
 

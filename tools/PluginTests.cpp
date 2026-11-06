@@ -14,43 +14,45 @@ static void testDice()
     p.setPlayConfigDetails (0, 2, 48000.0, 512);
     p.prepareToPlay (48000.0, 512);
 
-    const float root = value (p, "root"), tempo = value (p, "tempo");
-    const float t2type = value (p, "t2_type"), t1level = value (p, "t1_level");
-    p.diceLocked.add ("t1_cutoff");
-    const float cutoff = value (p, "t1_cutoff");
+    // the die rolls only the chosen track's sequencer
+    std::vector<std::pair<juce::String, float>> before;
+    for (auto* prm : p.getParameters())
+        if (auto* rp = dynamic_cast<juce::RangedAudioParameter*> (prm))
+            before.emplace_back (rp->getParameterID(), rp->getValue());
+    p.diceLocked.add ("t2_gate");
+    const auto seed2 = p.patternSeed (1), seed1 = p.patternSeed (0);
+    p.dice.chaos = 1.0f;
+    p.rollDice (1);
 
-    // scope: this track only
-    p.dice.scope = 1; p.dice.chaos = 1.0f;
-    int changed = 0;
-    const float before[] = { value (p, "t1_type"), value (p, "t1_density"), value (p, "t1_reso"), value (p, "t1_envmod") };
-    p.rollDice (0);
-    const float after[] = { value (p, "t1_type"), value (p, "t1_density"), value (p, "t1_reso"), value (p, "t1_envmod") };
-    for (int i = 0; i < 4; ++i) if (before[i] != after[i]) ++changed;
-    CHECK (changed >= 3);
-    CHECK (value (p, "t2_type") == t2type);     // other tracks untouched
-    CHECK (value (p, "root") == root);          // key excluded by default
-    CHECK (value (p, "tempo") == tempo);        // tempo excluded by default
-    CHECK (value (p, "t1_level") == t1level);   // levels excluded by default
-    CHECK (value (p, "t1_cutoff") == cutoff);   // protected knob
-    CHECK (value (p, "t1_on") > 0.5f);          // never switches tracks off
+    int seqChanged = 0, otherChanged = 0;
+    for (const auto& [id, v] : before)
+    {
+        if (std::abs (value (p, id) - v) < 1.0e-6f) continue;
+        if (BashProcessor::isDiceParam (id, 1)) ++seqChanged;
+        else { ++otherChanged; std::printf ("  dice changed %s\n", id.toRawUTF8()); }
+    }
+    CHECK (seqChanged >= 5);
+    CHECK (otherChanged == 0);                        // no sound, FX, mixer, key, tempo or other tracks
+    CHECK (! BashProcessor::isDiceParam ("t2_cutoff", 1) && ! BashProcessor::isDiceParam ("t2_fx1gnarl", 1));
+    CHECK (! BashProcessor::isDiceParam ("t2_algo", 1) && ! BashProcessor::isDiceParam ("t2_octave", 1));
+    CHECK (BashProcessor::isDiceParam ("t2_density", 1) && ! BashProcessor::isDiceParam ("t2_density", 0));
+    for (const auto& [id, v] : before) if (id == "t2_gate") CHECK (std::abs (value (p, id) - v) < 1.0e-6f);   // protected
+    CHECK (p.patternSeed (1) != seed2);  // new pattern
+    CHECK (p.patternSeed (0) == seed1);  // other track untouched
 
-    // undo restores
-    CHECK (p.diceUndoCount() == 1);
-    CHECK (p.undoDice());
-    CHECK (value (p, "t1_type") == before[0] && value (p, "t1_reso") == before[2]);
+    // per-track undo
+    CHECK (p.diceUndoCount (1) == 1 && p.diceUndoCount (0) == 0);
+    CHECK (p.undoDice (1));
+    for (const auto& [id, v] : before) CHECK (std::abs (value (p, id) - v) < 1.0e-6f);
+    CHECK (p.patternSeed (1) == seed2);
 
     // gentle chaos stays near the current values
     p.dice.chaos = 0.1f;
     const float d0 = value (p, "t1_density");
     p.rollDice (0);
     CHECK (std::abs (value (p, "t1_density") - d0) <= 0.1001f);
-
-    // everything + key
-    p.dice.scope = 0; p.dice.chaos = 1.0f; p.dice.includeKey = true;
-    int rootChanged = 0;
-    for (int i = 0; i < 8; ++i) { const float r0 = value (p, "root"); p.rollDice (0); if (value (p, "root") != r0) ++rootChanged; }
-    CHECK (rootChanged > 0);
-    CHECK (p.diceUndoCount() <= 16);
+    for (int i = 0; i < 20; ++i) p.rollDice (0);
+    CHECK (p.diceUndoCount (0) == 16);
 }
 
 static void testState()

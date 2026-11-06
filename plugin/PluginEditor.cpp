@@ -509,8 +509,6 @@ void BashView::resized()
 
     // header (right side)
     auto header = area.removeFromTop (84).withTrimmedTop (12);
-    diceButton.setBounds (header.removeFromRight (56).withSizeKeepingCentre (52, 52));
-    header.removeFromRight (12);
     placeKnob (master, header.removeFromRight (72));
     header.removeFromRight (8);
     placeKnob (tempo, header.removeFromRight (72));
@@ -548,6 +546,7 @@ void BashView::resized()
     area.removeFromTop (12);
     seqPanel = area.removeFromTop (224);
     exportBar->setBounds (seqPanel.getRight() - 16 - 440, seqPanel.getY() + 6, 440, 26);
+    diceButton.setBounds (seqPanel.getX() + 108, seqPanel.getY() + 4, 32, 32);   // beside the SEQUENCER title
     auto inner = seqPanel.reduced (16).withTrimmedTop (22);
     auto combos = inner.removeFromTop (52);
     onButton.setBounds (combos.removeFromLeft (110).removeFromBottom (30));

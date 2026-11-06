@@ -52,6 +52,7 @@ namespace bash
         maxBlock = std::max (32, std::min (maxBlockSize, 128));   // internal chunk: modulation updates every <= 128 samples
         bufL.assign ((size_t) maxBlock, 0.0f);
         bufR.assign ((size_t) maxBlock, 0.0f);
+        bufMono.assign ((size_t) maxBlock, 0.0f);
         for (int k = 0; k < 2; ++k) { retL[(size_t) k].assign ((size_t) maxBlock, 0.0f); retR[(size_t) k].assign ((size_t) maxBlock, 0.0f); }
         for (auto& tf : trackFx) for (auto& f : tf) f.prepare (sr, maxBlock);
         for (auto& f : returnFx) f.prepare (sr, maxBlock);
@@ -358,17 +359,17 @@ namespace bash
 
             std::fill (bufL.begin(), bufL.begin() + n, 0.0f);
             std::fill (bufR.begin(), bufR.begin() + n, 0.0f);
+            std::fill (bufMono.begin(), bufMono.begin() + n, 0.0f);
+            bool synthRendered = false;
 
             auto renderRange = [&] (int from, int count)
             {
                 if (count <= 0) return;
-                if (! synth.isSilent())  synth.render (bufL.data(), from, count, ts.voice);
+                if (! synth.isSilent())  { synth.render (bufMono.data(), from, count, ts.voice); synthRendered = true; }
                 if (! slicer.isSilent()) slicer.render (bufL.data() + 0, bufR.data(), from, count, ts.slicer.voice);
                 if (! drum.isSilent())   drum.render (bufL.data(), bufR.data(), from, count);
             };
 
-            // synth renders mono into bufL; copy it to bufR afterwards. To keep that
-            // simple, render the synth into its own pass when the track is a synth.
             int pos = 0;
             for (const auto& e : events)
             {
@@ -379,9 +380,11 @@ namespace bash
             }
             renderRange (pos, n - pos);
 
-            if (ts.engine == EngineType::Synth)
-                std::copy (bufL.begin(), bufL.begin() + n, bufR.begin());   // mono synth → both sides
-            else if (isSlicer)
+            // the synth is mono: it goes to both sides equally, also while it rings out after
+            // the track was switched to another engine (it used to land on the left only)
+            if (synthRendered)
+                for (int i = 0; i < n; ++i) { bufL[(size_t) i] += bufMono[(size_t) i]; bufR[(size_t) i] += bufMono[(size_t) i]; }
+            if (isSlicer)
                 framePos[(size_t) t].store (slicer.position());
             (void) isDrums;
 

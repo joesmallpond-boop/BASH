@@ -36,14 +36,22 @@ namespace bash
 
         std::vector<uint32_t> random (uint32_t numFrames, int count, uint64_t seed, double sr)
         {
+            // Stratified: split the file into `count` equal sections and drop one slice
+            // at a random spot inside each, so slices cover the whole file evenly but
+            // never on a rigid grid. The first slice is always at the start.
             std::vector<uint32_t> s;
             count = std::clamp (count, 1, maxSlices);
+            if (numFrames == 0) return s;
             const uint32_t minGap = (uint32_t) std::max (32.0, sr * 0.01);
-            // draw extra candidates so spacing rules still leave ~count slices
-            for (int i = 1; (int) s.size() < count * 2 && i < count * 8; ++i)
-                s.push_back ((uint32_t) (unitFloat (seed, (uint64_t) i, 0x511CEull) * (float) numFrames));
+            const double cell = (double) numFrames / count;
+            s.push_back (0);
+            for (int i = 1; i < count; ++i)
+            {
+                // keep 15% clear at each side of the section so neighbours can't touch
+                const double u = 0.15 + 0.7 * (double) unitFloat (seed, (uint64_t) i, 0x511CEull);
+                s.push_back ((uint32_t) std::min ((double) numFrames - 1.0, (i + u - 0.5) * cell));
+            }
             normalise (s, numFrames, minGap);
-            if ((int) s.size() > count) s.resize ((size_t) count);
             return s;
         }
 
