@@ -277,6 +277,88 @@ static void testStepMode()
     mid.deleteFile();
 }
 
+static juce::File writeBeat (double bpm, int beats)
+{
+    const double sr = 44100.0;
+    const int n = (int) std::lround (beats * 60.0 / bpm * sr);
+    juce::AudioBuffer<float> b (2, n);
+    b.clear();
+    for (int beat = 0; beat < beats; ++beat)
+    {
+        const int start = (int) std::lround (beat * 60.0 / bpm * sr);
+        for (int i = 0; i < (int) (sr * 0.15) && start + i < n; ++i)
+        {
+            const double t = i / sr;
+            const float y = 0.8f * (float) (std::sin (2.0 * 3.14159265 * (55.0 + 90.0 * std::exp (-t * 40.0)) * t) * std::exp (-t * 18.0));
+            b.setSample (0, start + i, y); b.setSample (1, start + i, y);
+        }
+    }
+    auto f = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("bash-warp-test.wav");
+    f.deleteFile();
+    juce::WavAudioFormat wav;
+    std::unique_ptr<juce::AudioFormatWriter> w (wav.createWriterFor (new juce::FileOutputStream (f), sr, 2, 24, {}, 0));
+    w->writeFromAudioSampleBuffer (b, 0, n);
+    return f;
+}
+
+static void testWarp()
+{
+    BashProcessor p;
+    p.setPlayConfigDetails (0, 2, 48000.0, 512);
+    p.prepareToPlay (48000.0, 512);
+    p.apvts.getParameter ("sync")->setValueNotifyingHost (0.0f);
+    auto setTempo = [&] (float bpm) { p.apvts.getParameter ("tempo")->setValueNotifyingHost (p.apvts.getParameter ("tempo")->convertTo0to1 (bpm)); };
+    setTempo (125.0f);
+    const auto file = writeBeat (100.0, 16);
+    const int frames = (int) std::lround (16 * 0.6 * 44100.0);
+
+    CHECK (p.loadSample (0, file).isEmpty());
+    CHECK (std::abs (p.sourceBpm (0) - 100.0) < 0.05);
+    CHECK (p.warpOn (0));
+    CHECK (std::abs ((double) p.sample (0)->numFrames() - frames * 0.8) < 2.0);   // 100 -> 125 bpm
+    const auto slicesWarped = p.slices (0);
+    CHECK (slicesWarped.size() >= 12);
+
+    // warp off: the original length, slices follow
+    p.apvts.getParameter ("t1_warp")->setValueNotifyingHost (0.0f);
+    p.updateWarps (true);
+    CHECK ((int) p.sample (0)->numFrames() == frames);
+    const auto slicesOrig = p.slices (0);
+    CHECK (slicesOrig.size() == slicesWarped.size());
+    if (slicesOrig.size() > 4) CHECK (std::abs ((double) slicesOrig[4] * 0.8 - slicesWarped[4]) < 3.0);
+
+    // on again, then a tempo change re-warps
+    p.apvts.getParameter ("t1_warp")->setValueNotifyingHost (1.0f);
+    setTempo (150.0f);
+    p.updateWarps (true);
+    CHECK (std::abs ((double) p.sample (0)->numFrames() - frames * 100.0 / 150.0) < 2.0);
+    CHECK (std::abs (p.warpRatio (0) - 100.0 / 150.0) < 1.0e-6);
+
+    // the user corrects the tempo (e.g. it's really half-time)
+    p.setSourceBpm (0, 50.0);
+    p.updateWarps (true);
+    CHECK (std::abs ((double) p.sample (0)->numFrames() - frames * 50.0 / 150.0) < 2.0);
+    p.setSourceBpm (0, 100.0);
+    p.updateWarps (true);
+
+    // save / load: the source tempo and the slices (on the file's timeline) come back
+    setTempo (150.0f);
+    p.updateWarps (true);
+    const auto before = p.slices (0);
+    juce::MemoryBlock state;
+    p.getStateInformation (state);
+    BashProcessor q;
+    q.setPlayConfigDetails (0, 2, 48000.0, 512);
+    q.prepareToPlay (48000.0, 512);
+    q.setStateInformation (state.getData(), (int) state.getSize());
+    CHECK (std::abs (q.sourceBpm (0) - 100.0) < 0.05);
+    CHECK (q.sample (0) != nullptr && std::abs ((double) q.sample (0)->numFrames() - frames * 100.0 / 150.0) < 2.0);
+    const auto after = q.slices (0);
+    CHECK (after.size() == before.size());
+    for (size_t i = 0; i < std::min (after.size(), before.size()); ++i) CHECK (std::abs ((double) after[i] - before[i]) <= 2.0);
+    file.deleteFile();
+}
+
 int main()
 {
     juce::ScopedJuceInitialiser_GUI init;
@@ -286,6 +368,7 @@ int main()
     testExports();
     testKeyLock();
     testStepMode();
+    testWarp();
     std::printf ("%d plugin checks, %d failures\n", checks, failures);
     return failures == 0 ? 0 : 1;
 }

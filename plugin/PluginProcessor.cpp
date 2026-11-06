@@ -1,4 +1,5 @@
 #include "PluginProcessor.h"
+#include "bash/Warp.h"
 #include "PluginEditor.h"
 
 #include <mutex>
@@ -224,6 +225,7 @@ APVTS::ParameterLayout BashProcessor::createLayout()
         g->addChild (floatParam (id ("sattack"),   n + "Slice Attack",  skewed (0.0005f, 0.5f, 0.02f), 0.002f, 3, " s"));
         g->addChild (floatParam (id ("srelease"),  n + "Slice Release", skewed (0.002f, 2.0f, 0.1f), 0.03f, 3, " s"));
         g->addChild (std::make_unique<AudioParameterBool>   (id ("reverse"),   n + "Reverse", false));
+        g->addChild (std::make_unique<AudioParameterBool>   (id ("warp"),      n + "Warp", true));
 
         g->addChild (floatParam (id ("level"),     n + "Level",     NormalisableRange<float> (0.0f, 1.0f), 0.8f, 2));
         g->addChild (floatParam (id ("pan"),       n + "Pan",       NormalisableRange<float> (-1.0f, 1.0f), 0.0f, 2));
@@ -255,7 +257,7 @@ BashProcessor::BashProcessor()
       apvts (*this, nullptr, "BASH", createLayout())
 {
     formats.registerBasicFormats();
-    startTimer (1000);
+    startTimer (100);
     loadFactoryKit (0);
 
     pRoot   = apvts.getRawParameterValue ("root");
@@ -288,7 +290,7 @@ BashProcessor::BashProcessor()
         p.level = get ("level"); p.pan = get ("pan");
         p.lifeRate = get ("liferate"); p.swing = get ("swing"); p.jitter = get ("jitter");
         p.mute = get ("mute"); p.solo = get ("solo"); p.sendA = get ("senda"); p.sendB = get ("sendb");
-        p.mode = get ("mode"); p.fill = get ("fill"); p.autoFill = get ("autofill");
+        p.mode = get ("mode"); p.fill = get ("fill"); p.autoFill = get ("autofill"); p.warp = get ("warp");
         p.fx[0] = fxPtrs (pid (t, "fx1")); p.fx[1] = fxPtrs (pid (t, "fx2"));
         p.machine = get ("machine"); p.timbre = get ("timbre"); p.ftype = get ("ftype");
         p.aAtk = get ("aatk"); p.aDec = get ("adec"); p.aSus = get ("asus"); p.aRel = get ("arel");
@@ -630,12 +632,15 @@ void BashProcessor::getStateInformation (juce::MemoryBlock& dest)
     {
         const auto* d = engine.sample (t);
         if (d == nullptr) continue;
+        // slices are saved on the file's own timeline (unwarped), so they survive any tempo
+        const double ratio = std::max (1.0e-6, warps[(size_t) t].applied);
         juce::String sl;
-        for (auto f : engine.slices (t)) sl << (juce::int64) f << ' ';
+        for (auto f : engine.slices (t)) sl << (juce::int64) std::llround (f / ratio) << ' ';
         juce::ValueTree st ("Sample");
         st.setProperty ("track", t, nullptr);
         st.setProperty ("path", juce::String (d->path), nullptr);
         st.setProperty ("slices", sl.trim(), nullptr);
+        st.setProperty ("bpm", warps[(size_t) t].sourceBpm, nullptr);
         samplesTree.appendChild (st, nullptr);
     }
     state.removeChild (state.getChildWithName ("Samples"), nullptr);
@@ -682,11 +687,12 @@ void BashProcessor::setStateInformation (const void* data, int size)
     {
         const int t = juce::jlimit (0, bash::numTracks - 1, (int) st.getProperty ("track"));
         const juce::File file (st.getProperty ("path").toString());
-        if (file.existsAsFile() && loadSample (t, file, false).isEmpty())
+        if (file.existsAsFile() && loadSample (t, file, false, (double) st.getProperty ("bpm", 0.0)).isEmpty())
         {
+            const double ratio = warps[(size_t) t].applied;
             std::vector<uint32_t> sl;
             for (auto& tok : juce::StringArray::fromTokens (st.getProperty ("slices").toString(), " ", ""))
-                if (tok.isNotEmpty()) sl.push_back ((uint32_t) tok.getLargeIntValue());
+                if (tok.isNotEmpty()) sl.push_back ((uint32_t) std::llround ((double) tok.getLargeIntValue() * ratio));
             setSlices (t, std::move (sl));
         }
         else
@@ -754,23 +760,32 @@ std::shared_ptr<bash::SampleData> BashProcessor::decode (const juce::File& file,
     return data;
 }
 
-juce::String BashProcessor::loadSample (int t, const juce::File& file, bool autoSlice)
+juce::String BashProcessor::loadSample (int t, const juce::File& file, bool autoSlice, double knownBpm)
 {
     juce::String error;
     auto data = decode (file, 600.0, error);   // up to 10 minutes
     if (data == nullptr) return error;
 
+    // Warp: find the file's tempo (or use the one saved with the session) and stretch it to ours
+    auto& w = warps[(size_t) t];
+    w.original = data;
+    w.sourceBpm = knownBpm > 0.0 ? knownBpm : bash::warp::detectTempo (*data).bpm;
+    const double ratio = desiredWarpRatio (t);
+    w.requested = ratio;
+    auto playing = std::abs (ratio - 1.0) > 1.0e-4 ? bash::warp::stretch (*data, ratio) : data;
+
     auto& slot = sampleSlots[(size_t) t];
     if (slot != nullptr)
         graveyard.push_back ({ slot, engine.blocksProcessed() });
-    slot = data;
-    engine.setSample (t, data.get());
+    slot = playing;
+    w.applied = ratio;
+    engine.setSample (t, playing.get());
 
     missingSamples[(size_t) t] = {};
     if (autoSlice)
     {
-        auto s = bash::slicing::transients (*data, 0.5f);
-        if (s.size() < 2) s = bash::slicing::grid (data->numFrames(), 16);   // no clear hits: even grid
+        auto s = bash::slicing::transients (*playing, 0.5f);
+        if (s.size() < 2) s = bash::slicing::grid (playing->numFrames(), 16);   // no clear hits: even grid
         setSlices (t, std::move (s));
     }
     return {};
@@ -782,8 +797,74 @@ void BashProcessor::clearSample (int t)
     if (slot != nullptr)
         graveyard.push_back ({ slot, engine.blocksProcessed() });
     slot = nullptr;
+    auto& w = warps[(size_t) t];
+    w.original = nullptr;
+    w.applied = w.requested = 1.0;
+    { std::lock_guard<std::mutex> g (w.m); w.ready = nullptr; }
     engine.setSample (t, nullptr);
     engine.setSlices (t, {});
+}
+
+// ---- warp (message thread) ----------------------------------------------------
+bool BashProcessor::warpOn (int t) const { return load (tp[(size_t) t].warp) > 0.5f; }
+
+double BashProcessor::desiredWarpRatio (int t) const
+{
+    if (warps[(size_t) t].original == nullptr || ! warpOn (t)) return 1.0;
+    return bash::warp::ratioFor (warps[(size_t) t].sourceBpm, exportBpm());
+}
+
+void BashProcessor::setSourceBpm (int t, double bpm)
+{
+    warps[(size_t) t].sourceBpm = juce::jlimit (40.0, 250.0, bpm);
+    updateWarps (false);
+}
+
+void BashProcessor::installWarped (int t, std::shared_ptr<bash::SampleData> data, double ratio)
+{
+    auto& w = warps[(size_t) t];
+    auto& slot = sampleSlots[(size_t) t];
+    if (data == nullptr || w.original == nullptr) return;
+
+    // slices keep their place in the music: scale them with the new length
+    const double oldLen = slot != nullptr ? (double) slot->numFrames() : 1.0;
+    const double scale = (double) data->numFrames() / std::max (1.0, oldLen);
+    auto sl = engine.slices (t);
+    for (auto& f : sl) f = (uint32_t) std::llround (f * scale);
+
+    if (slot != nullptr)
+        graveyard.push_back ({ slot, engine.blocksProcessed() });
+    slot = data;
+    w.applied = ratio;
+    engine.setSample (t, data.get());
+    setSlices (t, std::move (sl));
+}
+
+void BashProcessor::updateWarps (bool synchronous)
+{
+    for (int t = 0; t < bash::numTracks; ++t)
+    {
+        auto& w = warps[(size_t) t];
+        if (w.original == nullptr) continue;
+        const double want = desiredWarpRatio (t);
+        if (std::abs (want - w.requested) < 1.0e-4 && std::abs (want - w.applied) < 1.0e-4) continue;
+        if (std::abs (want - w.requested) < 1.0e-4 && ! synchronous) continue;   // already on its way
+        w.requested = want;
+
+        auto original = w.original;
+        if (synchronous)
+        {
+            installWarped (t, std::abs (want - 1.0) > 1.0e-4 ? bash::warp::stretch (*original, want) : original, want);
+            continue;
+        }
+        warpPool.addJob ([&w, original, want]
+        {
+            auto result = std::abs (want - 1.0) > 1.0e-4 ? bash::warp::stretch (*original, want) : original;
+            std::lock_guard<std::mutex> g (w.m);
+            w.ready = result;
+            w.readyRatio = want;
+        });
+    }
 }
 
 void BashProcessor::setSlices (int t, std::vector<uint32_t> s)
@@ -795,6 +876,25 @@ void BashProcessor::setSlices (int t, std::vector<uint32_t> s)
 
 void BashProcessor::timerCallback()
 {
+    // warp: follow tempo changes once the tempo has settled, and pick up finished stretches
+    const double target = exportBpm();
+    if (std::abs (target - lastWarpTarget) > 1.0e-3) { lastWarpTarget = target; warpTargetChanged = juce::Time::getMillisecondCounter(); }
+    if (juce::Time::getMillisecondCounter() - warpTargetChanged > 300)
+        updateWarps (false);
+    for (int t = 0; t < bash::numTracks; ++t)
+    {
+        auto& w = warps[(size_t) t];
+        std::shared_ptr<bash::SampleData> ready;
+        double ratio = 1.0;
+        {
+            std::lock_guard<std::mutex> g (w.m);
+            ready.swap (w.ready);
+            ratio = w.readyRatio;
+        }
+        if (ready != nullptr && std::abs (ratio - w.requested) < 1.0e-4)
+            installWarped (t, ready, ratio);
+    }
+
     // free replaced samples once the audio thread has moved past them (or isn't running)
     const auto now = engine.blocksProcessed();
     graveyard.erase (std::remove_if (graveyard.begin(), graveyard.end(),

@@ -9,6 +9,7 @@
 #include "bash/Drums.h"
 
 #include <array>
+#include <mutex>
 
 class BashProcessor : public juce::AudioProcessor, private juce::Timer
 {
@@ -63,12 +64,23 @@ public:
     uint8_t lockMask (int track, uint32_t index);
 
     // samples and slices
-    juce::String loadSample (int track, const juce::File&, bool autoSlice = true);  // returns error or empty
+    juce::String loadSample (int track, const juce::File&, bool autoSlice = true, double knownBpm = 0.0);  // returns error or empty
     void clearSample (int track);
     void setSlices (int track, std::vector<uint32_t>);
     std::vector<uint32_t> slices (int track)           { return engine.slices (track); }
     const bash::SampleData* sample (int track) const   { return engine.sample (track); }
     std::shared_ptr<const bash::SampleData> sampleRef (int track) const { return sampleSlots[(size_t) track]; }
+
+    // Warp: slicer samples are time-stretched (pitch kept) from their own tempo to the session tempo
+    bool   warpOn (int track) const;
+    double sourceBpm (int track) const                 { return warps[(size_t) track].sourceBpm; }
+    void   setSourceBpm (int track, double bpm);        // the user corrects the detected tempo
+    double warpTargetBpm() const                        { return exportBpm(); }
+    double warpRatio (int track) const                  { return warps[(size_t) track].applied; }
+    bool   warpBusy (int track) const                   { return warps[(size_t) track].requested != warps[(size_t) track].applied; }
+    /** Re-warp any track whose tempo, source tempo or warp switch changed (message thread).
+        synchronous = do it now (tests, session load); otherwise on a background thread. */
+    void   updateWarps (bool synchronous);
     int    playingSlice (int track) const              { return engine.playingSlice (track); }
     double playingFrame (int track) const              { return engine.playingFrame (track); }
     juce::String missingSample (int track) const       { return missingSamples[(size_t) track]; }
@@ -172,7 +184,7 @@ private:
                            *machine, *timbre, *ftype, *aAtk, *aDec, *aSus, *aRel,
                            *mute, *solo, *sendA, *sendB, *lifeRate, *swing, *jitter,
                            *engine, *sliceMode, *winStart, *winSize, *pitchFollow, *tune, *sAttack, *sRelease, *reverse,
-                           *mode, *fill, *autoFill;
+                           *mode, *fill, *autoFill, *warp;
         std::array<FxPtrs, 2> fx;
     };
     std::array<TrackParams, bash::numTracks> tp {};
@@ -185,8 +197,23 @@ private:
 
     juce::AudioFormatManager formats;
     std::array<std::shared_ptr<bash::SampleData>, bash::numTracks> sampleSlots;
+    struct WarpState
+    {
+        std::shared_ptr<bash::SampleData> original;   // the file as decoded
+        double sourceBpm = 120.0;
+        double applied = 1.0, requested = 1.0;        // stretch ratio playing now / asked for
+        std::mutex m;                                  // guards `ready` (background job -> message thread)
+        std::shared_ptr<bash::SampleData> ready;
+        double readyRatio = 1.0;
+    };
+    std::array<WarpState, bash::numTracks> warps;
+    double lastWarpTarget = 0.0;
+    juce::uint32 warpTargetChanged = 0;
+    void installWarped (int t, std::shared_ptr<bash::SampleData>, double ratio);
+    double desiredWarpRatio (int t) const;
     std::array<juce::String, bash::numTracks> missingSamples;
     std::vector<std::pair<std::shared_ptr<bash::SampleData>, uint64_t>> graveyard;
+    juce::ThreadPool warpPool { 1 };   // after `warps`: destroyed (and its jobs finished) first
     bool isPrepared = false;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (BashProcessor)

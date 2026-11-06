@@ -76,6 +76,10 @@ namespace bashui
         juce::Label modeLabel;
         Knob winStart, winSize, tune, attack, release, level, pan;
         juce::ToggleButton pitchFollow { "Pitch follow" }, reverse { "Reverse" };
+        juce::ToggleButton warpButton { "Warp" };
+        juce::Label bpmLabel;                       // the file's tempo, editable
+        juce::TextButton halfButton { "/2" }, doubleButton { "x2" };
+        double shownBpm = -1.0;
 
         std::vector<std::unique_ptr<SliderAttachment>> knobAtts;
         std::unique_ptr<ComboAttachment> modeAtt;

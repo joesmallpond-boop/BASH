@@ -301,6 +301,31 @@ SamplerPanel::SamplerPanel (BashProcessor& p) : proc (p), wave (p)
     }
     addAndMakeVisible (pitchFollow);
     addAndMakeVisible (reverse);
+
+    // Warp: stretch the sample from its own tempo to the session tempo (pitch stays)
+    warpButton.setTooltip ("Warp: time-stretch the sample to the session tempo without changing its pitch");
+    addAndMakeVisible (warpButton);
+    bpmLabel.setEditable (true);
+    bpmLabel.setJustificationType (juce::Justification::centred);
+    bpmLabel.setColour (juce::Label::textColourId, colour::accent);
+    bpmLabel.setColour (juce::Label::backgroundColourId, colour::raised);
+    bpmLabel.setColour (juce::Label::outlineColourId, colour::line);
+    bpmLabel.setFont (juce::FontOptions (13.0f, juce::Font::bold));
+    bpmLabel.setTooltip ("The sample's own tempo (detected). Type a value to correct it.");
+    bpmLabel.onTextChange = [this]
+    {
+        const double v = bpmLabel.getText().retainCharacters ("0123456789.").getDoubleValue();
+        if (v > 0.0) proc.setSourceBpm (track, v);
+        shownBpm = -1.0;
+        refresh();
+    };
+    halfButton.setTooltip ("Half the detected tempo");
+    doubleButton.setTooltip ("Double the detected tempo");
+    halfButton.onClick   = [this] { proc.setSourceBpm (track, proc.sourceBpm (track) * 0.5); shownBpm = -1.0; refresh(); };
+    doubleButton.onClick = [this] { proc.setSourceBpm (track, proc.sourceBpm (track) * 2.0); shownBpm = -1.0; refresh(); };
+    addAndMakeVisible (bpmLabel);
+    addAndMakeVisible (halfButton);
+    addAndMakeVisible (doubleButton);
 }
 
 void SamplerPanel::setTrack (int t)
@@ -319,6 +344,8 @@ void SamplerPanel::setTrack (int t)
         knobAtts.push_back (std::make_unique<SliderAttachment> (apvts, id (pidName), k->slider));
     buttonAtts.push_back (std::make_unique<ButtonAttachment> (apvts, id ("pitchfollow"), pitchFollow));
     buttonAtts.push_back (std::make_unique<ButtonAttachment> (apvts, id ("reverse"), reverse));
+    buttonAtts.push_back (std::make_unique<ButtonAttachment> (apvts, id ("warp"), warpButton));
+    shownBpm = -1.0;
 
     wave.setTrack (t);
     refresh();
@@ -333,10 +360,22 @@ void SamplerPanel::refresh()
     else if (auto ref = proc.sampleRef (track))
         text = juce::File (juce::String (ref->path)).getFileName() + "   |   "
              + juce::String ((int) proc.slices (track).size()) + " slices   |   "
-             + juce::String (ref->numFrames() / ref->sampleRate, 2) + " s";
+             + juce::String (ref->numFrames() / ref->sampleRate, 2) + " s"
+             + (proc.warpOn (track) ? "   |   warped " + juce::String (proc.sourceBpm (track), 1) + " > "
+                                      + juce::String (proc.warpTargetBpm(), 1) + " bpm" + (proc.warpBusy (track) ? " ..." : "")
+                                    : juce::String ("   |   not warped"));
     else
         text = "No sample loaded";
     info.setText (text, juce::dontSendNotification);
+
+    const bool hasSample = proc.sampleRef (track) != nullptr;
+    for (auto* c : std::initializer_list<juce::Component*> { &bpmLabel, &halfButton, &doubleButton }) c->setEnabled (hasSample);
+    const double bpm = proc.sourceBpm (track);
+    if (std::abs (bpm - shownBpm) > 1.0e-6 && ! bpmLabel.isBeingEdited())
+    {
+        shownBpm = bpm;
+        bpmLabel.setText (hasSample ? juce::String (bpm, 2) + " bpm" : "-- bpm", juce::dontSendNotification);
+    }
 }
 
 void SamplerPanel::showMessage (const juce::String& m)
@@ -385,6 +424,13 @@ void SamplerPanel::resized()
     auto mode = area.removeFromLeft (140);
     modeLabel.setBounds (mode.removeFromTop (18));
     modeBox.setBounds (mode.removeFromTop (30));
+    mode.removeFromTop (4);
+    warpButton.setBounds (mode.removeFromTop (24));
+    mode.removeFromTop (4);
+    auto bpmRow = mode.removeFromTop (22);
+    halfButton.setBounds (bpmRow.removeFromLeft (30)); bpmRow.removeFromLeft (4);
+    doubleButton.setBounds (bpmRow.removeFromRight (30)); bpmRow.removeFromRight (4);
+    bpmLabel.setBounds (bpmRow);
     area.removeFromLeft (8);
     for (auto* k : { &winStart, &winSize, &tune, &attack, &release, &level, &pan })
     {
