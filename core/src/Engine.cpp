@@ -437,6 +437,8 @@ namespace bash
         for (int i = 0; i < n; ++i) { l[i] *= globals.master; r[i] *= globals.master; }
         if (globals.granular.on)
             granular.process (l, r, n, globals.granular, currentScale, bpm, ppq, run);
+        else
+            granular.capture (l, r, n, globals.granular.freeze);
         if (globals.limiter)
             limiter.process (l, r, n);
     }

@@ -416,6 +416,73 @@ static void testLibrary()
     CHECK (peak > 0.05f);
 }
 
+static void testGranularSection()
+{
+    BashProcessor p;
+    p.setPlayConfigDetails (0, 2, 48000.0, 512);
+    p.prepareToPlay (48000.0, 512);
+    p.apvts.getParameter ("sync")->setValueNotifyingHost (0.0f);
+    p.apvts.getParameter ("play")->setValueNotifyingHost (1.0f);
+    for (int t = 1; t <= 8; ++t) p.apvts.getParameter ("t" + juce::String (t) + "_on")->setValueNotifyingHost (t == 1 ? 1.0f : 0.0f);
+    CHECK (value (p, "g_on") == 0.0f);   // off by default: the rest of BASH! is untouched
+
+    juce::AudioBuffer<float> buf (2, 512);
+    juce::MidiBuffer midi;
+    auto runSeconds = [&] (double sec)
+    {
+        double e = 0;
+        for (int b = 0; b < (int) (sec * 48000 / 512); ++b) { midi.clear(); p.processBlock (buf, midi); e += buf.getRMSLevel (0, 0, 512); }
+        return e;
+    };
+    runSeconds (3.0);
+    p.apvts.getParameter ("g_on")->setValueNotifyingHost (1.0f);
+    p.apvts.getParameter ("g_h1_pitch")->setValueNotifyingHost (p.apvts.getParameter ("g_h1_pitch")->convertTo0to1 (12.0f));
+    const double wetLevel = runSeconds (3.0);
+    CHECK (wetLevel > 0.0);
+
+    // record a take, export it, send it to a slicer track
+    p.setGranularRecording (true);
+    runSeconds (1.0);
+    p.setGranularRecording (false);
+    CHECK (std::abs (p.granularTakeSeconds() - 1.0) < 0.03);
+    const auto take = p.exportGranularTake();
+    CHECK (take.existsAsFile() && take.getSize() > 100000);
+    CHECK (p.granularTakeToSlicer (4).isEmpty());
+    CHECK (p.engineType (4) == bash::EngineType::Slicer && p.sample (4) != nullptr);
+    take.deleteFile();
+    p.granularTakeToGrains();
+    CHECK (value (p, "g_freeze") == 1.0f);
+
+    // the granular die only rolls granular settings (and leaves on / mix / out alone)
+    std::vector<std::pair<juce::String, float>> before;
+    for (auto* prm : p.getParameters()) if (auto* rp = dynamic_cast<juce::RangedAudioParameter*> (prm)) before.emplace_back (rp->getParameterID(), rp->getValue());
+    p.dice.chaos = 1.0f;
+    p.rollGranularDice();
+    int changed = 0;
+    for (const auto& [id, v] : before)
+    {
+        if (std::abs (value (p, id) - v) < 1.0e-6f) continue;
+        if (BashProcessor::isGranularDiceParam (id)) ++changed;
+        else { CHECK (false); std::printf ("  granular die changed %s\n", id.toRawUTF8()); }
+    }
+    CHECK (changed >= 20);
+    CHECK (p.undoGranularDice());
+    for (const auto& [id, v] : before) CHECK (std::abs (value (p, id) - v) < 1.0e-6f);
+
+    // the mix render goes through the section; a track render doesn't
+    p.exportBars = 1;
+    const auto mixWithGrains = p.exportAudio (-1);
+    CHECK (mixWithGrains.existsAsFile());
+    mixWithGrains.deleteFile();
+
+    // saved with the session
+    juce::MemoryBlock state;
+    p.getStateInformation (state);
+    BashProcessor q;
+    q.setStateInformation (state.getData(), (int) state.getSize());
+    CHECK (value (q, "g_on") == 1.0f);
+}
+
 int main()
 {
     juce::ScopedJuceInitialiser_GUI init;
@@ -427,6 +494,7 @@ int main()
     testStepMode();
     testWarp();
     testLibrary();
+    testGranularSection();
     std::printf ("%d plugin checks, %d failures\n", checks, failures);
     return failures == 0 ? 0 : 1;
 }

@@ -67,7 +67,7 @@ namespace bash
         maxBlock = std::max (1, block);
         ringLen = (size_t) (bufferSeconds * sr);
         ringL.assign (ringLen, 0.0f); ringR.assign (ringLen, 0.0f);
-        writePos = 0;
+        writePos = 0; filled = 0;
         for (auto* v : { &wetL, &wetR, &dryL, &dryR }) v->assign ((size_t) maxBlock, 0.0f);
         for (auto& c : combs) { c.buf.assign ((size_t) (sr / 15.0), 0.0f); c.w = 0; c.lp = 0.0f; }
         dlyL.assign ((size_t) (sr * 4.5), 0.0f); dlyR.assign (dlyL.size(), 0.0f); dlyW = 0;
@@ -143,7 +143,9 @@ namespace bash
 
         const double headP = headPos[(size_t) h].load();
         const double pos = std::clamp (headP + hp.posSpray * (unit() * 2.0f - 1.0f) * 0.5, 0.0, 1.0);
-        double ago = (1.0 - pos) * (double) ringLen;
+        // positions span the audio actually captured (the whole ring once it's full)
+        const double span = (double) std::max<size_t> (filled, (size_t) std::min<double> ((double) ringLen, sr * 0.5));
+        double ago = (1.0 - pos) * span;
         if (! p.freeze)
         {
             // keep the grain inside written audio: it mustn't catch the write head or be overwritten
@@ -170,10 +172,30 @@ namespace bash
         g->gr = std::sin (a) * 1.41421356f * hp.level * norm;
     }
 
+    void GranularEngine::capture (const float* l, const float* r, int n, bool freeze)
+    {
+        if (freeze || ringLen <= 1) return;
+        const size_t binSize = std::max<size_t> (1, ringLen / overviewBins);
+        for (int i = 0; i < n; ++i)
+        {
+            ringL[writePos] = l[i]; ringR[writePos] = r[i];
+            binPeak = std::max ({ binPeak, std::abs (l[i]), std::abs (r[i]) });
+            writePos = (writePos + 1) % ringLen;
+            if (writePos % binSize == 0)
+            {
+                const int b = (int) ((writePos / binSize + overviewBins - 1) % overviewBins);
+                bins[(size_t) b].store (std::min (1.0f, binPeak));
+                writeBin.store (b);
+                binPeak = 0.0f;
+            }
+        }
+        filled = std::min (ringLen, filled + (size_t) n);
+    }
+
     void GranularEngine::copyBufferFrom (const GranularEngine& o)
     {
         if (o.ringLen != ringLen) return;
-        ringL = o.ringL; ringR = o.ringR; writePos = o.writePos;
+        ringL = o.ringL; ringR = o.ringR; writePos = o.writePos; filled = o.filled;
         for (int k = 0; k < overviewBins; ++k) bins[(size_t) k].store (o.bins[(size_t) k].load());
         writeBin.store (o.writeBin.load());
     }
@@ -207,6 +229,7 @@ namespace bash
                 const size_t dst = (writePos + ringLen - len + i) % ringLen;
                 ringL[dst] = takeL[tl - len + i]; ringR[dst] = takeR[tl - len + i];
             }
+            filled = std::max (filled, len);
             const size_t binSize = std::max<size_t> (1, ringLen / overviewBins);
             for (int k = 0; k < overviewBins; ++k)
             {
@@ -220,23 +243,7 @@ namespace bash
         // 1. capture the master
         std::copy (l, l + n, dryL.begin());
         std::copy (r, r + n, dryR.begin());
-        const size_t binSize = std::max<size_t> (1, ringLen / overviewBins);
-        if (! p.freeze)
-        {
-            for (int i = 0; i < n; ++i)
-            {
-                ringL[writePos] = l[i]; ringR[writePos] = r[i];
-                binPeak = std::max ({ binPeak, std::abs (l[i]), std::abs (r[i]) });
-                writePos = (writePos + 1) % ringLen;
-                if (writePos % binSize == 0)
-                {
-                    const int b = (int) ((writePos / binSize + overviewBins - 1) % overviewBins);
-                    bins[(size_t) b].store (std::min (1.0f, binPeak));
-                    writeBin.store (b);
-                    binPeak = 0.0f;
-                }
-            }
-        }
+        capture (l, r, n, p.freeze);
         maxBlockWritten = p.freeze ? 0 : n;
 
         // 2. playheads: scan, drift, spawn

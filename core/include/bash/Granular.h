@@ -85,6 +85,9 @@ namespace bash
         /** In place: l/r carry the master in and the section's output out. Audio thread. */
         void process (float* l, float* r, int n, const GranularParams&, const Scale&, double bpm, double ppq, bool running);
         void reset();
+        /** While the section is off: keep the capture buffer listening (cheap), so there's
+            audio to play with the moment it's switched on. */
+        void capture (const float* l, const float* r, int n, bool freeze);
 
         // --- UI (any thread) ---
         /** Buffer overview, oldest (k = 0) to newest; peak 0..1. */
@@ -131,7 +134,7 @@ namespace bash
         int    maxBlock = 512;
         int    maxBlockWritten = 0;   // samples written to the ring this block (0 when frozen)
         std::vector<float> ringL, ringR;
-        size_t ringLen = 1, writePos = 0;
+        size_t ringLen = 1, writePos = 0, filled = 0;   // filled: how much real audio the ring holds
         uint32_t s = 0x2545F491;
 
         std::array<Grain, maxGrains> grains {};
