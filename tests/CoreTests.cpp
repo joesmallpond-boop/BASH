@@ -8,6 +8,7 @@
 #include "bash/Fx.h"
 #include "bash/Modulation.h"
 #include "bash/StepSeq.h"
+#include "bash/Warp.h"
 
 #include <cmath>
 #include <mutex>
@@ -1271,6 +1272,91 @@ static void testStepSequencer()
     CHECK (eng.stepLanePosition (2, 0) == -1);
 }
 
+// ---- warp ---------------------------------------------------------------------------
+namespace
+{
+    // kick on every beat, hats on the off-beats: a simple loop at a known tempo
+    SampleData makeBeat (double bpm, int beats, double sr, double extraSeconds)
+    {
+        SampleData d; d.sampleRate = sr;
+        const int n = (int) std::lround (beats * 60.0 / bpm * sr + extraSeconds * sr);
+        d.left.assign ((size_t) n, 0.0f);
+        uint32_t seed = 3;
+        for (int b = 0; b < beats * 2; ++b)
+        {
+            const int start = (int) std::lround (b * 30.0 / bpm * sr);
+            const bool kick = b % 2 == 0;
+            const int len = (int) (sr * (kick ? 0.18 : 0.05));
+            for (int i = 0; i < len && start + i < n; ++i)
+            {
+                const double t = i / sr;
+                float y;
+                if (kick) y = 0.8f * (float) (std::sin (2.0 * 3.14159265 * (55.0 + 90.0 * std::exp (-t * 40.0)) * t) * std::exp (-t * 18.0));
+                else { seed = seed * 1664525u + 1013904223u; y = 0.25f * ((float) (seed >> 8) / 8388608.0f - 1.0f) * (float) std::exp (-t * 70.0); }
+                d.left[(size_t) (start + i)] += y;
+            }
+        }
+        d.right = d.left;
+        return d;
+    }
+
+    double rms (const std::vector<float>& x)
+    {
+        double s = 0; for (float v : x) s += (double) v * v; return std::sqrt (s / std::max<size_t> (1, x.size()));
+    }
+}
+
+static void testWarp()
+{
+    using namespace warp;
+    // loops snap to their exact length
+    auto loop100 = makeBeat (100.0, 16, 44100.0, 0.0);
+    auto e = detectTempo (loop100);
+    CHECK (std::abs (e.bpm - 100.0) < 0.01 && e.beats == 16);
+    auto loop174 = makeBeat (174.0, 32, 48000.0, 0.0);
+    CHECK (std::abs (detectTempo (loop174).bpm - 174.0) < 0.05);
+
+    // not a clean loop: the beat itself is found (within 2%)
+    for (double bpm : { 87.0, 112.0, 128.0, 140.0 })
+    {
+        auto d = makeBeat (bpm, 16, 48000.0, 0.37);
+        const double got = detectTempo (d).bpm;
+        if (std::abs (got / bpm - 1.0) > 0.02) std::printf ("  tempo %.1f detected as %.2f\n", bpm, got);
+        CHECK (std::abs (got / bpm - 1.0) <= 0.02);
+    }
+
+    // stretch: exact length, pitch kept, level kept
+    SampleData sine; sine.sampleRate = 48000.0;
+    for (int i = 0; i < 96000; ++i) sine.left.push_back (0.5f * (float) std::sin (2.0 * 3.14159265 * 440.0 * i / 48000.0));
+    sine.right = sine.left;
+    for (double ratio : { 0.8, 1.25, 1.6 })
+    {
+        auto s2 = stretch (sine, ratio);
+        CHECK ((int) s2->numFrames() == (int) std::lround (96000 * ratio));
+        int crossings = 0;
+        for (size_t i = 4800; i + 1 < s2->left.size() - 4800; ++i) if (s2->left[i] < 0 && s2->left[i + 1] >= 0) ++crossings;
+        const double hz = crossings / ((s2->left.size() - 9600) / 48000.0);
+        CHECK (std::abs (hz - 440.0) < 5.0);
+        const double level = 20.0 * std::log10 (rms (s2->left) / rms (sine.left));
+        CHECK (std::abs (level) < 1.5);
+    }
+
+    // a 100 bpm loop warped to 125: kicks land on the 125 bpm grid
+    auto w = stretch (loop100, ratioFor (100.0, 125.0));
+    CHECK (std::abs ((double) w->numFrames() - loop100.numFrames() * 0.8) <= 1.0);
+    for (int beat = 1; beat < 15; ++beat)
+    {
+        const int expected = (int) std::lround (beat * 60.0 / 125.0 * 44100.0);
+        int onset = -1;
+        for (int i = expected - 1500; i < expected + 1500; ++i)
+            if (std::abs (w->left[(size_t) i]) > 0.3f) { onset = i; break; }
+        const double errMs = onset < 0 ? 1e9 : std::abs (onset - expected) / 44.1;
+        if (errMs > 12.0) std::printf ("  beat %d off by %.1f ms\n", beat, errMs);
+        CHECK (errMs <= 12.0);
+    }
+    CHECK (stretch (loop100, 1.0)->left == loop100.left);   // no-op at the same tempo
+}
+
 int main()
 {
     testDeterminism();
@@ -1300,6 +1386,7 @@ int main()
     testOfflineRender();
     testNoDronesOrLopsidedTails();
     testStepSequencer();
+    testWarp();
     std::printf ("%d checks, %d failures\n", checks, failures);
     return failures == 0 ? 0 : 1;
 }
