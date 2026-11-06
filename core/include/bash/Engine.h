@@ -8,6 +8,7 @@
 #include "bash/Fx.h"
 #include "bash/Modulation.h"
 #include "bash/MachineSynth.h"
+#include "bash/Micro.h"
 #include "bash/Scale.h"
 #include "bash/Sequencer.h"
 #include "bash/Slices.h"
@@ -69,6 +70,7 @@ namespace bash
 
         std::array<FxParams, 2> returns {};          // return A / B effect
         std::array<float, 2>    returnLevel { 0.8f, 0.8f };
+        MicroParams   micro {};           // MICRO: everything from the tracks + returns, before the master
         GlueParams    glue {};            // master bus compressor (before the limiter)
         LimiterParams limiter {};
         std::array<LfoParams, 2> lfo {};
@@ -135,6 +137,8 @@ namespace bash
         /** Master gain reduction in dB (glue compressor, limiter), for the meters. */
         float glueReduction() const noexcept    { return glueMeter.load(); }
         float limiterReduction() const noexcept { return limiterMeter.load(); }
+        MicroEngine& micro() noexcept { return microFx; }
+        const MicroEngine& micro() const noexcept { return microFx; }
 
         /** Step sequencer pattern for a track: lock stepMutex(t) while reading or editing. */
         StepPattern&    stepPattern (int t)  { return stepStores[(size_t) t].pattern; }
@@ -244,6 +248,7 @@ namespace bash
         std::array<std::vector<float>, 2> retL, retR;
         std::array<std::array<FxSlot, 2>, numTracks> trackFx;
         std::array<FxSlot, 2> returnFx;
+        MicroEngine microFx;
         GlueCompressor glue;
         Limiter limiter;
         std::atomic<float> glueMeter { 0.0f }, limiterMeter { 0.0f };

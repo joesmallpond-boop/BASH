@@ -5,6 +5,7 @@ add_library(bash_core STATIC
     src/Modulation.cpp
     src/Engine.cpp
     src/Fx.cpp
+    src/Micro.cpp
     src/Scale.cpp
     src/Sequencer.cpp
     src/Slices.cpp

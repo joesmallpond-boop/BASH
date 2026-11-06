@@ -56,6 +56,7 @@ namespace bash
         for (int k = 0; k < 2; ++k) { retL[(size_t) k].assign ((size_t) maxBlock, 0.0f); retR[(size_t) k].assign ((size_t) maxBlock, 0.0f); }
         for (auto& tf : trackFx) for (auto& f : tf) f.prepare (sr, maxBlock);
         for (auto& f : returnFx) f.prepare (sr, maxBlock);
+        microFx.prepare (sr, maxBlock);
         glue.prepare (sr);
         limiter.prepare (sr);
         events.reserve (256);
@@ -407,6 +408,19 @@ namespace bash
             mixTrack (t, l, r, n, offsetInBlock, bpm);
         }
 
+        // returns
+        for (int k = 0; k < 2; ++k)
+        {
+            if (globals.returns[(size_t) k].type == FxType::None) continue;
+            returnFx[(size_t) k].process (retL[(size_t) k].data(), retR[(size_t) k].data(), n, globals.returns[(size_t) k], bpm);
+            const float g = globals.returnLevel[(size_t) k];
+            for (int i = 0; i < n; ++i) { l[i] += retL[(size_t) k][(size_t) i] * g; r[i] += retR[(size_t) k][(size_t) i] * g; }
+        }
+
+        // MICRO: everything from the tracks and returns runs through it
+        if (globals.micro.on)
+            microFx.process (l, r, n, globals.micro, currentScale, bpm, ppq, run);
+
         // UI audition of a kit cell (goes through the master bus)
         const int req = auditionRequest.exchange (-1);
         if (req >= 0)
@@ -420,15 +434,6 @@ namespace bash
         }
         if (! auditionPlayer.isSilent())
             auditionPlayer.render (l, r, 0, n);
-
-        // returns
-        for (int k = 0; k < 2; ++k)
-        {
-            if (globals.returns[(size_t) k].type == FxType::None) continue;
-            returnFx[(size_t) k].process (retL[(size_t) k].data(), retR[(size_t) k].data(), n, globals.returns[(size_t) k], bpm);
-            const float g = globals.returnLevel[(size_t) k];
-            for (int i = 0; i < n; ++i) { l[i] += retL[(size_t) k][(size_t) i] * g; r[i] += retR[(size_t) k][(size_t) i] * g; }
-        }
 
         // master: glue compressor, fader, limiter
         glue.process (l, r, n, globals.glue);
@@ -630,6 +635,7 @@ namespace bash
             for (int t = 0; t < numTracks; ++t)
                 if (t != o.track) { e->tracks[(size_t) t].enabled = false; e->tracks[(size_t) t].sendA = e->tracks[(size_t) t].sendB = 0.0f; }
             e->tracks[(size_t) o.track].enabled = true;
+            g.micro.on = false;
             g.glue.on = false;
             g.limiter.on = false;
             g.master  = 1.0f;

@@ -1443,6 +1443,172 @@ static void testLibrary()
 }
 
 // ---- master: glue compressor and limiter -----------------------------------------
+
+static void testMicro()
+{
+    const double sr = 48000.0; const int bs = 128;
+    Scale sc (0, 0);
+    // a source: plucks every half beat at 120 bpm (one every 0.25 s)
+    auto source = [&] (long long i) -> float
+    {
+        const long long k = i % 12000;
+        return (float) (0.5 * std::exp (-(double) k / 1500.0) * std::sin (2.0 * 3.141592653589793 * 330.0 * (double) i / sr));
+    };
+    auto run = [&] (MicroEngine& m, MicroParams p, double seconds, bool feed, double* wetE = nullptr, double* peakOut = nullptr, long long* clock = nullptr)
+    {
+        std::vector<float> l (bs), r (bs);
+        long long t0 = clock ? *clock : 0;
+        double ppq = t0 * 2.0 / sr;
+        bool finite = true; double e = 0, pk = 0;
+        for (int b = 0; b < (int) (seconds * sr / bs); ++b)
+        {
+            for (int i = 0; i < bs; ++i) l[(size_t) i] = r[(size_t) i] = feed ? source (t0 + b * bs + i) : 0.0f;
+            m.process (l.data(), r.data(), bs, p, sc, 120.0, ppq, true);
+            ppq += bs * 2.0 / sr;
+            for (int i = 0; i < bs; ++i)
+            {
+                if (! std::isfinite (l[(size_t) i]) || ! std::isfinite (r[(size_t) i])) finite = false;
+                e += (double) l[(size_t) i] * l[(size_t) i] + (double) r[(size_t) i] * r[(size_t) i];
+                pk = std::max (pk, (double) std::max (std::abs (l[(size_t) i]), std::abs (r[(size_t) i])));
+            }
+        }
+        if (clock) *clock = t0 + (long long) (seconds * sr / bs) * bs;
+        if (wetE) *wetE = e;
+        if (peakOut) *peakOut = pk;
+        return finite;
+    };
+
+    // every algorithm and variation: makes wet sound, stays finite and bounded, keeps ringing after the input stops
+    for (int a = 0; a < (int) MicroAlgo::count; ++a)
+        for (int v = 0; v < 4; ++v)
+        {
+            MicroEngine m; m.prepare (sr, bs);
+            MicroParams p; p.on = true; p.algo = (MicroAlgo) a; p.variation = v; p.mix = 1.0f; p.space = 0.0f;
+            p.activity = 0.6f; p.repeats = 0.6f;
+            long long clk = 0; double e = 0, pk = 0;
+            CHECK (run (m, p, 3.0, true, &e, &pk, &clk));
+            CHECK (e > 1.0);
+            if (e <= 1.0) std::printf ("  micro %s %c: no wet\n", microAlgoName ((MicroAlgo) a), 'A' + v);
+            CHECK (pk < 4.0);
+            CHECK (std::string (microVariationText ((MicroAlgo) a, v)).size() > 3);
+            double tail = 0;
+            CHECK (run (m, p, 0.4, false, &tail, nullptr, &clk));
+            if (a != (int) MicroAlgo::Interrupt && a != (int) MicroAlgo::Strum && a != (int) MicroAlgo::Blocks && a != (int) MicroAlgo::Arp)
+            { CHECK (tail > 1.0e-4); if (tail <= 1.0e-4) std::printf ("  micro %s %c: no tail %g\n", microAlgoName ((MicroAlgo) a), 'A' + v, tail); }
+        }
+    // fuzz: random settings changing every block stay finite
+    {
+        MicroEngine m; m.prepare (sr, bs);
+        uint32_t s = 99;
+        auto rnd = [&] { s = s * 1664525u + 1013904223u; return (float) (s >> 8) / 16777216.0f; };
+        long long clk = 0; bool ok = true;
+        for (int k = 0; k < 400; ++k)
+        {
+            MicroParams p; p.on = true;
+            p.algo = (MicroAlgo) (int) (rnd() * 10.99f); p.variation = (int) (rnd() * 3.99f);
+            p.activity = rnd(); p.repeats = rnd(); p.shape = rnd(); p.time = (int) (rnd() * 5.99f);
+            p.filter = rnd(); p.reso = rnd(); p.modRate = rnd(); p.modDepth = rnd(); p.space = rnd(); p.reverbType = (int) (rnd() * 3.99f);
+            p.decay = rnd(); p.mix = rnd(); p.reverse = (MicroReverse) (int) (rnd() * 2.99f); p.hold = rnd() < 0.2f;
+            double pk = 0;
+            ok = ok && run (m, p, 0.05, true, nullptr, &pk, &clk) && pk < 8.0;
+        }
+        CHECK (ok);
+    }
+    // mix 0, no looper: the input passes untouched
+    {
+        MicroEngine m; m.prepare (sr, bs);
+        MicroParams p; p.on = true; p.mix = 0.0f;
+        std::vector<float> l (bs), r (bs);
+        for (int i = 0; i < bs; ++i) l[(size_t) i] = r[(size_t) i] = source (i);
+        m.process (l.data(), r.data(), bs, p, sc, 120.0, 0.0, true);
+        float err = 0; for (int i = 0; i < bs; ++i) err = std::max (err, std::abs (l[(size_t) i] - source (i)));
+        CHECK (err < 1.0e-6f);
+    }
+    // hold freezes the history: the wet keeps going with no input for a long time
+    {
+        MicroEngine m; m.prepare (sr, bs);
+        MicroParams p; p.on = true; p.algo = MicroAlgo::Haze; p.mix = 1.0f; p.space = 0.0f;
+        long long clk = 0;
+        run (m, p, 2.0, true, nullptr, nullptr, &clk);
+        p.hold = true;
+        double e = 0;
+        run (m, p, 3.0, false, nullptr, nullptr, &clk);
+        run (m, p, 1.0, false, &e, nullptr, &clk);
+        CHECK (e > 1.0);
+    }
+    // the waveform view follows the input; voices report positions
+    {
+        MicroEngine m; m.prepare (sr, bs);
+        MicroParams p; p.on = true; p.algo = MicroAlgo::Mosaic; p.mix = 1.0f;
+        long long clk = 0;
+        run (m, p, 2.0, true, nullptr, nullptr, &clk);
+        float recent = 0; for (int k = MicroEngine::viewBins - 40; k < MicroEngine::viewBins; ++k) recent = std::max (recent, m.inputOverview (k));
+        CHECK (recent > 0.05f);
+        CHECK (m.inputOverview (0) < 0.01f);              // 8 s ago: nothing yet
+        CHECK (m.activeVoices() > 0);
+        CHECK (m.voicePosition (0) > 0.5f);
+    }
+    // looper: record, play back, overdub, undo, stop, erase, quantize
+    {
+        MicroEngine m; m.prepare (sr, bs);
+        MicroParams p; p.on = true; p.mix = 0.0f; p.loopLevel = 1.0f;
+        long long clk = 0;
+        CHECK (m.loopState() == MicroEngine::LoopState::Empty);
+        m.loopPress(); run (m, p, 0.01, true, nullptr, nullptr, &clk);
+        CHECK (m.loopState() == MicroEngine::LoopState::Recording);
+        run (m, p, 1.0, true, nullptr, nullptr, &clk);
+        m.loopPress(); run (m, p, 0.01, false, nullptr, nullptr, &clk);
+        CHECK (m.loopState() == MicroEngine::LoopState::Playing);
+        CHECK (std::abs (m.loopSeconds() - 1.0) < 0.02);
+        double e = 0;
+        run (m, p, 1.0, false, &e, nullptr, &clk);
+        CHECK (e > 10.0);                                 // the loop plays with no input
+        std::vector<float> a, b; m.copyLoop (a, b);
+        CHECK (std::abs ((double) a.size() / sr - m.loopSeconds()) < 1.0e-6 && ! a.empty());
+        // overdub doubles it, undo brings it back
+        m.loopPress(); run (m, p, 0.01, false, nullptr, nullptr, &clk);
+        CHECK (m.loopState() == MicroEngine::LoopState::Overdubbing);
+        run (m, p, 1.1, true, nullptr, nullptr, &clk);
+        m.loopPress(); run (m, p, 0.01, false, nullptr, nullptr, &clk);
+        double eDub = 0; run (m, p, 1.0, false, &eDub, nullptr, &clk);
+        CHECK (eDub > e * 1.5);
+        CHECK (m.canUndo());
+        m.loopUndo(); run (m, p, 0.01, false, nullptr, nullptr, &clk);
+        double eUndo = 0; run (m, p, 1.0, false, &eUndo, nullptr, &clk);
+        CHECK (std::abs (eUndo - e) < e * 0.2);
+        m.loopStop(); run (m, p, 0.01, false, nullptr, nullptr, &clk);
+        CHECK (m.loopState() == MicroEngine::LoopState::Stopped);
+        double eStop = 0; run (m, p, 0.5, false, &eStop, nullptr, &clk);
+        CHECK (eStop < 1.0e-9);
+        m.loopErase(); run (m, p, 0.01, false, nullptr, nullptr, &clk);
+        CHECK (m.loopState() == MicroEngine::LoopState::Empty && m.loopSeconds() == 0.0);
+        // quantize: 1.2 s at 120 bpm (0.5 s beats) rounds to 1.0 s
+        p.quantize = true;
+        m.loopPress(); run (m, p, 1.2, true, nullptr, nullptr, &clk);
+        m.loopPress(); run (m, p, 0.01, false, nullptr, nullptr, &clk);
+        CHECK (std::abs (m.loopSeconds() - 1.0) < 0.001);
+        // looper-only: effects off, the loop still plays; burst records while held
+        m.loopErase(); run (m, p, 0.01, false, nullptr, nullptr, &clk);
+        p.quantize = false; p.loopMode = LoopMode::LooperOnly;
+        m.burst (true); run (m, p, 0.5, true, nullptr, nullptr, &clk);
+        CHECK (m.loopState() == MicroEngine::LoopState::Recording);
+        m.burst (false); run (m, p, 0.01, false, nullptr, nullptr, &clk);
+        CHECK (m.loopState() == MicroEngine::LoopState::Playing);
+        double eb = 0; run (m, p, 0.5, false, &eb, nullptr, &clk);
+        CHECK (eb > 1.0);
+    }
+    // in the engine: on, it sits between the tracks and the master
+    {
+        Engine e; e.prepare (48000.0, 512);
+        e.global().micro.on = true; e.global().micro.mix = 1.0f;
+        std::vector<float> l (512), r (512);
+        Transport tp;
+        bool finite = true;
+        for (int b = 0; b < 100; ++b) { std::vector<MidiOut> mo; e.process (l.data(), r.data(), 512, tp, mo); for (float v : l) finite = finite && std::isfinite (v); }
+        CHECK (finite);
+    }
+}
+
 static void testMasterDynamics()
 {
     auto runGlue = [] (GlueParams p, double hz, float amp, double seconds = 1.5)
@@ -1526,6 +1692,7 @@ int main()
     testWarp();
     testLibrary();
     testMasterDynamics();
+    testMicro();
     std::printf ("%d checks, %d failures\n", checks, failures);
     return failures == 0 ? 0 : 1;
 }
