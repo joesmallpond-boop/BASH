@@ -102,6 +102,14 @@ public:
     float glueReduction() const noexcept    { return engine.glueReduction(); }
     float limiterReduction() const noexcept { return engine.limiterReduction(); }
 
+    // MICRO
+    bash::MicroEngine& micro() noexcept               { return engine.micro(); }
+    juce::File exportMicroLoop();                      // the looper's loop as a WAV (empty File if none)
+    void rollMicro();                                  // the MICRO die: a new effect / variation / tone
+    static constexpr const char* microParamIds[] = { "m_on", "m_algo", "m_var", "m_act", "m_rep", "m_shape", "m_time", "m_filter", "m_reso",
+        "m_modrate", "m_moddepth", "m_space", "m_verb", "m_decay", "m_mix", "m_level", "m_rev", "m_hold",
+        "m_looplevel", "m_loopfade", "m_loopspeed", "m_looprev", "m_quant", "m_loopmode" };
+
     // factory library (rendered to disk in the background on first run)
     FactoryLibrary& library()                          { return *factoryLibrary; }
     /** Load library kit k onto the pads; optionally its starter beat onto `track` (step mode). */
@@ -169,6 +177,7 @@ private:
     FxPtrs fxPtrs (const juce::String& prefix);
     static bash::FxParams fxFrom (const FxPtrs&);
     FxPtrs retA, retB;
+    std::vector<std::atomic<float>*> microP;
     std::atomic<float> *pLimDrive = nullptr, *pLimCeil = nullptr, *pLimRel = nullptr, *pGlueOn = nullptr, *pGlueThr = nullptr,
                        *pGlueRatio = nullptr, *pGlueAtt = nullptr, *pGlueRel = nullptr, *pGlueMakeup = nullptr, *pGlueMix = nullptr, *pGlueHpf = nullptr;
     std::atomic<float> *pLimiter = nullptr, *pRetALevel = nullptr, *pRetBLevel = nullptr;

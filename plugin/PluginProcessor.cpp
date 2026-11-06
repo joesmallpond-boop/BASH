@@ -168,6 +168,40 @@ APVTS::ParameterLayout BashProcessor::createLayout()
     global->addChild (std::make_unique<AudioParameterChoice> (ParameterID { "glue_hpf", 1 }, "Glue Sidechain HPF", names (bash::glueHpfNames()), 1));
     layout.add (std::move (global));
 
+    // MICRO (between the tracks and the master)
+    {
+        auto micro = std::make_unique<AudioProcessorParameterGroup> ("micro", "MICRO", "|");
+        StringArray algos; for (int i = 0; i < (int) bash::MicroAlgo::count; ++i) algos.add (bash::microAlgoName ((bash::MicroAlgo) i));
+        StringArray times; for (auto& t : bash::microTimes()) times.add (t.first);
+        StringArray speeds; for (auto& t : bash::microLoopSpeeds()) speeds.add (t.first);
+        auto unit = [&] (const char* id, const char* nm, float def) { micro->addChild (floatParam (ParameterID { id, 1 }, nm, NormalisableRange<float> (0.0f, 1.0f), def, 2)); };
+        micro->addChild (std::make_unique<AudioParameterBool> (ParameterID { "m_on", 1 }, "MICRO On", false));
+        micro->addChild (std::make_unique<AudioParameterChoice> (ParameterID { "m_algo", 1 }, "MICRO Effect", algos, 0));
+        micro->addChild (std::make_unique<AudioParameterChoice> (ParameterID { "m_var", 1 }, "MICRO Variation", StringArray { "A", "B", "C", "D" }, 0));
+        unit ("m_act", "MICRO Activity", 0.5f);
+        unit ("m_rep", "MICRO Repeats", 0.5f);
+        unit ("m_shape", "MICRO Shape", 0.3f);
+        micro->addChild (std::make_unique<AudioParameterChoice> (ParameterID { "m_time", 1 }, "MICRO Time", times, 2));
+        unit ("m_filter", "MICRO Filter", 1.0f);
+        unit ("m_reso", "MICRO Resonance", 0.1f);
+        unit ("m_modrate", "MICRO Mod Rate", 0.3f);
+        unit ("m_moddepth", "MICRO Mod Depth", 0.0f);
+        unit ("m_space", "MICRO Space", 0.25f);
+        micro->addChild (std::make_unique<AudioParameterChoice> (ParameterID { "m_verb", 1 }, "MICRO Reverb", names (bash::microReverbNames()), 1));
+        unit ("m_decay", "MICRO Decay", 0.5f);
+        unit ("m_mix", "MICRO Mix", 0.5f);
+        micro->addChild (floatParam (ParameterID { "m_level", 1 }, "MICRO Level", NormalisableRange<float> (0.0f, 1.5f), 1.0f, 2));
+        micro->addChild (std::make_unique<AudioParameterChoice> (ParameterID { "m_rev", 1 }, "MICRO Reverse", StringArray { "Off", "Reverse", "Alternate" }, 0));
+        micro->addChild (std::make_unique<AudioParameterBool> (ParameterID { "m_hold", 1 }, "MICRO Hold", false));
+        unit ("m_looplevel", "MICRO Loop Level", 0.8f);
+        unit ("m_loopfade", "MICRO Loop Fade", 0.0f);
+        micro->addChild (std::make_unique<AudioParameterChoice> (ParameterID { "m_loopspeed", 1 }, "MICRO Loop Speed", speeds, 2));
+        micro->addChild (std::make_unique<AudioParameterBool> (ParameterID { "m_looprev", 1 }, "MICRO Loop Reverse", false));
+        micro->addChild (std::make_unique<AudioParameterBool> (ParameterID { "m_quant", 1 }, "MICRO Loop Quantize", true));
+        micro->addChild (std::make_unique<AudioParameterChoice> (ParameterID { "m_loopmode", 1 }, "MICRO Loop Mode", StringArray { "Post FX", "Pre FX", "Looper Only" }, 0));
+        layout.add (std::move (micro));
+    }
+
     auto mix = std::make_unique<AudioProcessorParameterGroup> ("mixer", "Mixer", "|");
     addFxParams (*mix, "reta",  "Return A", (int) bash::FxType::Plate, 0.6f, 0.4f);
     addFxParams (*mix, "retb",  "Return B", (int) bash::FxType::TapeDelay, 0.55f, 0.4f);
@@ -292,6 +326,8 @@ BashProcessor::BashProcessor()
                             std::pair { &pGlueAtt, "glue_att" }, std::pair { &pGlueRel, "glue_rel" }, std::pair { &pGlueMakeup, "glue_makeup" },
                             std::pair { &pGlueMix, "glue_mix" }, std::pair { &pGlueHpf, "glue_hpf" } })
         *ptr = apvts.getRawParameterValue (id);
+    for (const char* id : microParamIds)
+        microP.push_back (apvts.getRawParameterValue (id));
 
     for (int t = 0; t < bash::numTracks; ++t)
     {
@@ -405,6 +441,22 @@ void BashProcessor::pullParameters()
     g.glue.makeupDb     = load (pGlueMakeup);
     g.glue.mix          = load (pGlueMix);
     g.glue.sidechainHpf = (int) load (pGlueHpf);
+    {
+        auto m = [this] (int i) { return load (microP[(size_t) i]); };
+        auto& mp = g.micro;
+        mp.on = m (0) > 0.5f;
+        mp.algo = (bash::MicroAlgo) juce::jlimit (0, (int) bash::MicroAlgo::count - 1, (int) m (1));
+        mp.variation = (int) m (2);
+        mp.activity = m (3); mp.repeats = m (4); mp.shape = m (5); mp.time = (int) m (6);
+        mp.filter = m (7); mp.reso = m (8); mp.modRate = m (9); mp.modDepth = m (10);
+        mp.space = m (11); mp.reverbType = (int) m (12); mp.decay = m (13);
+        mp.mix = m (14); mp.level = m (15);
+        mp.reverse = (bash::MicroReverse) juce::jlimit (0, 2, (int) m (16));
+        mp.hold = m (17) > 0.5f;
+        mp.loopLevel = m (18); mp.loopFade = m (19); mp.loopSpeed = (int) m (20);
+        mp.loopReverse = m (21) > 0.5f; mp.quantize = m (22) > 0.5f;
+        mp.loopMode = (bash::LoopMode) juce::jlimit (0, 2, (int) m (23));
+    }
     g.returns[0] = fxFrom (retA);
     g.returns[1] = fxFrom (retB);
     g.returnLevel[0] = load (pRetALevel);
@@ -1505,6 +1557,44 @@ juce::File BashProcessor::exportAudio (int t)
     stream.release();   // the writer owns it now
     writer->writeFromAudioSampleBuffer (buf, 0, buf.getNumSamples());
     return file;
+}
+
+juce::File BashProcessor::exportMicroLoop()
+{
+    std::vector<float> l, r;
+    engine.micro().copyLoop (l, r);
+    if (l.empty()) return {};
+    juce::AudioBuffer<float> buf (2, (int) l.size());
+    buf.copyFrom (0, 0, l.data(), (int) l.size());
+    buf.copyFrom (1, 0, r.data(), (int) r.size());
+    auto file = exportFolder().getChildFile ("BASH MICRO loop " + juce::Time::getCurrentTime().formatted ("%H%M%S") + ".wav");
+    std::unique_ptr<juce::OutputStream> stream (file.createOutputStream().release());
+    if (stream == nullptr) return {};
+    juce::WavAudioFormat wav;
+    std::unique_ptr<juce::AudioFormatWriter> writer (wav.createWriterFor (stream.get(), engine.micro().sampleRate(), 2, 24, {}, 0));
+    if (writer == nullptr) return {};
+    stream.release();
+    writer->writeFromAudioSampleBuffer (buf, 0, buf.getNumSamples());
+    return file;
+}
+
+void BashProcessor::rollMicro()
+{
+    // a new MICRO sound: effect, variation and the tone knobs (never the mix, level or looper)
+    juce::Random rnd;
+    auto set = [this] (const char* id, float v) { if (auto* p = apvts.getParameter (id)) p->setValueNotifyingHost (juce::jlimit (0.0f, 1.0f, v)); };
+    set ("m_algo", rnd.nextFloat());
+    set ("m_var", rnd.nextFloat());
+    for (auto id : { "m_act", "m_rep", "m_shape" }) set (id, rnd.nextFloat());
+    set ("m_time", 0.2f + 0.6f * rnd.nextFloat());
+    set ("m_filter", 0.45f + 0.55f * rnd.nextFloat());
+    set ("m_reso", 0.5f * rnd.nextFloat());
+    set ("m_modrate", rnd.nextFloat());
+    set ("m_moddepth", rnd.nextFloat() < 0.5f ? 0.0f : 0.6f * rnd.nextFloat());
+    set ("m_space", 0.6f * rnd.nextFloat());
+    set ("m_verb", rnd.nextFloat());
+    set ("m_decay", rnd.nextFloat());
+    set ("m_rev", rnd.nextFloat() < 0.6f ? 0.0f : rnd.nextFloat());
 }
 
 // ---- Ableton key lock --------------------------------------------------------------

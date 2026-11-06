@@ -50,6 +50,7 @@ target_sources(BASH PRIVATE
     DrumPanel.cpp
     MixerPanel.cpp
     ModPanel.cpp
+    MicroPanel.cpp
     StepPanel.cpp
     FactoryLibrary.cpp
     ExportUI.cpp)

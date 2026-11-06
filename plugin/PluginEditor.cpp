@@ -266,7 +266,7 @@ void StepView::mouseUp (const juce::MouseEvent& e)
 
 // ============================================================================
 BashView::BashView (BashProcessor& p)
-    : proc (p), stepView (p), samplerPanel (p), synthPanel (p), drumPanel (p), mixerPanel (p), modPanel (p), diceButton (p), stepPanel (p)
+    : proc (p), stepView (p), samplerPanel (p), synthPanel (p), drumPanel (p), mixerPanel (p), modPanel (p), microPanel (p), diceButton (p), stepPanel (p)
 {
     setLookAndFeel (&lnf);
     auto& apvts = proc.apvts;
@@ -343,6 +343,9 @@ BashView::BashView (BashProcessor& p)
     addChildComponent (mixerPanel);
     mixerPanel.onMessage = [this] (const juce::String& m) { hint.setText (m, juce::dontSendNotification); };
     addChildComponent (modPanel);
+    addChildComponent (microPanel);
+    microPanel.onMessage = [this] (const juce::String& m) { hint.setText (m, juce::dontSendNotification); };
+    mixerPanel.onOpenMicro = [this] { setView (3); };
     addAndMakeVisible (diceButton);
     diceButton.currentTrack = [this] { return currentTrack; };
     diceButton.onRolled = [this] { stepView.refresh(); stepPanel.refresh(); repaint(); };
@@ -358,7 +361,7 @@ BashView::BashView (BashProcessor& p)
     stepModeButton.setTooltip ("A step sequencer: 16 lanes, ratchets, conditions, fills");
     genModeButton.onClick  = [this] { setStepMode (false); };
     stepModeButton.onClick = [this] { setStepMode (true); };
-    for (auto* b : { &trackViewButton, &mixerViewButton, &modViewButton })
+    for (auto* b : { &trackViewButton, &mixerViewButton, &modViewButton, &microViewButton })
     {
         b->setClickingTogglesState (false);
         addAndMakeVisible (*b);
@@ -366,6 +369,8 @@ BashView::BashView (BashProcessor& p)
     trackViewButton.onClick = [this] { setView (0); };
     mixerViewButton.onClick = [this] { setView (1); };
     modViewButton.onClick   = [this] { setView (2); };
+    microViewButton.onClick = [this] { setView (3); };
+    microViewButton.setTooltip ("MICRO: loops, grains, glitches and delays on everything from the tracks, plus a phrase looper");
     trackViewButton.setToggleState (true, juce::dontSendNotification);
 
     selectTrack (0);
@@ -437,9 +442,11 @@ void BashView::setView (int v)
     trackViewButton.setToggleState (v == 0, juce::dontSendNotification);
     mixerViewButton.setToggleState (v == 1, juce::dontSendNotification);
     modViewButton.setToggleState (v == 2, juce::dontSendNotification);
+    microViewButton.setToggleState (v == 3, juce::dontSendNotification);
     applyVisibility();
     mixerPanel.setVisible (v == 1);
     modPanel.setVisible (v == 2);
+    microPanel.setVisible (v == 3);
     if (mixer)
     {
         samplerPanel.setVisible (false);
@@ -455,7 +462,7 @@ void BashView::setView (int v)
 
 void BashView::selectTrack (int t)
 {
-    if (view == 1) setView (0);
+    if (view == 1 || view == 3) setView (0);
     currentTrack = t;
     for (int i = 0; i < bash::numTracks; ++i)
         trackButtons[(size_t) i].setToggleState (i == t, juce::dontSendNotification);
@@ -528,6 +535,8 @@ void BashView::timerCallback()
         mixerPanel.refresh();
     if (modPanel.isVisible())
         modPanel.refresh();
+    if (microPanel.isVisible())
+        microPanel.refresh();
     stepView.refresh();
     for (int t = 0; t < bash::numTracks; ++t)
     {
@@ -581,6 +590,7 @@ void BashView::resized()
     trackViewButton.setBounds (194, 36, 68, 28);
     mixerViewButton.setBounds (266, 36, 60, 28);
     modViewButton.setBounds (330, 36, 50, 28);
+    microViewButton.setBounds (384, 36, 62, 28);
 
     // track selector
     auto tracksRow = area.removeFromTop (44).withTrimmedTop (4);
@@ -591,6 +601,7 @@ void BashView::resized()
     area.removeFromTop (12);
     mixerPanel.setBounds (area.withTrimmedBottom (14));
     modPanel.setBounds (area.withTrimmedBottom (14));
+    microPanel.setBounds (area.withTrimmedBottom (14));
     const auto stepModeBox = area.withHeight (176 + 44 + 12 + 224);   // step mode: one big sequencer box
     stepView.setBounds (area.removeFromTop (176));
     auto buttons = area.removeFromTop (44).withTrimmedTop (8);

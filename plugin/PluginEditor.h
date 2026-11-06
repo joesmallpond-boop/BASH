@@ -10,6 +10,7 @@
 #include "DrumPanel.h"
 #include "MixerPanel.h"
 #include "ModPanel.h"
+#include "MicroPanel.h"
 #include "ExportUI.h"
 #include "StepPanel.h"
 
@@ -76,6 +77,7 @@ public:
     void showTrack (int t) { selectTrack (t); }
     void showMixer()       { setView (1); }
     void showMod()         { setView (2); }
+    void showMicro()       { setView (3); }
 
 private:
     void timerCallback() override;
@@ -114,13 +116,14 @@ private:
     bashui::DrumPanel drumPanel;
     bashui::MixerPanel mixerPanel;
     bashui::ModPanel modPanel;
+    bashui::MicroPanel microPanel;
     bashui::DiceButton diceButton;
     bashui::StepPanel stepPanel;
     juce::TextButton genModeButton { "GENERATIVE" }, stepModeButton { "STEP" };
     bool shownStepMode = false, hintIsStep = false;
     void setStepMode (bool step);
     void applyVisibility();
-    juce::TextButton trackViewButton { "TRACKS" }, mixerViewButton { "MIXER" }, modViewButton { "MOD" };
+    juce::TextButton trackViewButton { "TRACKS" }, mixerViewButton { "MIXER" }, modViewButton { "MOD" }, microViewButton { "MICRO" };
     int view = 0;   // 0 tracks, 1 mixer, 2 mod, 3 micro
     bool mixerView = false;
     void setView (int v);
@@ -150,6 +153,7 @@ public:
     void showTrack (int t) { view.showTrack (t); }
     void showMixer()       { view.showMixer(); }
     void showMod()         { view.showMod(); }
+    void showMicro()       { view.showMicro(); }
 
 private:
     BashView view;

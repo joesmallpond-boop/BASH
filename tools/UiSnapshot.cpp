@@ -50,7 +50,19 @@ int main (int argc, char** argv)
         auto* on = proc.apvts.getParameter ("t" + juce::String (track) + "_on"); on->setValueNotifyingHost (1.0f);
         juce::AudioBuffer<float> buf (2, 512);
         juce::MidiBuffer midi;
-        for (int i = 0; i < blocks; ++i) proc.processBlock (buf, midi);
+        const bool micro = argc > 6 && (juce::String (argv[6]) == "micro" || juce::String (argv[6]) == "mixer");
+        if (micro)
+        {
+            proc.apvts.getParameter ("m_on")->setValueNotifyingHost (1.0f);
+            proc.apvts.getParameter ("glue_on")->setValueNotifyingHost (1.0f);
+            if (auto* a = dynamic_cast<juce::AudioParameterChoice*> (proc.apvts.getParameter ("m_algo"))) a->setValueNotifyingHost (a->convertTo0to1 (3.0f));
+        }
+        for (int i = 0; i < blocks; ++i)
+        {
+            if (micro && i == blocks / 3) proc.micro().loopPress();
+            if (micro && i == blocks * 2 / 3) proc.micro().loopPress();
+            proc.processBlock (buf, midi);
+        }
     }
 
     std::unique_ptr<juce::AudioProcessorEditor> editor (proc.createEditor());
@@ -58,6 +70,7 @@ int main (int argc, char** argv)
     {
         ed->showTrack (track - 1);
         if (argc > 6 && juce::String (argv[6]) == "mixer") ed->showMixer();
+        if (argc > 6 && juce::String (argv[6]) == "micro") ed->showMicro();
         if (argc > 6 && juce::String (argv[6]) == "mod")
         {
             proc.matrix (track - 1).set (bash::ModDest::Cutoff, bash::ModSource::Lfo1, 0.6f);

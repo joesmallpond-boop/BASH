@@ -69,6 +69,19 @@ void LevelMeter::paint (juce::Graphics& g)
     g.fillRoundedRectangle (lit, 3.0f);
 }
 
+void GrMeter::paint (juce::Graphics& g)
+{
+    auto r = getLocalBounds().toFloat();
+    g.setColour (colour::line);
+    g.fillRoundedRectangle (r, 3.0f);
+    const float frac = juce::jlimit (0.0f, 1.0f, db / 20.0f);
+    g.setColour (colour::accent);
+    g.fillRoundedRectangle (r.withLeft (r.getRight() - r.getWidth() * frac), 3.0f);
+    g.setColour (colour::ink);
+    g.setFont (juce::FontOptions (9.5f, juce::Font::bold));
+    g.drawText ("GR " + juce::String (db, 1), getLocalBounds().reduced (3, 0), juce::Justification::centredLeft);
+}
+
 // ============================================================================
 MixerPanel::MixerPanel (BashProcessor& p) : proc (p)
 {
@@ -86,6 +99,11 @@ MixerPanel::MixerPanel (BashProcessor& p) : proc (p)
     {
         auto s = std::make_unique<Strip>();
         buildReturnStrip (*s, "retb", "retblevel", "RETURN B");
+        strips.push_back (std::move (s));
+    }
+    {
+        auto s = std::make_unique<Strip>();
+        buildMicroStrip (*s);
         strips.push_back (std::move (s));
     }
     {
@@ -152,16 +170,71 @@ void MixerPanel::buildReturnStrip (Strip& s, const juce::String& prefix, const j
     s.atts.push_back (std::make_unique<SliderAttachment> (proc.apvts, levelId, s.fader));
 }
 
+void MixerPanel::buildMicroStrip (Strip& s)
+{
+    auto& apvts = proc.apvts;
+    s.isMicro = true;
+    s.name.setText ("MICRO", juce::dontSendNotification);
+    s.chip = std::make_unique<DragChip> ("LOOP", [this] { return proc.exportMicroLoop(); });
+    s.chip->setTooltip ("Drag MICRO's looper phrase out as a WAV");
+    s.scope = std::make_unique<MicroScope> (proc, true);
+    s.scope->onClick = [this] { if (onOpenMicro) onOpenMicro(); };
+    addAndMakeVisible (*s.scope);
+    addAndMakeVisible (s.microOn);
+    s.buttonAtts.push_back (std::make_unique<ButtonAttachment> (apvts, "m_on", s.microOn));
+    fillChoices (s.microAlgo, apvts, "m_algo");
+    s.comboAtts.push_back (std::make_unique<ComboAttachment> (apvts, "m_algo", s.microAlgo));
+    addAndMakeVisible (s.microAlgo);
+    s.microMix.setup ("MIX");
+    addAndMakeVisible (s.microMix.slider); addAndMakeVisible (s.microMix.label);
+    s.atts.push_back (std::make_unique<SliderAttachment> (apvts, "m_mix", s.microMix.slider));
+    s.open.setTooltip ("Open the MICRO tab");
+    s.open.onClick = [this] { if (onOpenMicro) onOpenMicro(); };
+    addAndMakeVisible (s.open);
+    addCommon (s);
+    s.atts.push_back (std::make_unique<SliderAttachment> (apvts, "m_level", s.fader));
+}
+
 void MixerPanel::buildMasterStrip (Strip& s)
 {
+    auto& apvts = proc.apvts;
     s.isMaster = true;
     s.name.setText ("MASTER", juce::dontSendNotification);
     s.chip = std::make_unique<DragChip> ("MIX", [this] { return proc.exportAudio (-1); });
     s.chip->setTooltip ("Drag the whole mix out as one WAV");
-    addAndMakeVisible (s.limiter);
-    s.buttonAtts.push_back (std::make_unique<ButtonAttachment> (proc.apvts, "limiter", s.limiter));
+    s.glue.setTooltip ("SSL-style bus compressor, before the fader and limiter");
+    s.limiter.setTooltip ("Brickwall limiter at the end of the chain");
+    for (auto [b, id] : { std::pair { &s.glue, "glue_on" }, std::pair { &s.limiter, "limiter" } })
+    {
+        addAndMakeVisible (*b);
+        s.buttonAtts.push_back (std::make_unique<ButtonAttachment> (apvts, id, *b));
+    }
+    const std::tuple<MiniKnob*, const char*, const char*> knobs[] = {
+        { &s.glueThr, "THRESH", "glue_thr" }, { &s.glueMakeup, "MAKEUP", "glue_makeup" }, { &s.glueMix, "MIX", "glue_mix" },
+        { &s.limDrive, "DRIVE", "lim_drive" }, { &s.limCeil, "CEILING", "lim_ceil" }, { &s.limRel, "RELEASE", "lim_rel" } };
+    for (auto& [k, name, id] : knobs)
+    {
+        k->setup (name);
+        addAndMakeVisible (k->slider); addAndMakeVisible (k->label);
+        s.atts.push_back (std::make_unique<SliderAttachment> (apvts, id, k->slider));
+    }
+    const std::tuple<juce::ComboBox*, juce::Label*, const char*, const char*> combos[] = {
+        { &s.glueRatio, &s.glueRatioL, "RATIO", "glue_ratio" }, { &s.glueAtt, &s.glueAttL, "ATTACK", "glue_att" },
+        { &s.glueRel, &s.glueRelL, "RELEASE", "glue_rel" }, { &s.glueHpf, &s.glueHpfL, "SC HPF", "glue_hpf" } };
+    for (auto& [box, label, name, id] : combos)
+    {
+        fillChoices (*box, apvts, id);
+        s.comboAtts.push_back (std::make_unique<ComboAttachment> (apvts, id, *box));
+        label->setText (name, juce::dontSendNotification);
+        label->setFont (juce::FontOptions (9.5f, juce::Font::bold));
+        label->setColour (juce::Label::textColourId, colour::quiet);
+        label->setJustificationType (juce::Justification::centred);
+        addAndMakeVisible (*box); addAndMakeVisible (*label);
+    }
+    addAndMakeVisible (s.glueGr);
+    addAndMakeVisible (s.limGr);
     addCommon (s);
-    s.atts.push_back (std::make_unique<SliderAttachment> (proc.apvts, "master", s.fader));
+    s.atts.push_back (std::make_unique<SliderAttachment> (apvts, "master", s.fader));
 }
 
 void MixerPanel::refresh()
@@ -170,32 +243,61 @@ void MixerPanel::refresh()
     {
         for (auto& f : s->fx) f->refreshLabels();
         if (s->isTrack) s->meter.setLevel (proc.trackMeter (s->track));
-        s->meter.setVisible (s->isTrack);
+        if (s->isMicro) { s->meter.setLevel (proc.micro().wetLevel()); s->scope->repaint(); }
+        if (s->isMaster)
+        {
+            s->glueGr.setDb (*proc.apvts.getRawParameterValue ("glue_on") > 0.5f ? proc.glueReduction() : 0.0f);
+            s->limGr.setDb (*proc.apvts.getRawParameterValue ("limiter") > 0.5f ? proc.limiterReduction() : 0.0f);
+        }
+        s->meter.setVisible (s->isTrack || s->isMicro);
     }
+}
+
+// strips are one unit wide; the master is two
+int MixerPanel::stripW (int i) const
+{
+    const int units = (int) strips.size() + 1;
+    const int u = getWidth() / units;
+    return strips[(size_t) i]->isMaster ? getWidth() - u * ((int) strips.size() - 1) : u;
+}
+
+int MixerPanel::stripX (int i) const
+{
+    const int u = getWidth() / ((int) strips.size() + 1);
+    return i * u;
 }
 
 void MixerPanel::paint (juce::Graphics& g)
 {
     const int n = (int) strips.size();
-    const float w = (float) getWidth() / (float) n;
     for (int i = 0; i < n; ++i)
     {
-        auto r = juce::Rectangle<float> ((float) i * w, 0.0f, w, (float) getHeight()).reduced (3.0f, 0.0f);
-        g.setColour (i >= bash::numTracks ? colour::raised.withAlpha (0.45f) : colour::panel);
+        auto r = juce::Rectangle<float> ((float) stripX (i), 0.0f, (float) stripW (i), (float) getHeight()).reduced (3.0f, 0.0f);
+        const auto& s = *strips[(size_t) i];
+        g.setColour (s.isMicro ? colour::active.withAlpha (0.55f) : i >= bash::numTracks ? colour::raised.withAlpha (0.45f) : colour::panel);
         g.fillRoundedRectangle (r, 12.0f);
-        g.setColour (colour::line);
+        g.setColour (s.isMicro ? colour::accentDim : colour::line);
         g.drawRoundedRectangle (r, 12.0f, 1.0f);
+        if (s.isMaster)
+        {
+            g.setColour (colour::line);
+            for (auto* b : { &s.glue, &s.limiter })
+            {
+                auto box = (b == &s.glue ? s.glue.getBounds().getUnion (s.glueHpf.getBounds()).getUnion (s.glueGr.getBounds())
+                                         : s.limiter.getBounds().getUnion (s.limRel.slider.getBounds()).getUnion (s.limGr.getBounds())).toFloat().expanded (4.0f, 4.0f);
+                g.drawRoundedRectangle (box, 8.0f, 1.0f);
+            }
+        }
     }
 }
 
 void MixerPanel::resized()
 {
     const int n = (int) strips.size();
-    const int w = getWidth() / n;
     for (int i = 0; i < n; ++i)
     {
         auto& s = *strips[(size_t) i];
-        auto r = juce::Rectangle<int> (i * w, 0, w, getHeight()).reduced (8, 10);
+        auto r = juce::Rectangle<int> (stripX (i), 0, stripW (i), getHeight()).reduced (8, 10);
         s.name.setBounds (r.removeFromTop (20));
         r.removeFromTop (2);
         auto chipRow = r.removeFromTop (22);
@@ -216,11 +318,49 @@ void MixerPanel::resized()
             s.solo.setBounds (ms.reduced (2, 0));
             r.removeFromTop (8);
         }
+        else if (s.isMicro)
+        {
+            s.microOn.setBounds (r.removeFromTop (24));
+            r.removeFromTop (4);
+            s.microAlgo.setBounds (r.removeFromTop (24));
+            r.removeFromTop (8);
+            s.scope->setBounds (r.removeFromTop (150));
+            r.removeFromTop (8);
+            s.open.setBounds (r.removeFromTop (24));
+            r.removeFromTop (8);
+            s.microMix.place (r.removeFromTop (54).withSizeKeepingCentre (52, 54));
+            const int used = 24 + 4 + 24 + 8 + 150 + 8 + 24 + 8 + 54;
+            r.removeFromTop (std::max (0, 398 - used));   // fader lines up with the tracks
+        }
         else if (s.isMaster)
         {
-            r.removeFromTop (110 - 30);
-            s.limiter.setBounds (r.removeFromTop (26));
-            r.removeFromTop (12);
+            const int half = r.getWidth() / 2, third = r.getWidth() / 3;
+            auto glueRow = r.removeFromTop (22);
+            s.glue.setBounds (glueRow.removeFromLeft (half));
+            s.glueGr.setBounds (glueRow.reduced (0, 3));
+            r.removeFromTop (4);
+            auto k = r.removeFromTop (50);
+            for (auto* m : { &s.glueThr, &s.glueMakeup, &s.glueMix }) m->place (k.removeFromLeft (third));
+            r.removeFromTop (2);
+            for (auto pair : { std::pair { std::pair { &s.glueRatio, &s.glueRatioL }, std::pair { &s.glueAtt, &s.glueAttL } },
+                               std::pair { std::pair { &s.glueRel, &s.glueRelL }, std::pair { &s.glueHpf, &s.glueHpfL } } })
+            {
+                auto row = r.removeFromTop (36);
+                auto lft = row.removeFromLeft (half).reduced (2, 0), rgt = row.reduced (2, 0);
+                pair.first.second->setBounds (lft.removeFromTop (12)); pair.first.first->setBounds (lft);
+                pair.second.second->setBounds (rgt.removeFromTop (12)); pair.second.first->setBounds (rgt);
+                r.removeFromTop (2);
+            }
+            r.removeFromTop (16);
+            auto limRow = r.removeFromTop (22);
+            s.limiter.setBounds (limRow.removeFromLeft (half));
+            s.limGr.setBounds (limRow.reduced (0, 3));
+            r.removeFromTop (4);
+            auto lk = r.removeFromTop (50);
+            for (auto* m : { &s.limDrive, &s.limCeil, &s.limRel }) m->place (lk.removeFromLeft (third));
+            r.removeFromTop (14);
+            const int used = 22 + 4 + 50 + 2 + 2 * 38 + 16 + 22 + 4 + 50 + 14;
+            r.removeFromTop (std::max (0, 398 - used));
         }
         else
         {
@@ -228,6 +368,7 @@ void MixerPanel::resized()
         }
         auto fader = r;
         s.meter.setBounds (fader.removeFromRight (8).withTrimmedBottom (20));
-        s.fader.setBounds (fader);
+        if (s.isMaster) s.fader.setBounds (fader.withSizeKeepingCentre (std::min (90, fader.getWidth()), fader.getHeight()));
+        else s.fader.setBounds (fader);
     }
 }

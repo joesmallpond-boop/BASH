@@ -45,7 +45,7 @@ Full spec: *BASH! — Software Requirements Specification* (Claude doc).
 
 **Milestone 5 — mixer and effects** ✅
 
-- Mixer view: per track 2 inserts, Send A/B (post-fader), pan, mute/solo, fader and meter; Return A (Plate) and Return B (Tape Delay) with their own effect; Master with 2 inserts and a safety limiter (-0.3 dBFS)
+- Mixer view: per track 2 inserts, Send A/B (post-fader), pan, mute/solo, fader and meter; Return A (Plate) and Return B (Tape Delay) with their own effect; MICRO channel; Master with glue compressor and limiter
 - 21 effects, each with A/B knobs, a Gnarl macro (tasteful → wrecked) and Mix:
   distortion (Fuzz, Hard Clip, Wavefolder, Bitcrush, Rectifier), saturation (Tape with wow, Tube, Transformer), reverb (Plate, Hall, Spring, Shimmer; full Gnarl freezes into an infinite wash), delay (Tape, Digital, Ping-Pong, Grain; tempo-synced, feedback past 100% held by a soft limiter), modulation (Chorus, Flanger, Phaser, Ring Mod, Frequency Shifter)
 - Multi-out: 8 extra stereo outputs ("Track 1"–"Track 8"); enable one in your DAW and that track leaves the main mix
@@ -71,7 +71,14 @@ Full spec: *BASH! — Software Requirements Specification* (Claude doc).
 
 - `m4l/BASH Key Lock.amxd`: put it before BASH! on the track and BASH! follows the set's key and scale (any Live scale maps to BASH!'s nearest). See `m4l/README.md`
 
-**0.3.0** ✅ — the BASH! library
+**0.5.0** ✅ — MICRO and the master bus
+
+- **MICRO** (its own tab, and a channel on the mixer): everything from the tracks and returns runs through it before the master. 11 effects in four families, each with variations A-D: Micro Loop (Mosaic, Sequencer, Glide), Granules (Haze, Tunnel, Strum), Glitch (Blocks, Interrupt, Arp), Multi Delay (Pattern, Warp). Activity, Repeats, Shape, Time (locked to the tempo), Filter + Resonance with an LFO, Space (Room, Plate, Hall, Cloud reverb) and Decay, Mix, Level, Reverse / Alternate, Hold (freeze) and a die
+- A live waveform of the last 8 s with a marker wherever MICRO is reading from, and the looper's phrase underneath with its playhead
+- **Looper**: 60 s, REC / PLAY / DUB, Stop, Undo, Erase, Burst (records while held), Reverse, Speed (x1/4 to x4), Fade, Post FX / Pre FX / Looper Only, Quantize to beats; drag the phrase out as a WAV
+- **Master**: SSL-style glue compressor (threshold, ratio 2/4/10, attack, release incl. Auto, makeup, mix, sidechain HPF, GR meter) before the fader, and the limiter now has drive, ceiling and release with a GR meter. The master insert slots are gone
+- The 0.4.0 granular section is replaced by MICRO
+
 
 - **133 drum sounds**, all synthesised by BASH! (nothing sampled from anyone's records), voiced for UK bass, DnB, dubstep, UKG, broken beat, techno, electro, IDM and beat tape: sub kicks tuned to F/G/A/A#, halfstep, roller, garage, warehouse (with rumble), dusty and broken kicks; halfstep, roller, garage, dusty, ghost and industrial snares and rims; claps; closed/open hats; rides and crashes; shakers; congas, bongos, timbales, woodblocks, bleeps, zaps, metal and glass hits; toms; FX (sub drop, impact, horn stab, dub siren, reese and wobble stabs, risers); glitch. Drum panel > **Library** puts any of them on the selected pad (the menu stays open so you can click through and hear them)
 - **12 kits** with starter beats: Halfstep Pressure, 2-Step Shuffle, Rollers, Jungle Ruff, Bleep & Bass, Warehouse, Broken Electro, Glass Garden, Beat Tape, Glitch Lab, Sub Weight, Funky Percs (Drum panel > **Kits**)

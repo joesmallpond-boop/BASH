@@ -3,6 +3,7 @@
 #include "PluginProcessor.h"
 #include "UiCommon.h"
 #include "ExportUI.h"
+#include "MicroPanel.h"
 
 namespace bashui
 {
@@ -42,6 +43,16 @@ namespace bashui
         float level = 0.0f;
     };
 
+    /** Gain reduction, drawn from the right (0..maxDb). */
+    class GrMeter : public juce::Component
+    {
+    public:
+        void setDb (float v) { if (std::abs (v - db) > 0.05f) { db = v; repaint(); } }
+        void paint (juce::Graphics&) override;
+    private:
+        float db = 0.0f;
+    };
+
     class MixerPanel : public juce::Component
     {
     public:
@@ -57,24 +68,35 @@ namespace bashui
             std::vector<std::unique_ptr<FxSlotUI>> fx;
             MiniKnob sendA, sendB, pan;
             juce::TextButton mute { "M" }, solo { "S" };
-            juce::ToggleButton limiter { "Limit" };
+            juce::ToggleButton limiter { "LIMIT" }, glue { "GLUE" }, microOn { "On" };
+            MiniKnob glueThr, glueMakeup, glueMix, limDrive, limCeil, limRel, microMix;
+            juce::ComboBox glueRatio, glueAtt, glueRel, glueHpf, microAlgo;
+            juce::Label glueRatioL, glueAttL, glueRelL, glueHpfL;
+            GrMeter glueGr, limGr;
+            std::unique_ptr<MicroScope> scope;
+            juce::TextButton open { "OPEN" };
+            std::vector<std::unique_ptr<ComboAttachment>> comboAtts;
             juce::Slider fader;
             LevelMeter meter;
             std::vector<std::unique_ptr<SliderAttachment>> atts;
             std::vector<std::unique_ptr<ButtonAttachment>> buttonAtts;
             std::unique_ptr<DragChip> chip;
-            bool isTrack = false, isMaster = false;
+            bool isTrack = false, isMaster = false, isMicro = false;
             int track = -1;
         };
 
         void buildTrackStrip (Strip&, int t);
         void buildReturnStrip (Strip&, const juce::String& prefix, const juce::String& levelId, const juce::String& title);
         void buildMasterStrip (Strip&);
+        void buildMicroStrip (Strip&);
+        int  stripX (int i) const;
+        int  stripW (int i) const;
         void addCommon (Strip&);
 
         BashProcessor& proc;
         std::vector<std::unique_ptr<Strip>> strips;
     public:
         std::function<void (const juce::String&)> onMessage;
+        std::function<void()> onOpenMicro;
     };
 }
