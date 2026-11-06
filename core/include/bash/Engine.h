@@ -101,6 +101,10 @@ namespace bash
         double tailSeconds = 4.0;   // rendered past the end, then wrapped to the start for seamless loops
     };
 
+    /** How a track's step lanes map to notes / pads / slices (used by playback and export). */
+    StepContext stepContextFor (EngineType, const SequencerParams&, const Scale&, double stepsPerQuarter,
+                                bool fill, int autoFillBars);
+
     class Engine
     {
     public:
@@ -206,7 +210,6 @@ namespace bash
         std::array<StepStore,     numTracks> stepStores;
         std::array<StepPlayer,    numTracks> stepPlayers;
         std::array<std::array<std::atomic<int>, stepLanes>, numTracks> lanePos {};
-        StepContext stepContext (int t, const TrackSettings&, double stepsPerQuarter) const;
         std::array<MachineSynth,  numTracks> synths;
         std::array<SliceVoice,    numTracks> slicers;
         std::array<SliceStore,    numTracks> sliceStores;

@@ -197,6 +197,9 @@ APVTS::ParameterLayout BashProcessor::createLayout()
         g->addChild (floatParam (id ("swing"),  n + "Swing",  NormalisableRange<float> (0.0f, 0.75f), 0.0f, 2));
         g->addChild (floatParam (id ("jitter"), n + "Jitter", NormalisableRange<float> (0.0f, 1.0f), 0.0f, 2));
         g->addChild (std::make_unique<AudioParameterBool>   (id ("scalelock"), n + "Scale Lock", true));
+        g->addChild (std::make_unique<AudioParameterChoice> (id ("mode"),      n + "Sequencer", juce::StringArray { "Generative", "Step" }, 0));
+        g->addChild (std::make_unique<AudioParameterBool>   (id ("fill"),      n + "Fill", false));
+        g->addChild (std::make_unique<AudioParameterChoice> (id ("autofill"),  n + "Auto Fill", autoFillNames(), 0));
 
         g->addChild (std::make_unique<AudioParameterChoice> (id ("machine"), n + "Machine", machineNames(), 0));
         g->addChild (floatParam (id ("wave"),      n + "Character", NormalisableRange<float> (0.0f, 1.0f), t % 2 ? 1.0f : 0.0f, 2));
@@ -285,6 +288,7 @@ BashProcessor::BashProcessor()
         p.level = get ("level"); p.pan = get ("pan");
         p.lifeRate = get ("liferate"); p.swing = get ("swing"); p.jitter = get ("jitter");
         p.mute = get ("mute"); p.solo = get ("solo"); p.sendA = get ("senda"); p.sendB = get ("sendb");
+        p.mode = get ("mode"); p.fill = get ("fill"); p.autoFill = get ("autofill");
         p.fx[0] = fxPtrs (pid (t, "fx1")); p.fx[1] = fxPtrs (pid (t, "fx2"));
         p.machine = get ("machine"); p.timbre = get ("timbre"); p.ftype = get ("ftype");
         p.aAtk = get ("aatk"); p.aDec = get ("adec"); p.aSus = get ("asus"); p.aRel = get ("arel");
@@ -421,6 +425,9 @@ void BashProcessor::pullParameters()
         ts.mute  = load (p.mute) > 0.5f;
         ts.lifeRate = load (p.lifeRate);
         ts.solo  = load (p.solo) > 0.5f;
+        ts.stepMode = load (p.mode) > 0.5f;
+        ts.fill     = load (p.fill) > 0.5f;
+        ts.autoFillBars = autoFillBars ((int) load (p.autoFill));
         ts.sendA = load (p.sendA);
         ts.sendB = load (p.sendB);
         ts.inserts[0] = fxFrom (p.fx[0]);
@@ -612,6 +619,12 @@ void BashProcessor::getStateInformation (juce::MemoryBlock& dest)
     state.removeChild (state.getChildWithName ("Patterns"), nullptr);
     state.appendChild (patterns, nullptr);
 
+    juce::ValueTree stepTree ("Steps");
+    for (int t = 0; t < bash::numTracks; ++t)
+        stepTree.setProperty ("t" + juce::String (t + 1), juce::String (stepPattern (t).serialise()), nullptr);
+    state.removeChild (state.getChildWithName ("Steps"), nullptr);
+    state.appendChild (stepTree, nullptr);
+
     juce::ValueTree samplesTree ("Samples");
     for (int t = 0; t < bash::numTracks; ++t)
     {
@@ -657,6 +670,7 @@ void BashProcessor::setStateInformation (const void* data, int size)
 
     auto tree = juce::ValueTree::fromXml (*xml);
     const auto patterns = tree.getChildWithName ("Patterns");
+    const auto stepTree = tree.getChildWithName ("Steps").createCopy();
     const auto samplesTree = tree.getChildWithName ("Samples").createCopy();
     const auto kitTree = tree.getChildWithName ("Kit").createCopy();
     const auto modTree = tree.getChildWithName ("Mod").createCopy();
@@ -688,6 +702,13 @@ void BashProcessor::setStateInformation (const void* data, int size)
         const int t = (int) c.getProperty ("t"), d = (int) c.getProperty ("d"), s = (int) c.getProperty ("s");
         if (t >= 0 && t < bash::numTracks && d >= 0 && d < bash::numModDests && s >= 0 && s < bash::numModSources)
             engine.matrix (t).set ((bash::ModDest) d, (bash::ModSource) s, (float) c.getProperty ("a"));
+    }
+
+    for (int t = 0; t < bash::numTracks; ++t)
+    {
+        bash::StepPattern sp;
+        if (stepTree.isValid()) sp.deserialise (stepTree.getProperty ("t" + juce::String (t + 1)).toString().toStdString());
+        setStepPattern (t, sp);
     }
 
     if (patterns.isValid())
@@ -899,6 +920,105 @@ void BashProcessor::kitFromTree (const juce::ValueTree& kit)
     }
 }
 
+// ---- step sequencer (message thread) ------------------------------------------------
+const juce::StringArray& BashProcessor::autoFillNames()
+{
+    static const juce::StringArray n { "Off", "Every 2 bars", "Every 4 bars", "Every 8 bars", "Every 16 bars" };
+    return n;
+}
+
+int BashProcessor::autoFillBars (int index)
+{
+    static constexpr int bars[] = { 0, 2, 4, 8, 16 };
+    return bars[juce::jlimit (0, 4, index)];
+}
+
+bool BashProcessor::stepMode (int t) const { return load (tp[(size_t) t].mode) > 0.5f; }
+
+bash::StepPattern BashProcessor::stepPattern (int t)
+{
+    std::lock_guard<bash::SpinMutex> g (engine.stepMutex (t));
+    return engine.stepPattern (t);
+}
+
+void BashProcessor::setStepPattern (int t, const bash::StepPattern& p)
+{
+    std::lock_guard<bash::SpinMutex> g (engine.stepMutex (t));
+    engine.stepPattern (t) = p;
+}
+
+void BashProcessor::editSteps (int t, const std::function<void (bash::StepPattern&)>& fn)
+{
+    auto p = stepPattern (t);   // edit a copy, swap it in under the lock (the audio thread never waits long)
+    fn (p);
+    setStepPattern (t, p);
+}
+
+bash::LaneRole BashProcessor::laneRole (int t, int lane) const
+{
+    return engineType (t) == bash::EngineType::Drums ? bash::drumLaneRole (lane) : bash::LaneRole::Melodic;
+}
+
+juce::String BashProcessor::laneName (int t, int lane)
+{
+    switch (engineType (t))
+    {
+        case bash::EngineType::Drums:
+        {
+            const auto name = cellName (lane);
+            return name.isNotEmpty() ? name : "Pad " + juce::String (lane + 1);
+        }
+        case bash::EngineType::Slicer:
+            return "Slice " + juce::String ((int) load (tp[(size_t) t].winStart) + lane);
+        case bash::EngineType::Synth:
+        default:
+        {
+            const auto sp = seqParams (t);
+            const bash::Scale sc ((int) load (pRoot), (int) load (pScale));
+            const int note = sp.scaleLock ? sc.stepFrom (sp.baseNote, lane) : sp.baseNote + lane;
+            return juce::String (bash::noteName (((note % 12) + 12) % 12)) + juce::String (note / 12 - 1);
+        }
+    }
+}
+
+void BashProcessor::generateLane (int t, int lane)
+{
+    const auto role = laneRole (t, lane);
+    const auto roll = (uint64_t) juce::Random::getSystemRandom().nextInt64();
+    editSteps (t, [&] (bash::StepPattern& p) { bash::stepgen::generate (p.lanes[(size_t) lane], role, roll); });
+}
+
+void BashProcessor::rollLane (int t, int lane)
+{
+    pushDiceSnapshot (t);
+    const auto role = laneRole (t, lane);
+    const auto roll = (uint64_t) juce::Random::getSystemRandom().nextInt64();
+    editSteps (t, [&] (bash::StepPattern& p) { bash::stepgen::rollLane (p.lanes[(size_t) lane], role, roll); });
+}
+
+void BashProcessor::rollStepTrack (int t)
+{
+    // The track die in step mode: re-roll every lane that's in use. On an empty drum
+    // pattern, roll a starter kit groove (kick, snare, clap, hats).
+    const auto roll = (uint64_t) juce::Random::getSystemRandom().nextInt64();
+    const bool drums = engineType (t) == bash::EngineType::Drums;
+    editSteps (t, [&] (bash::StepPattern& p)
+    {
+        const bool empty = p.activeLanes() == 0;
+        for (int l = 0; l < bash::stepLanes; ++l)
+        {
+            auto& lane = p.lanes[(size_t) l];
+            bool used = false;
+            for (int i = 0; i < lane.length; ++i) used = used || lane.steps[(size_t) i].on;
+            if (empty) used = drums ? l < 5 : l == 0 || l == 2 || l == 4;
+            if (! used) continue;
+            if (empty && drums) lane.algo = l == 3 ? bash::LaneAlgo::Rolls : bash::LaneAlgo::Groove;
+            if (empty && ! drums) lane.algo = bash::LaneAlgo::Random;
+            bash::stepgen::rollLane (lane, laneRole (t, l), roll + (uint64_t) l * 7919u);
+        }
+    });
+}
+
 // ---- Roll the Dice (message thread) --------------------------------------------
 // Each track has its own die and it only touches that track's sequencer: rhythm,
 // melody and playback settings plus a new pattern seed. Sound, effects, mixer,
@@ -913,9 +1033,34 @@ bool BashProcessor::isDiceParam (const juce::String& id, int track)
     return seq.contains (id.substring (pre.length()));
 }
 
+void BashProcessor::pushDiceSnapshot (int track)
+{
+    DiceSnapshot snap;
+    for (auto* p : getParameters())
+        if (auto* rp = dynamic_cast<juce::RangedAudioParameter*> (p))
+            if (isDiceParam (rp->getParameterID(), track))
+                snap.params.emplace_back (rp->getParameterID(), rp->getValue());
+    {
+        auto& pat = engine.pattern (track);
+        std::lock_guard<bash::SpinMutex> g (pat.mutex());
+        snap.seed = pat.getSeed();
+    }
+    snap.steps = stepPattern (track).serialise();
+    auto& history = diceHistory[(size_t) track];
+    history.push_back (std::move (snap));
+    if (history.size() > 16) history.erase (history.begin());
+}
+
 void BashProcessor::rollDice (int track)
 {
     track = juce::jlimit (0, bash::numTracks - 1, track);
+
+    if (stepMode (track))
+    {
+        pushDiceSnapshot (track);
+        rollStepTrack (track);
+        return;
+    }
 
     DiceSnapshot snap;
     for (auto* p : getParameters())
@@ -927,6 +1072,7 @@ void BashProcessor::rollDice (int track)
         std::lock_guard<bash::SpinMutex> g (pat.mutex());
         snap.seed = pat.getSeed();
     }
+    snap.steps = stepPattern (track).serialise();
     auto& history = diceHistory[(size_t) track];
     history.push_back (std::move (snap));
     if (history.size() > 16) history.erase (history.begin());
@@ -981,6 +1127,10 @@ bool BashProcessor::undoDice (int track)
                 p->setValueNotifyingHost (v);
                 p->endChangeGesture();
             }
+    {
+        bash::StepPattern sp;
+        if (sp.deserialise (snap.steps)) setStepPattern (track, sp);
+    }
     auto& pat = engine.pattern (track);
     std::lock_guard<bash::SpinMutex> g (pat.mutex());
     pat.setSeed (snap.seed);
@@ -1097,6 +1247,13 @@ juce::File BashProcessor::exportMidi (int t)
     const double spq = stepsPerQuarterFor ((int) load (tp[(size_t) t].rate));
     const int64_t steps = (int64_t) std::llround (spq * 4.0 * exportBars);
     std::vector<bash::ExportNote> notes;
+    if (stepMode (t))
+    {
+        const auto ctx = bash::stepContextFor (engineType (t), uiSeqParams (t), scaleNow(), spq,
+                                               load (tp[(size_t) t].fill) > 0.5f, autoFillBars ((int) load (tp[(size_t) t].autoFill)));
+        notes = bash::renderStepNotes (stepPattern (t), ctx, steps);
+    }
+    else
     {
         auto& pat = engine.pattern (t);
         const auto params = uiSeqParams (t);

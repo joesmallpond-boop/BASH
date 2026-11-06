@@ -329,7 +329,7 @@ namespace bash
                 if (ts.stepMode)
                 {
                     player.reset (&events, 0);   // releases anything the generative side held
-                    const auto ctx = stepContext (t, ts, spq);
+                    const auto ctx = stepContextFor (ts.engine, ts.seq, currentScale, spq, ts.fill, ts.autoFillBars);
                     auto& store = stepStores[(size_t) t];
                     std::lock_guard<SpinMutex> g (store.m);
                     stepPlayer.process (ppq * spq, bpm / 60.0 / sr * spq, n, store.pattern, ctx, events);
@@ -538,18 +538,19 @@ namespace bash
 
 namespace bash
 {
-    StepContext Engine::stepContext (int t, const TrackSettings& ts, double spq) const
+    StepContext stepContextFor (EngineType engine, const SequencerParams& seq, const Scale& scale, double spq,
+                                bool fill, int autoFillBars)
     {
         StepContext c;
         c.stepsPerQuarter = spq;
-        c.fill = ts.fill;
-        c.autoFillBars = ts.autoFillBars;
-        c.swing = ts.seq.swing;
-        c.gate = ts.seq.gate;
-        c.oneShot = ts.engine == EngineType::Drums;
+        c.fill = fill;
+        c.autoFillBars = autoFillBars;
+        c.swing = seq.swing;
+        c.gate = seq.gate;
+        c.oneShot = engine == EngineType::Drums;
         for (int l = 0; l < stepLanes; ++l)
         {
-            switch (ts.engine)
+            switch (engine)
             {
                 case EngineType::Drums:
                     c.laneNote[(size_t) l] = drumBaseNote + l;
@@ -557,18 +558,17 @@ namespace bash
                     break;
                 case EngineType::Slicer:
                     // lane 1 plays the window's first slice, lane 2 the next, ...
-                    c.laneNote[(size_t) l] = ts.seq.baseNote;
-                    c.laneSlice[(size_t) l] = (int) ts.seq.windowStart + l;
+                    c.laneNote[(size_t) l] = seq.baseNote;
+                    c.laneSlice[(size_t) l] = (int) seq.windowStart + l;
                     break;
                 case EngineType::Synth:
                 default:
                     // lanes are scale notes upwards from the track's root and octave
-                    c.laneNote[(size_t) l] = std::clamp (ts.seq.scaleLock ? currentScale.stepFrom (ts.seq.baseNote, l) : ts.seq.baseNote + l, 0, 127);
+                    c.laneNote[(size_t) l] = std::clamp (seq.scaleLock ? scale.stepFrom (seq.baseNote, l) : seq.baseNote + l, 0, 127);
                     c.laneSlice[(size_t) l] = 0;
                     break;
             }
         }
-        (void) t;
         return c;
     }
 

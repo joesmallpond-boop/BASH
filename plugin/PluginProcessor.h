@@ -91,6 +91,20 @@ public:
     float  modSourceValue (int t, bash::ModSource s) const { return engine.sourceValue (t, s); }
     double lfoPhase (int i) const                      { return engine.lfoPhase (i); }
 
+    // Step sequencer (per track, instead of the generative one)
+    bool stepMode (int track) const;
+    bash::StepPattern stepPattern (int track);
+    void setStepPattern (int track, const bash::StepPattern&);
+    void editSteps (int track, const std::function<void (bash::StepPattern&)>&);
+    int  stepLanePosition (int track, int lane) const  { return engine.stepLanePosition (track, lane); }
+    juce::String laneName (int track, int lane);
+    bash::LaneRole laneRole (int track, int lane) const;
+    void generateLane (int track, int lane);   // rewrite the lane with its algorithm
+    void rollLane (int track, int lane);       // the lane die: new algorithm settings, then generate
+    void rollStepTrack (int track);            // the track die in step mode
+    static const juce::StringArray& autoFillNames();
+    static int autoFillBars (int index);
+
     // Roll the Dice: one die per track, rolls only that track's sequencer
     struct DiceSettings
     {
@@ -132,7 +146,8 @@ private:
     std::atomic<float> *pLimiter = nullptr, *pRetALevel = nullptr, *pRetBLevel = nullptr;
     struct LfoPtrs { std::atomic<float> *shape = nullptr, *rate = nullptr, *sync = nullptr, *div = nullptr; };
     std::array<LfoPtrs, 2> lfoP;
-    struct DiceSnapshot { std::vector<std::pair<juce::String, float>> params; uint64_t seed = 0; };
+    struct DiceSnapshot { std::vector<std::pair<juce::String, float>> params; uint64_t seed = 0; std::string steps; };
+    void pushDiceSnapshot (int track);
     std::array<std::vector<DiceSnapshot>, bash::numTracks> diceHistory;
     void pullParameters();
     void timerCallback() override;
@@ -156,7 +171,8 @@ private:
                            *wave, *cutoff, *reso, *envMod, *decay, *drive, *glide, *level, *pan,
                            *machine, *timbre, *ftype, *aAtk, *aDec, *aSus, *aRel,
                            *mute, *solo, *sendA, *sendB, *lifeRate, *swing, *jitter,
-                           *engine, *sliceMode, *winStart, *winSize, *pitchFollow, *tune, *sAttack, *sRelease, *reverse;
+                           *engine, *sliceMode, *winStart, *winSize, *pitchFollow, *tune, *sAttack, *sRelease, *reverse,
+                           *mode, *fill, *autoFill;
         std::array<FxPtrs, 2> fx;
     };
     std::array<TrackParams, bash::numTracks> tp {};

@@ -192,6 +192,91 @@ static void testKeyLock()
     CHECK ((int) *p.apvts.getRawParameterValue ("scale") == 2);   // Dorian
 }
 
+static void testStepMode()
+{
+    BashProcessor p;
+    p.setPlayConfigDetails (0, 2, 48000.0, 480);
+    p.prepareToPlay (48000.0, 480);
+    p.apvts.getParameter ("sync")->setValueNotifyingHost (0.0f);
+    p.apvts.getParameter ("tempo")->setValueNotifyingHost (p.apvts.getParameter ("tempo")->convertTo0to1 (120.0f));
+    for (int t = 1; t <= 8; ++t) p.apvts.getParameter ("t" + juce::String (t) + "_on")->setValueNotifyingHost (t == 2 ? 1.0f : 0.0f);
+    CHECK (p.engineType (1) == bash::EngineType::Drums);
+    p.apvts.getParameter ("t2_mode")->setValueNotifyingHost (1.0f);
+    CHECK (p.stepMode (1) && ! p.stepMode (0));
+    CHECK (p.stepPattern (1).activeLanes() == 0);
+
+    // the die on an empty drum pattern rolls a starter groove; undo brings back the empty one
+    const auto densityBefore = value (p, "t2_density");
+    p.rollDice (1);
+    CHECK (p.stepPattern (1).activeLanes() >= 4);
+    CHECK (value (p, "t2_density") == densityBefore);   // step mode: the knobs aren't rolled
+    CHECK (p.undoDice (1));
+    CHECK (p.stepPattern (1).activeLanes() == 0);
+    p.rollDice (1);
+
+    // lane die changes only its lane
+    const auto before = p.stepPattern (1);
+    p.editSteps (1, [] (bash::StepPattern& sp) { sp.lanes[6].algo = bash::LaneAlgo::Euclid; });
+    p.rollLane (1, 6);
+    const auto after = p.stepPattern (1);
+    CHECK (after.lanes[0].steps == before.lanes[0].steps && after.lanes[1].steps == before.lanes[1].steps);
+    bool lane6 = false; for (auto& st : after.lanes[6].steps) lane6 = lane6 || st.on;
+    CHECK (lane6);
+    CHECK (p.laneName (1, 0).isNotEmpty() && p.laneName (0, 0).isNotEmpty());
+
+    // plays pads on the track's MIDI channel
+    juce::AudioBuffer<float> buf (2, 480);
+    juce::MidiBuffer midi;
+    p.apvts.getParameter ("play")->setValueNotifyingHost (1.0f);
+    int notes = 0; float peak = 0.0f;
+    for (int b = 0; b < 400; ++b)
+    {
+        midi.clear();
+        p.processBlock (buf, midi);
+        for (const auto m : midi)
+            if (m.getMessage().isNoteOn() && m.getMessage().getChannel() == 2 && m.getMessage().getNoteNumber() >= 36 && m.getMessage().getNoteNumber() < 52) ++notes;
+        peak = std::max (peak, buf.getMagnitude (0, 480));
+    }
+    CHECK (notes >= 8);
+    CHECK (peak > 0.01f);
+    CHECK (p.stepLanePosition (1, 0) >= 0);
+
+    // fill parameter reaches the engine (Fill-only steps start playing)
+    p.editSteps (1, [] (bash::StepPattern& sp) { sp.clear(); sp.lanes[15].steps[0].on = true; sp.lanes[15].steps[0].cond = bash::TrigCond::Fill; });
+    auto countPad16 = [&]
+    {
+        int n = 0;
+        for (int b = 0; b < 200; ++b) { midi.clear(); p.processBlock (buf, midi); for (const auto m : midi) if (m.getMessage().isNoteOn() && m.getMessage().getNoteNumber() == 51) ++n; }
+        return n;
+    };
+    CHECK (countPad16() == 0);
+    p.apvts.getParameter ("t2_fill")->setValueNotifyingHost (1.0f);
+    CHECK (countPad16() >= 1);
+
+    // save / load keeps the step pattern and the mode
+    p.rollDice (1);
+    const auto saved = p.stepPattern (1).serialise();
+    juce::MemoryBlock state;
+    p.getStateInformation (state);
+    BashProcessor q;
+    q.setPlayConfigDetails (0, 2, 48000.0, 480);
+    q.prepareToPlay (48000.0, 480);
+    q.setStateInformation (state.getData(), (int) state.getSize());
+    CHECK (q.stepMode (1));
+    CHECK (q.stepPattern (1).serialise() == saved);
+
+    // MIDI export in step mode
+    p.exportBars = 1;
+    const auto mid = p.exportMidi (1);
+    CHECK (mid.existsAsFile());
+    juce::MidiFile mf;
+    { juce::FileInputStream in (mid); CHECK (mf.readFrom (in)); }
+    int exported = 0;
+    for (int tr = 0; tr < mf.getNumTracks(); ++tr) for (auto* e : *mf.getTrack (tr)) if (e->message.isNoteOn()) ++exported;
+    CHECK (exported > 0);
+    mid.deleteFile();
+}
+
 int main()
 {
     juce::ScopedJuceInitialiser_GUI init;
@@ -200,6 +285,7 @@ int main()
     testProcessing();
     testExports();
     testKeyLock();
+    testStepMode();
     std::printf ("%d plugin checks, %d failures\n", checks, failures);
     return failures == 0 ? 0 : 1;
 }
