@@ -294,6 +294,17 @@ BashView::BashView (BashProcessor& p)
         b.setButtonText ("TRACK " + juce::String (t + 1));
         b.onClick = [this, t] { selectTrack (t); };
         addAndMakeVisible (b);
+        for (auto [btn, id, tip] : { std::tuple { &muteButtons[(size_t) t], "mute", "Mute track " }, std::tuple { &soloButtons[(size_t) t], "solo", "Solo track " } })
+        {
+            btn->setButtonText (juce::String (id) == "mute" ? "M" : "S");
+            btn->setClickingTogglesState (true);
+            btn->setTooltip (tip + juce::String (t + 1));
+            btn->setColour (juce::TextButton::buttonColourId, colour::panel);
+            btn->setColour (juce::TextButton::buttonOnColourId, juce::String (id) == "mute" ? colour::accent : colour::active.brighter (0.25f));
+            btn->setColour (juce::TextButton::textColourOnId, juce::String (id) == "mute" ? colour::background : colour::accent);
+            addAndMakeVisible (*btn);
+            trackMsAtts.push_back (std::make_unique<ButtonAttachment> (apvts, BashProcessor::pid (t, id), *btn));
+        }
     }
     addAndMakeVisible (stepView);
     regenButton.onClick = [this] { proc.regenerate (currentTrack); stepView.refresh(); };
@@ -595,7 +606,16 @@ void BashView::resized()
     // track selector
     auto tracksRow = area.removeFromTop (44).withTrimmedTop (4);
     const int bw = (tracksRow.getWidth() - 7 * 8) / bash::numTracks;
-    for (auto& b : trackButtons) { b.setBounds (tracksRow.removeFromLeft (bw)); tracksRow.removeFromLeft (8); }
+    for (int t = 0; t < bash::numTracks; ++t)
+    {
+        auto cell = tracksRow.removeFromLeft (bw);
+        tracksRow.removeFromLeft (8);
+        auto ms = cell.removeFromRight (24);
+        cell.removeFromRight (3);
+        trackButtons[(size_t) t].setBounds (cell);
+        muteButtons[(size_t) t].setBounds (ms.removeFromTop (ms.getHeight() / 2).withTrimmedBottom (1));
+        soloButtons[(size_t) t].setBounds (ms.withTrimmedTop (1));
+    }
 
     // steps
     area.removeFromTop (12);

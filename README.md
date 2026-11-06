@@ -71,6 +71,10 @@ Full spec: *BASH! — Software Requirements Specification* (Claude doc).
 
 - `m4l/BASH Key Lock.amxd`: put it before BASH! on the track and BASH! follows the set's key and scale (any Live scale maps to BASH!'s nearest). See `m4l/README.md`
 
+**0.5.1** ✅
+
+- Small **M** (mute) and **S** (solo) buttons next to each track button at the top, the same as the mixer's, so you can mute and solo from any view
+
 **0.5.0** ✅ — MICRO and the master bus
 
 - **MICRO** (its own tab, and a channel on the mixer): everything from the tracks and returns runs through it before the master. 11 effects in four families, each with variations A-D: Micro Loop (Mosaic, Sequencer, Glide), Granules (Haze, Tunnel, Strum), Glitch (Blocks, Interrupt, Arp), Multi Delay (Pattern, Warp). Activity, Repeats, Shape, Time (locked to the tempo), Filter + Resonance with an LFO, Space (Room, Plate, Hall, Cloud reverb) and Decay, Mix, Level, Reverse / Alternate, Hold (freeze) and a die

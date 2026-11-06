@@ -102,6 +102,8 @@ private:
 
     // tracks
     std::array<juce::TextButton, bash::numTracks> trackButtons;
+    std::array<juce::TextButton, bash::numTracks> muteButtons, soloButtons;   // M / S next to each track button
+    std::vector<std::unique_ptr<ButtonAttachment>> trackMsAtts;
     bashui::StepView stepView;
     juce::TextButton regenButton { "Regenerate" }, clearButton { "Clear locks" }, clearMidiButton { "Clear MIDI" };
     std::unique_ptr<bashui::ExportBar> exportBar;
