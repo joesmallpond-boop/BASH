@@ -4,6 +4,7 @@
 
 #include <array>
 #include <cstdint>
+#include <cmath>
 #include <vector>
 
 namespace bash
@@ -111,14 +112,55 @@ namespace bash
     };
 
     /** Brick-wall-ish safety limiter for the master bus (ceiling -0.3 dBFS). */
+    /** Master safety limiter: drive into a ceiling, with a release time. */
+    struct LimiterParams
+    {
+        bool  on = true;
+        float driveDb = 0.0f;       // 0..+18 dB pushed into the limiter
+        float ceilingDb = -0.3f;    // -12..0 dBFS
+        float releaseMs = 120.0f;   // 1..1000 ms
+    };
+
     class Limiter
     {
     public:
         void prepare (double sampleRate);
-        void process (float* l, float* r, int n);
+        void process (float* l, float* r, int n, const LimiterParams& p = {});
         float reduction() const noexcept { return 1.0f - gain; }
+        float reductionDb() const noexcept { return -20.0f * std::log10 (std::max (1.0e-6f, gain)); }
     private:
         double sr = 44100.0;
-        float gain = 1.0f, attack = 0.0f, release = 0.0f;
+        float gain = 1.0f;
+    };
+
+    /** SSL-style bus ("glue") compressor for the master: VCA-style, RMS detector,
+        stepped ratio / attack / release (with program-dependent Auto), makeup,
+        parallel mix and a sidechain high-pass so the kick doesn't pump everything. */
+    struct GlueParams
+    {
+        bool  on = false;
+        float thresholdDb = -10.0f;   // -30..0
+        int   ratio = 1;              // 0: 2:1, 1: 4:1, 2: 10:1
+        int   attack = 3;             // 0.1, 0.3, 1, 3, 10, 30 ms
+        int   release = 4;            // 0.1, 0.3, 0.6, 1.2 s, Auto
+        float makeupDb = 0.0f;        // 0..+15
+        float mix = 1.0f;             // 0..1 (parallel compression below 1)
+        int   sidechainHpf = 1;       // 0 off, 1: 60 Hz, 2: 90 Hz, 3: 150 Hz
+    };
+    const std::vector<const char*>& glueRatioNames();
+    const std::vector<const char*>& glueAttackNames();
+    const std::vector<const char*>& glueReleaseNames();
+    const std::vector<const char*>& glueHpfNames();
+
+    class GlueCompressor
+    {
+    public:
+        void prepare (double sampleRate);
+        void process (float* l, float* r, int n, const GlueParams&);
+        float reductionDb() const noexcept { return grDb; }
+    private:
+        double sr = 44100.0;
+        float rms = 0.0f, grDb = 0.0f, grSlow = 0.0f;
+        float hpL = 0.0f, hpPrev = 0.0f;
     };
 }

@@ -69,8 +69,8 @@ namespace bash
 
         std::array<FxParams, 2> returns {};          // return A / B effect
         std::array<float, 2>    returnLevel { 0.8f, 0.8f };
-        std::array<FxParams, 2> masterFx {};
-        bool   limiter     = true;
+        GlueParams    glue {};            // master bus compressor (before the limiter)
+        LimiterParams limiter {};
         std::array<LfoParams, 2> lfo {};
     };
 
@@ -132,6 +132,9 @@ namespace bash
         TrackSettings&  track (int t)        { return tracks[(size_t) t]; }
         GlobalSettings& global()             { return globals; }
         Pattern&        pattern (int t)      { return patterns[(size_t) t]; }
+        /** Master gain reduction in dB (glue compressor, limiter), for the meters. */
+        float glueReduction() const noexcept    { return glueMeter.load(); }
+        float limiterReduction() const noexcept { return limiterMeter.load(); }
 
         /** Step sequencer pattern for a track: lock stepMutex(t) while reading or editing. */
         StepPattern&    stepPattern (int t)  { return stepStores[(size_t) t].pattern; }
@@ -240,8 +243,10 @@ namespace bash
         std::vector<float>     bufL, bufR, bufMono;   // bufMono: the mono synth, added to both sides
         std::array<std::vector<float>, 2> retL, retR;
         std::array<std::array<FxSlot, 2>, numTracks> trackFx;
-        std::array<FxSlot, 2> returnFx, masterFx;
+        std::array<FxSlot, 2> returnFx;
+        GlueCompressor glue;
         Limiter limiter;
+        std::atomic<float> glueMeter { 0.0f }, limiterMeter { 0.0f };
         bool anySolo = false;
         std::array<float*, 2 * numTracks> directOuts {};
         std::array<std::atomic<float>, numTracks> trackPeak {};

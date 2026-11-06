@@ -836,7 +836,8 @@ static void testMixer()
     // limiter keeps the master under the ceiling even with everything cranked
     for (int t = 0; t < numTracks; ++t) { eng.track (t).enabled = true; eng.track (t).level = 1.0f; eng.track (t).seq.density = 1.0f; eng.track (t).voice.drive = 1.0f; }
     eng.global().master = 1.0f;
-    eng.global().masterFx[0].type = FxType::Fuzz; eng.global().masterFx[0].gnarl = 1.0f;
+    eng.global().limiter.driveDb = 12.0f;
+    eng.global().glue.on = true; eng.global().glue.makeupDb = 15.0f;
     float loud = 0.0f; std::vector<float> L2 (480), R2 (480);
     for (int b = 0; b < 200; ++b)
     {
@@ -1441,6 +1442,58 @@ static void testLibrary()
     CHECK (p.lanes[0].steps[0].on && ! p.lanes[0].steps[1].on && p.lanes[0].steps[10].on);
 }
 
+// ---- master: glue compressor and limiter -----------------------------------------
+static void testMasterDynamics()
+{
+    auto runGlue = [] (GlueParams p, double hz, float amp, double seconds = 1.5)
+    {
+        GlueCompressor g; g.prepare (48000.0);
+        std::vector<float> l (480), r (480);
+        double e = 0; long n = 0;
+        for (int b = 0; b < (int) (seconds * 100); ++b)
+        {
+            for (int i = 0; i < 480; ++i) l[(size_t) i] = r[(size_t) i] = amp * (float) std::sin (2.0 * 3.141592653589793 * hz * (b * 480 + i) / 48000.0);
+            g.process (l.data(), r.data(), 480, p);
+            if (b >= (int) (seconds * 100) - 30) for (float v : l) { e += v * v; ++n; }
+        }
+        return std::make_pair (20.0 * std::log10 (std::sqrt (e / n) * 1.41421356), g.reductionDb());
+    };
+    GlueParams p; p.on = true; p.thresholdDb = -20.0f; p.ratio = 1; p.attack = 2; p.release = 1; p.sidechainHpf = 0;
+    // a -6 dB sine, 14 dB over the threshold at 4:1 -> about 10.5 dB of reduction
+    auto [outDb, gr] = runGlue (p, 440.0, 0.5f);
+    CHECK (std::abs (gr - 10.5f) < 1.5f);
+    CHECK (std::abs (outDb - (-6.02 - gr)) < 0.5);
+    // 10:1 squashes harder, 2:1 less
+    p.ratio = 2; CHECK (runGlue (p, 440.0, 0.5f).second > gr + 1.5f);
+    p.ratio = 0; CHECK (runGlue (p, 440.0, 0.5f).second < gr - 1.5f);
+    p.ratio = 1;
+    // below the threshold nothing happens; makeup adds gain; mix 0 is dry
+    CHECK (runGlue (p, 440.0, 0.02f).second < 0.1f);
+    p.makeupDb = 6.0f; CHECK (runGlue (p, 440.0, 0.5f).first > outDb + 5.0);
+    p.makeupDb = 0.0f; p.mix = 0.0f; CHECK (std::abs (runGlue (p, 440.0, 0.5f).first + 6.02) < 0.2);
+    p.mix = 1.0f;
+    // the sidechain high-pass stops a sub-bass from pumping everything
+    const float subGr = runGlue (p, 40.0, 0.5f).second;
+    p.sidechainHpf = 3;
+    CHECK (runGlue (p, 40.0, 0.5f).second < subGr - 3.0f);
+    // off = untouched
+    p.on = false; CHECK (std::abs (runGlue (p, 440.0, 0.5f).first + 6.02) < 0.1);
+
+    // limiter: ceiling holds, drive pushes the level up to it
+    Limiter lim; lim.prepare (48000.0);
+    LimiterParams lp; lp.ceilingDb = -6.0f; lp.driveDb = 12.0f; lp.releaseMs = 50.0f;
+    std::vector<float> l (480), r (480);
+    float peak = 0.0f;
+    for (int b = 0; b < 100; ++b)
+    {
+        for (int i = 0; i < 480; ++i) l[(size_t) i] = r[(size_t) i] = 0.3f * (float) std::sin (2.0 * 3.141592653589793 * 220.0 * (b * 480 + i) / 48000.0);
+        lim.process (l.data(), r.data(), 480, lp);
+        for (float v : l) peak = std::max (peak, std::abs (v));
+    }
+    CHECK (peak <= 0.5012f && peak > 0.45f);   // -6 dBFS
+    CHECK (lim.reductionDb() > 3.0f);
+}
+
 int main()
 {
     testDeterminism();
@@ -1472,6 +1525,7 @@ int main()
     testStepSequencer();
     testWarp();
     testLibrary();
+    testMasterDynamics();
     std::printf ("%d checks, %d failures\n", checks, failures);
     return failures == 0 ? 0 : 1;
 }

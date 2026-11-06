@@ -56,7 +56,7 @@ namespace bash
         for (int k = 0; k < 2; ++k) { retL[(size_t) k].assign ((size_t) maxBlock, 0.0f); retR[(size_t) k].assign ((size_t) maxBlock, 0.0f); }
         for (auto& tf : trackFx) for (auto& f : tf) f.prepare (sr, maxBlock);
         for (auto& f : returnFx) f.prepare (sr, maxBlock);
-        for (auto& f : masterFx) f.prepare (sr, maxBlock);
+        glue.prepare (sr);
         limiter.prepare (sr);
         events.reserve (256);
         for (auto& v : synths)  v.prepare (sr);
@@ -430,12 +430,16 @@ namespace bash
             for (int i = 0; i < n; ++i) { l[i] += retL[(size_t) k][(size_t) i] * g; r[i] += retR[(size_t) k][(size_t) i] * g; }
         }
 
-        // master
-        for (int k = 0; k < 2; ++k)
-            masterFx[(size_t) k].process (l, r, n, globals.masterFx[(size_t) k], bpm);
+        // master: glue compressor, fader, limiter
+        glue.process (l, r, n, globals.glue);
+        glueMeter.store (glue.reductionDb());
         for (int i = 0; i < n; ++i) { l[i] *= globals.master; r[i] *= globals.master; }
-        if (globals.limiter)
-            limiter.process (l, r, n);
+        if (globals.limiter.on)
+        {
+            limiter.process (l, r, n, globals.limiter);
+            limiterMeter.store (limiter.reductionDb());
+        }
+        else limiterMeter.store (0.0f);
     }
 
     void Engine::mixTrack (int t, float* l, float* r, int n, int offsetInBlock, double bpm)
@@ -626,8 +630,8 @@ namespace bash
             for (int t = 0; t < numTracks; ++t)
                 if (t != o.track) { e->tracks[(size_t) t].enabled = false; e->tracks[(size_t) t].sendA = e->tracks[(size_t) t].sendB = 0.0f; }
             e->tracks[(size_t) o.track].enabled = true;
-            g.masterFx[0].type = g.masterFx[1].type = FxType::None;
-            g.limiter = false;
+            g.glue.on = false;
+            g.limiter.on = false;
             g.master  = 1.0f;
             if (! o.withFx)
             {
@@ -639,7 +643,7 @@ namespace bash
         else if (! o.withFx)
         {
             for (auto& tr : e->tracks) { tr.inserts[0].type = tr.inserts[1].type = FxType::None; tr.sendA = tr.sendB = 0.0f; }
-            g.masterFx[0].type = g.masterFx[1].type = FxType::None;
+            g.glue.on = false;
         }
 
         const double barSeconds = 4.0 * 60.0 / std::max (20.0, o.bpm);

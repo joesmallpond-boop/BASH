@@ -577,20 +577,80 @@ namespace bash
     {
         sr = sampleRate;
         gain = 1.0f;
-        release = (float) (1.0 - std::exp (-1.0 / (0.12 * sr)));
     }
 
-    void Limiter::process (float* l, float* r, int n)
+    void Limiter::process (float* l, float* r, int n, const LimiterParams& p)
     {
-        const float ceiling = 0.966f;   // -0.3 dBFS
+        const float ceiling = std::pow (10.0f, std::clamp (p.ceilingDb, -12.0f, 0.0f) / 20.0f);
+        const float drive = std::pow (10.0f, std::clamp (p.driveDb, 0.0f, 18.0f) / 20.0f);
+        const float release = (float) (1.0 - std::exp (-1.0 / (std::clamp ((double) p.releaseMs, 1.0, 1000.0) * 0.001 * sr)));
         for (int i = 0; i < n; ++i)
         {
-            const float peak = std::max (std::abs (l[i]), std::abs (r[i]));
+            const float a = l[i] * drive, b = r[i] * drive;
+            const float peak = std::max (std::abs (a), std::abs (b));
             const float needed = peak * gain > ceiling ? ceiling / std::max (peak, 1.0e-9f) : 1.0f;
             if (needed < gain) gain = needed;
             else               gain += (std::min (1.0f, needed) - gain) * release;
-            l[i] = std::clamp (l[i] * gain, -ceiling, ceiling);
-            r[i] = std::clamp (r[i] * gain, -ceiling, ceiling);
+            l[i] = std::clamp (a * gain, -ceiling, ceiling);
+            r[i] = std::clamp (b * gain, -ceiling, ceiling);
+        }
+    }
+
+    const std::vector<const char*>& glueRatioNames()   { static const std::vector<const char*> v { "2:1", "4:1", "10:1" }; return v; }
+    const std::vector<const char*>& glueAttackNames()  { static const std::vector<const char*> v { "0.1 ms", "0.3 ms", "1 ms", "3 ms", "10 ms", "30 ms" }; return v; }
+    const std::vector<const char*>& glueReleaseNames() { static const std::vector<const char*> v { "0.1 s", "0.3 s", "0.6 s", "1.2 s", "Auto" }; return v; }
+    const std::vector<const char*>& glueHpfNames()     { static const std::vector<const char*> v { "Off", "60 Hz", "90 Hz", "150 Hz" }; return v; }
+
+    void GlueCompressor::prepare (double sampleRate)
+    {
+        sr = sampleRate;
+        rms = grDb = grSlow = hpL = hpPrev = 0.0f;
+    }
+
+    void GlueCompressor::process (float* l, float* r, int n, const GlueParams& p)
+    {
+        if (! p.on) { grDb = 0.0f; return; }
+        static constexpr float ratios[] = { 2.0f, 4.0f, 10.0f };
+        static constexpr double attacks[] = { 0.0001, 0.0003, 0.001, 0.003, 0.01, 0.03 };
+        static constexpr double releases[] = { 0.1, 0.3, 0.6, 1.2 };
+        static constexpr double hpfs[] = { 0.0, 60.0, 90.0, 150.0 };
+        const float ratio = ratios[std::clamp (p.ratio, 0, 2)];
+        const float slope = 1.0f - 1.0f / ratio;
+        const bool autoRelease = p.release >= 4;
+        auto coef = [this] (double seconds) { return (float) (1.0 - std::exp (-1.0 / (std::max (1.0e-5, seconds) * sr))); };
+        const float att = coef (attacks[std::clamp (p.attack, 0, 5)]);
+        const float rel = coef (autoRelease ? 0.1 : releases[std::clamp (p.release, 0, 3)]);
+        const float relSlow = coef (1.2);
+        const float rmsCoef = coef (0.005);
+        const double fc = hpfs[std::clamp (p.sidechainHpf, 0, 3)];
+        const float hpA = fc > 0.0 ? (float) std::exp (-2.0 * 3.141592653589793 * fc / sr) : 0.0f;
+        const float makeup = std::pow (10.0f, std::clamp (p.makeupDb, 0.0f, 15.0f) / 20.0f);
+        const float mix = std::clamp (p.mix, 0.0f, 1.0f);
+        const float knee = 4.0f;
+        for (int i = 0; i < n; ++i)
+        {
+            // sidechain: mono, high-passed, RMS
+            float sc = 0.5f * (l[i] + r[i]);
+            if (fc > 0.0) { const float y = hpA * (hpL + sc - hpPrev); hpPrev = sc; hpL = y; sc = y; }
+            rms += (sc * sc - rms) * rmsCoef;
+            const float levelDb = 10.0f * std::log10 (rms + 1.0e-12f) + 3.0f;   // +3: RMS of a sine reads as its peak
+            // gain computer with a soft knee
+            const float over = levelDb - p.thresholdDb;
+            float target = 0.0f;
+            if (over > knee * 0.5f) target = over * slope;
+            else if (over > -knee * 0.5f) { const float x = over + knee * 0.5f; target = slope * x * x / (2.0f * knee); }
+            // ballistics (Auto: a fast release for peaks riding on a slow one for sustained material)
+            if (target > grDb) grDb += (target - grDb) * att;
+            else               grDb += (target - grDb) * rel;
+            if (autoRelease)
+            {
+                if (target > grSlow) grSlow += (target - grSlow) * att * 0.2f;
+                else                 grSlow += (target - grSlow) * relSlow;
+                grDb = std::max (grDb, grSlow * 0.7f);
+            }
+            const float g = std::pow (10.0f, -grDb / 20.0f) * makeup;
+            l[i] = l[i] * (1.0f - mix) + l[i] * g * mix;
+            r[i] = r[i] * (1.0f - mix) + r[i] * g * mix;
         }
     }
 }

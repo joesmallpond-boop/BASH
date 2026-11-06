@@ -74,7 +74,7 @@ int main (int argc, char** argv)
             };
             auto [l0, r0] = mainDb();
             std::printf ("roll %d main L %.1f R %.1f\n", roll, l0, r0);
-            for (auto id : { "retatype", "retbtype", "mfx1type", "mfx2type" })
+            for (auto id : { "retatype", "retbtype" })
             {
                 p.apvts.getParameter (id)->setValueNotifyingHost (0.0f);
                 run (0.2, nullptr);
@@ -102,7 +102,7 @@ int main (int argc, char** argv)
                 }
                 else
                 {
-                    for (auto id : { "reta", "retb", "mfx1", "mfx2" })
+                    for (auto id : { "reta", "retb" })
                     {
                         const juce::String s (id);
                         std::printf ("    %s %s a %s b %s g %s\n", id, pv (s + "type").toRawUTF8(), pv (s + "a").toRawUTF8(), pv (s + "b").toRawUTF8(), pv (s + "gnarl").toRawUTF8());

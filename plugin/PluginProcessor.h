@@ -98,6 +98,10 @@ public:
     void clearCell (int i);
     void loadFactoryKit (int k);
 
+    // master meters (dB of gain reduction)
+    float glueReduction() const noexcept    { return engine.glueReduction(); }
+    float limiterReduction() const noexcept { return engine.limiterReduction(); }
+
     // factory library (rendered to disk in the background on first run)
     FactoryLibrary& library()                          { return *factoryLibrary; }
     /** Load library kit k onto the pads; optionally its starter beat onto `track` (step mode). */
@@ -165,7 +169,8 @@ private:
     FxPtrs fxPtrs (const juce::String& prefix);
     static bash::FxParams fxFrom (const FxPtrs&);
     FxPtrs retA, retB;
-    std::array<FxPtrs, 2> mfx;
+    std::atomic<float> *pLimDrive = nullptr, *pLimCeil = nullptr, *pLimRel = nullptr, *pGlueOn = nullptr, *pGlueThr = nullptr,
+                       *pGlueRatio = nullptr, *pGlueAtt = nullptr, *pGlueRel = nullptr, *pGlueMakeup = nullptr, *pGlueMix = nullptr, *pGlueHpf = nullptr;
     std::atomic<float> *pLimiter = nullptr, *pRetALevel = nullptr, *pRetBLevel = nullptr;
     struct LfoPtrs { std::atomic<float> *shape = nullptr, *rate = nullptr, *sync = nullptr, *div = nullptr; };
     std::array<LfoPtrs, 2> lfoP;

@@ -158,8 +158,6 @@ void MixerPanel::buildMasterStrip (Strip& s)
     s.name.setText ("MASTER", juce::dontSendNotification);
     s.chip = std::make_unique<DragChip> ("MIX", [this] { return proc.exportAudio (-1); });
     s.chip->setTooltip ("Drag the whole mix out as one WAV");
-    s.fx.push_back (std::make_unique<FxSlotUI> (proc.apvts, "mfx1"));
-    s.fx.push_back (std::make_unique<FxSlotUI> (proc.apvts, "mfx2"));
     addAndMakeVisible (s.limiter);
     s.buttonAtts.push_back (std::make_unique<ButtonAttachment> (proc.apvts, "limiter", s.limiter));
     addCommon (s);

@@ -154,6 +154,18 @@ APVTS::ParameterLayout BashProcessor::createLayout()
     global->addChild (std::make_unique<AudioParameterBool>   (ParameterID { "play", 1 },   "Play", false));
     global->addChild (floatParam (ParameterID { "master", 1 }, "Master", NormalisableRange<float> (0.0f, 1.0f), 0.8f, 2));
     global->addChild (std::make_unique<AudioParameterBool> (ParameterID { "limiter", 1 }, "Limiter", true));
+    global->addChild (floatParam (ParameterID { "lim_drive", 1 }, "Limiter Drive", NormalisableRange<float> (0.0f, 18.0f, 0.1f), 0.0f, 1, " dB"));
+    global->addChild (floatParam (ParameterID { "lim_ceil", 1 }, "Limiter Ceiling", NormalisableRange<float> (-12.0f, 0.0f, 0.1f), -0.3f, 1, " dB"));
+    global->addChild (floatParam (ParameterID { "lim_rel", 1 }, "Limiter Release", skewed (1.0f, 1000.0f, 100.0f), 120.0f, 0, " ms"));
+    auto names = [] (const std::vector<const char*>& v) { StringArray a; for (auto* n : v) a.add (n); return a; };
+    global->addChild (std::make_unique<AudioParameterBool> (ParameterID { "glue_on", 1 }, "Glue On", false));
+    global->addChild (floatParam (ParameterID { "glue_thr", 1 }, "Glue Threshold", NormalisableRange<float> (-30.0f, 0.0f, 0.1f), -10.0f, 1, " dB"));
+    global->addChild (std::make_unique<AudioParameterChoice> (ParameterID { "glue_ratio", 1 }, "Glue Ratio", names (bash::glueRatioNames()), 1));
+    global->addChild (std::make_unique<AudioParameterChoice> (ParameterID { "glue_att", 1 }, "Glue Attack", names (bash::glueAttackNames()), 3));
+    global->addChild (std::make_unique<AudioParameterChoice> (ParameterID { "glue_rel", 1 }, "Glue Release", names (bash::glueReleaseNames()), 4));
+    global->addChild (floatParam (ParameterID { "glue_makeup", 1 }, "Glue Makeup", NormalisableRange<float> (0.0f, 15.0f, 0.1f), 0.0f, 1, " dB"));
+    global->addChild (floatParam (ParameterID { "glue_mix", 1 }, "Glue Mix", NormalisableRange<float> (0.0f, 1.0f), 1.0f, 2));
+    global->addChild (std::make_unique<AudioParameterChoice> (ParameterID { "glue_hpf", 1 }, "Glue Sidechain HPF", names (bash::glueHpfNames()), 1));
     layout.add (std::move (global));
 
     auto mix = std::make_unique<AudioProcessorParameterGroup> ("mixer", "Mixer", "|");
@@ -161,8 +173,6 @@ APVTS::ParameterLayout BashProcessor::createLayout()
     addFxParams (*mix, "retb",  "Return B", (int) bash::FxType::TapeDelay, 0.55f, 0.4f);
     mix->addChild (floatParam (ParameterID { "retalevel", 1 }, "Return A Level", NormalisableRange<float> (0.0f, 1.0f), 0.8f, 2));
     mix->addChild (floatParam (ParameterID { "retblevel", 1 }, "Return B Level", NormalisableRange<float> (0.0f, 1.0f), 0.8f, 2));
-    addFxParams (*mix, "mfx1", "Master FX 1", 0, 0.5f, 0.5f);
-    addFxParams (*mix, "mfx2", "Master FX 2", 0, 0.5f, 0.5f);
     layout.add (std::move (mix));
 
     auto mod = std::make_unique<AudioProcessorParameterGroup> ("mod", "Modulation", "|");
@@ -277,7 +287,11 @@ BashProcessor::BashProcessor()
         lfoP[(size_t) i] = { apvts.getRawParameterValue (pre + "shape"), apvts.getRawParameterValue (pre + "rate"),
                              apvts.getRawParameterValue (pre + "sync"), apvts.getRawParameterValue (pre + "div") };
     }
-    mfx[0] = fxPtrs ("mfx1"); mfx[1] = fxPtrs ("mfx2");
+    for (auto [ptr, id] : { std::pair { &pLimDrive, "lim_drive" }, std::pair { &pLimCeil, "lim_ceil" }, std::pair { &pLimRel, "lim_rel" },
+                            std::pair { &pGlueOn, "glue_on" }, std::pair { &pGlueThr, "glue_thr" }, std::pair { &pGlueRatio, "glue_ratio" },
+                            std::pair { &pGlueAtt, "glue_att" }, std::pair { &pGlueRel, "glue_rel" }, std::pair { &pGlueMakeup, "glue_makeup" },
+                            std::pair { &pGlueMix, "glue_mix" }, std::pair { &pGlueHpf, "glue_hpf" } })
+        *ptr = apvts.getRawParameterValue (id);
 
     for (int t = 0; t < bash::numTracks; ++t)
     {
@@ -379,13 +393,22 @@ void BashProcessor::pullParameters()
     g.hostSync   = load (pSync) > 0.5f;
     g.playing    = load (pPlay) > 0.5f;
     g.master     = load (pMaster);
-    g.limiter    = load (pLimiter) > 0.5f;
+    g.limiter.on        = load (pLimiter) > 0.5f;
+    g.limiter.driveDb   = load (pLimDrive);
+    g.limiter.ceilingDb = load (pLimCeil);
+    g.limiter.releaseMs = load (pLimRel);
+    g.glue.on           = load (pGlueOn) > 0.5f;
+    g.glue.thresholdDb  = load (pGlueThr);
+    g.glue.ratio        = (int) load (pGlueRatio);
+    g.glue.attack       = (int) load (pGlueAtt);
+    g.glue.release      = (int) load (pGlueRel);
+    g.glue.makeupDb     = load (pGlueMakeup);
+    g.glue.mix          = load (pGlueMix);
+    g.glue.sidechainHpf = (int) load (pGlueHpf);
     g.returns[0] = fxFrom (retA);
     g.returns[1] = fxFrom (retB);
     g.returnLevel[0] = load (pRetALevel);
     g.returnLevel[1] = load (pRetBLevel);
-    g.masterFx[0] = fxFrom (mfx[0]);
-    g.masterFx[1] = fxFrom (mfx[1]);
     for (int i = 0; i < 2; ++i)
     {
         auto& lp = g.lfo[(size_t) i];
