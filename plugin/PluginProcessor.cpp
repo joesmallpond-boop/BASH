@@ -962,6 +962,75 @@ void BashProcessor::loadFactoryKit (int k)
     for (int i = 0; i < bash::numCells; ++i)
         if (kits[(size_t) k].cells[(size_t) i] >= 0)
             setCellFm (i, kits[(size_t) k].cells[(size_t) i]);
+    kitName = kits[(size_t) k].name;
+}
+
+// ---- factory library (message thread) --------------------------------------------
+juce::String BashProcessor::loadLibraryShot (int pad, const std::string& sound)
+{
+    const auto file = factoryLibrary->oneShotFile (sound);
+    if (! file.existsAsFile())
+        return factoryLibrary->ready() ? "Missing " + file.getFileName() : "The sound library is still being built...";
+    const auto err = loadCellSample (pad, file);
+    if (err.isEmpty()) cells[(size_t) pad].name = file.getFileNameWithoutExtension();
+    return err;
+}
+
+juce::String BashProcessor::loadLibraryKit (int k, int track)
+{
+    const auto& kits = bash::library::kits();
+    if (k < 0 || k >= (int) kits.size()) return {};
+    if (! factoryLibrary->ready()) return "The sound library is still being built...";
+    const auto& kit = kits[(size_t) k];
+    juce::String problems;
+    for (int i = 0; i < bash::numCells; ++i)
+    {
+        const auto& pad = kit.pads[(size_t) i];
+        if (pad.sound.empty()) { clearCell (i); continue; }
+        const auto err = loadLibraryShot (i, pad.sound);
+        if (err.isNotEmpty()) { problems = err; continue; }
+        auto c = engine.cell (i);
+        c.tune = pad.tune;
+        c.gain = juce::Decibels::decibelsToGain (pad.gainDb);
+        c.pan = pad.pan;
+        c.choke = pad.choke;
+        engine.setCell (i, c);
+    }
+    kitName = kit.name;
+    if (track >= 0 && ! kit.groove.empty())
+        for (int g = 0; g < (int) bash::grooves::all().size(); ++g)
+            if (bash::grooves::all()[(size_t) g].name == kit.groove) { applyGroove (track, g); break; }
+    return problems;
+}
+
+juce::String BashProcessor::loadLibraryLoop (int t, int index)
+{
+    const auto& loops = bash::library::loops();
+    if (index < 0 || index >= (int) loops.size()) return {};
+    const auto file = factoryLibrary->fileFor (loops[(size_t) index]);
+    if (! file.existsAsFile()) return "The sound library is still being built...";
+    return loadSample (t, file, true, loops[(size_t) index].bpm);
+}
+
+void BashProcessor::applyGroove (int t, int index)
+{
+    const auto& all = bash::grooves::all();
+    if (index < 0 || index >= (int) all.size()) return;
+    const auto& g = all[(size_t) index];
+    pushDiceSnapshot (t);   // the die's Undo brings the old pattern back
+    editSteps (t, [&g] (bash::StepPattern& p) { bash::grooves::apply (g, p); });
+    auto set = [this, t] (const char* id, float plain)
+    {
+        if (auto* p = apvts.getParameter (pid (t, id)))
+        {
+            p->beginChangeGesture();
+            p->setValueNotifyingHost (p->convertTo0to1 (plain));
+            p->endChangeGesture();
+        }
+    };
+    set ("swing", g.swing);
+    set ("rate", (float) g.rateIndex);
+    set ("mode", 1.0f);
 }
 
 juce::ValueTree BashProcessor::kitToTree()

@@ -24,6 +24,11 @@ int main (int argc, char** argv)
         p->setValueNotifyingHost (p->convertTo0to1 ((float) juce::String (argv[3]).getIntValue()));
     }
 
+    if (std::getenv ("BASH_SNAPSHOT_KIT"))
+    {
+        for (int i = 0; i < 600 && ! proc.library().ready(); ++i) juce::Thread::sleep (50);
+        proc.loadLibraryKit (std::atoi (std::getenv ("BASH_SNAPSHOT_KIT")), track - 1);
+    }
     if (std::getenv ("BASH_SNAPSHOT_STEP"))
     {
         proc.apvts.getParameter ("t" + juce::String (track) + "_mode")->setValueNotifyingHost (1.0f);

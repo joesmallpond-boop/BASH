@@ -302,6 +302,10 @@ SamplerPanel::SamplerPanel (BashProcessor& p) : proc (p), wave (p)
     addAndMakeVisible (pitchFollow);
     addAndMakeVisible (reverse);
 
+    loopsButton.setTooltip ("Ready-to-go BASH! loops: breaks, basses, chords, vox and textures");
+    loopsButton.onClick = [this] { showLoopsMenu(); };
+    addAndMakeVisible (loopsButton);
+
     // Warp: stretch the sample from its own tempo to the session tempo (pitch stays)
     warpButton.setTooltip ("Warp: time-stretch the sample to the session tempo without changing its pitch");
     addAndMakeVisible (warpButton);
@@ -410,13 +414,14 @@ void SamplerPanel::resized()
     area.removeFromTop (8);
 
     auto tools = area.removeFromTop (30);
-    loadButton.setBounds (tools.removeFromLeft (70)); tools.removeFromLeft (12);
+    loadButton.setBounds (tools.removeFromLeft (62)); tools.removeFromLeft (6);
+    loopsButton.setBounds (tools.removeFromLeft (66)); tools.removeFromLeft (10);
     transientButton.setBounds (tools.removeFromLeft (96)); tools.removeFromLeft (4);
-    sensitivity.setBounds (tools.removeFromLeft (120)); tools.removeFromLeft (12);
+    sensitivity.setBounds (tools.removeFromLeft (100)); tools.removeFromLeft (10);
     gridButton.setBounds (tools.removeFromLeft (60)); tools.removeFromLeft (4);
     gridDivisions.setBounds (tools.removeFromLeft (70)); tools.removeFromLeft (12);
     randomButton.setBounds (tools.removeFromLeft (80)); tools.removeFromLeft (4);
-    randomCount.setBounds (tools.removeFromLeft (120)); tools.removeFromLeft (12);
+    randomCount.setBounds (tools.removeFromLeft (100)); tools.removeFromLeft (10);
     clearButton.setBounds (tools.removeFromLeft (64)); tools.removeFromLeft (12);
     info.setBounds (tools);
 
@@ -450,4 +455,38 @@ void SamplerPanel::forEachKnob (const std::function<void (Knob&, const juce::Str
         { &winStart, "winstart" }, { &winSize, "winsize" }, { &tune, "tune" }, { &attack, "sattack" },
         { &release, "srelease" }, { &level, "level" }, { &pan, "pan" } };
     for (auto& [k, id] : knobs) f (*k, BashProcessor::pid (track, id));
+}
+
+
+void SamplerPanel::showLoopsMenu()
+{
+    auto& lib = proc.library();
+    if (! lib.ready())
+    {
+        showMessage (lib.error().isNotEmpty() ? lib.error() : "Building the sound library (" + juce::String ((int) (lib.progress() * 100)) + "%)...");
+        return;
+    }
+    juce::PopupMenu m;
+    m.addSectionHeader ("BASH! loops (warped to your tempo)");
+    const auto& loops = bash::library::loops();
+    juce::String category;
+    juce::PopupMenu sub;
+    auto flush = [&] { if (category.isNotEmpty()) m.addSubMenu (category, sub); sub = {}; };
+    const auto current = proc.sampleRef (track) != nullptr ? juce::File (juce::String (proc.sampleRef (track)->path)).getFileNameWithoutExtension() : juce::String();
+    for (int i = 0; i < (int) loops.size(); ++i)
+    {
+        const juce::String cat (loops[(size_t) i].category);
+        if (cat != category) { flush(); category = cat; }
+        sub.addItem (1 + i, juce::String (loops[(size_t) i].name) + " bpm", true, current == juce::String (loops[(size_t) i].name));
+    }
+    flush();
+    m.addSeparator();
+    m.addItem (5000, "Show the library folder");
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&loopsButton), [this] (int r)
+    {
+        if (r == 5000) { FactoryLibrary::root().revealToUser(); return; }
+        if (r <= 0) return;
+        showMessage (proc.loadLibraryLoop (track, r - 1));
+        wave.setTrack (track);
+    });
 }

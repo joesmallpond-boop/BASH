@@ -81,7 +81,11 @@ namespace bashui
 
         juce::Label title, info;
         juce::TextButton sampleButton { "Sample" }, fmButton { "FM" }, clearButton { "Clear" }, loadButton { "Load" };
-        juce::ComboBox kitBox, presetBox;
+        juce::ComboBox presetBox;
+        juce::TextButton kitButton { "Kits" }, libraryButton { "Library" };
+        bool kitWithBeat = true;
+        void showKitMenu();
+        void showLibraryMenu();
         std::vector<std::unique_ptr<juce::TextButton>> startPoints;
 
         // sample editor

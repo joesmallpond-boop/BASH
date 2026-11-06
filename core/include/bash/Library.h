@@ -63,6 +63,7 @@ namespace bash
             std::string style;   // shown in the menu
             double bpm;          // where it sits best
             std::array<KitPad, 16> pads;   // lanes follow drumLaneRole(): kick, snare, clap, hats, ...
+            std::string groove {};         // its starter beat (a groove name)
         };
         const std::vector<Kit>& kits();
 

@@ -5,6 +5,7 @@
 #include <juce_audio_formats/juce_audio_formats.h>
 
 #include "bash/Engine.h"
+#include "FactoryLibrary.h"
 #include "bash/Slices.h"
 #include "bash/Drums.h"
 
@@ -96,6 +97,16 @@ public:
     void setCellFm (int i, int presetIndex);
     void clearCell (int i);
     void loadFactoryKit (int k);
+
+    // factory library (rendered to disk in the background on first run)
+    FactoryLibrary& library()                          { return *factoryLibrary; }
+    /** Load library kit k onto the pads; optionally its starter beat onto `track` (step mode). */
+    juce::String loadLibraryKit (int k, int track = -1);
+    juce::String loadLibraryShot (int pad, const std::string& categoryAndName);
+    juce::String loadLibraryLoop (int track, int loopIndex);
+    /** Write a groove into a track's step sequencer (switches it to step mode, sets swing and rate). */
+    void applyGroove (int track, int grooveIndex);
+    juce::String currentKitName() const                { return kitName; }
     void auditionCell (int i)                          { engine.audition (i); }
 
     // modulation
@@ -207,6 +218,8 @@ private:
         double readyRatio = 1.0;
     };
     std::array<WarpState, bash::numTracks> warps;
+    juce::SharedResourcePointer<FactoryLibrary> factoryLibrary;
+    juce::String kitName;
     double lastWarpTarget = 0.0;
     juce::uint32 warpTargetChanged = 0;
     void installWarped (int t, std::shared_ptr<bash::SampleData>, double ratio);

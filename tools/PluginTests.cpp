@@ -359,6 +359,63 @@ static void testWarp()
     file.deleteFile();
 }
 
+static void testLibrary()
+{
+    BashProcessor p;
+    p.setPlayConfigDetails (0, 2, 48000.0, 512);
+    p.prepareToPlay (48000.0, 512);
+    for (int i = 0; i < 600 && ! p.library().ready(); ++i) juce::Thread::sleep (50);   // first run renders it
+    CHECK (p.library().ready());
+    CHECK (FactoryLibrary::root().getChildFile ("Drums/Kicks/Sub Kick F.wav").existsAsFile());
+    CHECK (FactoryLibrary::root().getChildFile ("Loops/Breaks/Jungle Break 170.wav").existsAsFile());
+
+    // a kit with its starter beat on track 2 (a drum track)
+    int rollers = -1;
+    for (int k = 0; k < (int) bash::library::kits().size(); ++k) if (bash::library::kits()[(size_t) k].name == "Rollers") rollers = k;
+    CHECK (rollers >= 0);
+    CHECK (p.loadLibraryKit (rollers, 1).isEmpty());
+    CHECK (p.cellName (0) == "Roller Kick 2");
+    CHECK (p.cell (0).kind == bash::DrumCell::Kind::Sample && p.cellSample (0) != nullptr);
+    CHECK (p.cell (3).choke == 1 && p.cell (4).choke == 1);   // hats choke each other
+    CHECK (p.stepMode (1));
+    CHECK (p.stepPattern (1).activeLanes() >= 3);
+    CHECK (p.currentKitName() == "Rollers");
+    CHECK (p.undoDice (1));                                   // the beat can be undone
+    CHECK (p.stepPattern (1).activeLanes() == 0);
+
+    // a single sound on a pad
+    CHECK (p.loadLibraryShot (7, "Percussion/Glass 1").isEmpty());
+    CHECK (p.cellName (7) == "Glass 1");
+
+    // a loop in the slicer comes in at its own tempo and is warped
+    int reese = -1;
+    for (int i = 0; i < (int) bash::library::loops().size(); ++i) if (bash::library::loops()[(size_t) i].name == "Reese 174") reese = i;
+    CHECK (reese >= 0);
+    CHECK (p.loadLibraryLoop (0, reese).isEmpty());
+    CHECK (std::abs (p.sourceBpm (0) - 174.0) < 1.0e-6);
+    CHECK (p.slices (0).size() >= 2);
+
+    // a groove: pattern, swing and rate
+    int garage = -1;
+    for (int i = 0; i < (int) bash::grooves::all().size(); ++i) if (bash::grooves::all()[(size_t) i].name == "2-Step Classic") garage = i;
+    p.applyGroove (2, garage);
+    CHECK (p.stepMode (2));
+    CHECK (std::abs (value (p, "t3_swing") - p.apvts.getParameter ("t3_swing")->convertTo0to1 (0.28f)) < 0.01f);
+    const auto sp = p.stepPattern (2);
+    CHECK (sp.lanes[0].steps[0].on && sp.lanes[0].steps[10].on && sp.lanes[1].steps[4].on);
+
+    // the kit plays
+    for (int t = 1; t <= 8; ++t) p.apvts.getParameter ("t" + juce::String (t) + "_on")->setValueNotifyingHost (t == 3 ? 1.0f : 0.0f);
+    p.apvts.getParameter ("t3_engine")->setValueNotifyingHost (p.apvts.getParameter ("t3_engine")->convertTo0to1 (2.0f));
+    p.apvts.getParameter ("sync")->setValueNotifyingHost (0.0f);
+    p.apvts.getParameter ("play")->setValueNotifyingHost (1.0f);
+    juce::AudioBuffer<float> buf (2, 512);
+    juce::MidiBuffer midi;
+    float peak = 0.0f;
+    for (int b = 0; b < 300; ++b) { p.processBlock (buf, midi); peak = std::max (peak, buf.getMagnitude (0, 512)); }
+    CHECK (peak > 0.05f);
+}
+
 int main()
 {
     juce::ScopedJuceInitialiser_GUI init;
@@ -369,6 +426,7 @@ int main()
     testKeyLock();
     testStepMode();
     testWarp();
+    testLibrary();
     std::printf ("%d plugin checks, %d failures\n", checks, failures);
     return failures == 0 ? 0 : 1;
 }

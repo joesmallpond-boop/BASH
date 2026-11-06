@@ -59,10 +59,14 @@ namespace bashui
         for (int i = 0; i < 4; ++i)
         {
             auto& b = pageButtons[(size_t) i];
-            b.setButtonText (juce::String (i * 16 + 1) + "-" + juce::String (i * 16 + 16));
+            b.setButtonText (juce::String (i + 1));
+            b.setTooltip ("Steps " + juce::String (i * 16 + 1) + "-" + juce::String (i * 16 + 16));
             b.onClick = [this, i] { page = i; updateInspector(); repaint(); };
             addAndMakeVisible (b);
         }
+        groovesButton.setTooltip ("Groove presets: UKG, dubstep, DnB, jungle, broken beat, techno, IDM, beat tape...");
+        groovesButton.onClick = [this] { showGroovesMenu(); };
+        addAndMakeVisible (groovesButton);
         clearButton.setTooltip ("Clear every step on this track (lane settings stay)");
         clearButton.onClick = [this] { edit ([] (bash::StepPattern& sp) { sp.clear(); }); };
         addAndMakeVisible (clearButton);
@@ -219,12 +223,13 @@ namespace bashui
         auto r = getLocalBounds();
         auto bar = r.removeFromTop (28);
         bar.removeFromLeft (toolbarReserved);
-        clearButton.setBounds (bar.removeFromRight (56)); bar.removeFromRight (8);
-        for (int i = 3; i >= 0; --i) { pageButtons[(size_t) i].setBounds (bar.removeFromRight (44)); bar.removeFromRight (3); }
+        clearButton.setBounds (bar.removeFromRight (52)); bar.removeFromRight (6);
+        groovesButton.setBounds (bar.removeFromRight (72)); bar.removeFromRight (8);
+        for (int i = 3; i >= 0; --i) { pageButtons[(size_t) i].setBounds (bar.removeFromRight (40)); bar.removeFromRight (3); }
         bar.removeFromRight (6);
-        swing.setBounds (bar.removeFromRight (80)); bar.removeFromRight (4);
+        swing.setBounds (bar.removeFromRight (64)); bar.removeFromRight (4);
         swingLabel.setBounds (bar.removeFromRight (42)); bar.removeFromRight (6);
-        autoFillBox.setBounds (bar.removeFromRight (112)); bar.removeFromRight (4);
+        autoFillBox.setBounds (bar.removeFromRight (104)); bar.removeFromRight (4);
         autoFillLabel.setBounds (bar.removeFromRight (60)); bar.removeFromRight (6);
         fillButton.setBounds (bar.removeFromRight (std::min (64, bar.getWidth())));
 
@@ -578,6 +583,33 @@ namespace bashui
             if (r == 101) { edit ([lane] (bash::StepPattern& p) { for (auto& s : p.lanes[(size_t) lane].steps) s = bash::Step{}; }); return; }
             edit ([lane, r] (bash::StepPattern& p) { p.lanes[(size_t) lane].algo = (bash::LaneAlgo) (r - 1); });
             updateInspector();
+        });
+    }
+
+    void StepPanel::showGroovesMenu()
+    {
+        juce::PopupMenu m;
+        m.addSectionHeader ("Groove presets (written for a 16-pad kit: kick, snare, clap, hats...)");
+        const auto& gs = bash::grooves::all();
+        juce::String style;
+        juce::PopupMenu sub;
+        auto flush = [&] { if (style.isNotEmpty()) m.addSubMenu (style, sub); sub = {}; };
+        for (int i = 0; i < (int) gs.size(); ++i)
+        {
+            const juce::String st (gs[(size_t) i].style);
+            if (st != style) { flush(); style = st; }
+            sub.addItem (1 + i, juce::String (gs[(size_t) i].name) + "   " + juce::String ((int) gs[(size_t) i].bpm));
+        }
+        flush();
+        m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&groovesButton), [this] (int r)
+        {
+            if (r <= 0) return;
+            const auto& g = bash::grooves::all()[(size_t) (r - 1)];
+            proc.applyGroove (track, r - 1);
+            refresh();
+            updateInspector();
+            if (onMessage) onMessage ("Groove: " + juce::String (g.style) + " / " + juce::String (g.name) + ", written for "
+                                      + juce::String ((int) g.bpm) + " bpm. The track die's menu can undo it.");
         });
     }
 }

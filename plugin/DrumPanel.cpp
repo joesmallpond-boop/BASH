@@ -207,19 +207,12 @@ DrumPanel::DrumPanel (BashProcessor& p) : proc (p), grid (p), wave (p)
     fmButton.onClick     = [this] { proc.setCellFm (cell, bash::fmStartPoints()[0].preset); selectCell (cell); proc.auditionCell (cell); };
     clearButton.onClick  = [this] { proc.clearCell (cell); selectCell (cell); };
 
-    kitBox.setTextWhenNothingSelected ("Factory kits");
-    for (int k = 0; k < (int) bash::factoryKits().size(); ++k) kitBox.addItem (bash::factoryKits()[(size_t) k].name, k + 1);
-    kitBox.onChange = [this]
-    {
-        if (kitBox.getSelectedId() > 0)
-        {
-            proc.loadFactoryKit (kitBox.getSelectedId() - 1);
-            kitBox.setSelectedId (0, juce::dontSendNotification);
-            selectCell (cell);
-            showMessage ("Loaded kit");
-        }
-    };
-    addAndMakeVisible (kitBox);
+    kitButton.setTooltip ("Load a whole kit (with its starter beat)");
+    libraryButton.setTooltip ("Put a sound from the BASH! library on this pad");
+    kitButton.onClick = [this] { showKitMenu(); };
+    libraryButton.onClick = [this] { showLibraryMenu(); };
+    addAndMakeVisible (kitButton);
+    addAndMakeVisible (libraryButton);
 
     presetBox.setTextWhenNothingSelected ("All FM sounds");
     for (int i = 0; i < (int) bash::fmPresets().size(); ++i) presetBox.addItem (bash::fmPresets()[(size_t) i].name, i + 1);
@@ -403,13 +396,16 @@ void DrumPanel::pushToCell()
 void DrumPanel::refresh()
 {
     grid.refresh();
+    const auto kit = proc.currentKitName();
+    if (kitButton.getButtonText() != (kit.isEmpty() ? "Kits" : "Kit: " + kit))
+        kitButton.setButtonText (kit.isEmpty() ? "Kits" : "Kit: " + kit);
     juce::String text;
     if (message.isNotEmpty() && juce::Time::getMillisecondCounter() - messageTime < 4000)
         text = message;
     else if (shownKind == bash::DrumCell::Kind::Empty)
-        text = "Empty pad: drop a sample on it, or press FM. Drop several files to fill several pads.";
+        text = "Empty pad: pick a Library sound, drop a sample on it, or press FM. Drop several files to fill several pads.";
     else
-        text = "Click a pad to hear it. Drum tracks play the pads in their window (coral outline).";
+        text = "Click a pad to hear it. Library has 130+ sounds for the selected pad; Kits loads a whole kit and its starter beat.";
     info.setText (text, juce::dontSendNotification);
 }
 
@@ -445,12 +441,12 @@ void DrumPanel::resized()
     area.removeFromLeft (20);
 
     auto header = area.removeFromTop (30);
-    title.setBounds (header.removeFromLeft (250));
-    for (auto* b : { &sampleButton, &fmButton, &clearButton })
+    title.setBounds (header.removeFromLeft (196));
+    for (auto* b : { &libraryButton, &sampleButton, &fmButton, &clearButton })
     {
-        b->setBounds (header.removeFromLeft (70)); header.removeFromLeft (6);
+        b->setBounds (header.removeFromLeft (b == &libraryButton ? 80 : 66)); header.removeFromLeft (6);
     }
-    kitBox.setBounds (header.removeFromRight (150));
+    kitButton.setBounds (header.removeFromRight (std::min (170, header.getWidth())));
 
     info.setBounds (area.removeFromBottom (18));
     area.removeFromTop (8);
@@ -481,4 +477,76 @@ void DrumPanel::resized()
         auto rest = placeRow (area, { &cGain, &cPan, &cChoke });
         sReverse.setBounds (rest.removeFromLeft (120).withSizeKeepingCentre (110, 30));
     }
+}
+
+
+// ---- library menus ------------------------------------------------------------------
+void DrumPanel::showKitMenu()
+{
+    auto& lib = proc.library();
+    juce::PopupMenu m, fm;
+    m.addSectionHeader (lib.ready() ? "BASH! kits" : "BASH! kits (library building " + juce::String ((int) (lib.progress() * 100)) + "%)");
+    const auto& kits = bash::library::kits();
+    for (int k = 0; k < (int) kits.size(); ++k)
+        m.addItem (100 + k, juce::String (kits[(size_t) k].name) + "   " + kits[(size_t) k].style + " " + juce::String ((int) kits[(size_t) k].bpm),
+                   lib.ready(), proc.currentKitName() == juce::String (kits[(size_t) k].name));
+    m.addSeparator();
+    m.addItem (1, "Load the kit's starter beat on this track", true, kitWithBeat);
+    for (int k = 0; k < (int) bash::factoryKits().size(); ++k) fm.addItem (10 + k, bash::factoryKits()[(size_t) k].name);
+    m.addSubMenu ("FM kits", fm);
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&kitButton), [this] (int r)
+    {
+        if (r == 1) { kitWithBeat = ! kitWithBeat; showKitMenu(); return; }
+        if (r >= 100)
+        {
+            const auto& kit = bash::library::kits()[(size_t) (r - 100)];
+            const bool beat = kitWithBeat && proc.engineType (track) == bash::EngineType::Drums;
+            const auto err = proc.loadLibraryKit (r - 100, beat ? track : -1);
+            selectCell (cell);
+            proc.auditionCell (0);
+            showMessage (err.isNotEmpty() ? err : "Loaded " + juce::String (kit.name) + (beat ? " with its starter beat (" + juce::String (kit.groove) + "). The track die's menu can undo the beat." : ""));
+        }
+        else if (r >= 10)
+        {
+            proc.loadFactoryKit (r - 10);
+            selectCell (cell);
+            showMessage ("Loaded kit");
+        }
+    });
+}
+
+void DrumPanel::showLibraryMenu()
+{
+    auto& lib = proc.library();
+    if (! lib.ready())
+    {
+        showMessage (lib.error().isNotEmpty() ? lib.error() : "Building the sound library (" + juce::String ((int) (lib.progress() * 100)) + "%)... it takes a few seconds the first time.");
+        return;
+    }
+    juce::PopupMenu m;
+    m.addSectionHeader ("Put a sound on pad " + juce::String (cell + 1));
+    const auto& shots = bash::library::oneShots();
+    juce::String category;
+    juce::PopupMenu sub;
+    auto flush = [&] { if (category.isNotEmpty()) m.addSubMenu (category, sub); sub = {}; };
+    for (int i = 0; i < (int) shots.size(); ++i)
+    {
+        const juce::String cat (shots[(size_t) i].category);
+        if (cat != category) { flush(); category = cat; }
+        sub.addItem (1 + i, shots[(size_t) i].name, true, proc.cellName (cell) == juce::String (shots[(size_t) i].name));
+    }
+    flush();
+    m.addSeparator();
+    m.addItem (5000, "Show the library folder");
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&libraryButton), [this] (int r)
+    {
+        if (r == 5000) { FactoryLibrary::root().revealToUser(); return; }
+        if (r <= 0) return;
+        const auto& s = bash::library::oneShots()[(size_t) (r - 1)];
+        const auto err = proc.loadLibraryShot (cell, s.category + "/" + s.name);
+        selectCell (cell);
+        if (err.isEmpty()) proc.auditionCell (cell);
+        showMessage (err.isNotEmpty() ? err : juce::String (s.name) + " on pad " + juce::String (cell + 1));
+        showLibraryMenu();   // stay in the browser: pick the next one to hear it
+    });
 }

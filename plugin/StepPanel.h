@@ -63,7 +63,8 @@ namespace bashui
         juce::Slider swing;
         juce::Label swingLabel, autoFillLabel;
         std::array<juce::TextButton, 4> pageButtons;
-        juce::TextButton clearButton { "Clear" };
+        juce::TextButton clearButton { "Clear" }, groovesButton { "Grooves" };
+        void showGroovesMenu();
         std::unique_ptr<ButtonAttachment> fillAtt;
         std::unique_ptr<ComboAttachment> autoFillAtt;
         std::unique_ptr<SliderAttachment> swingAtt;

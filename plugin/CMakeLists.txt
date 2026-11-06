@@ -51,6 +51,7 @@ target_sources(BASH PRIVATE
     MixerPanel.cpp
     ModPanel.cpp
     StepPanel.cpp
+    FactoryLibrary.cpp
     ExportUI.cpp)
 
 if(CMAKE_SYSTEM_NAME STREQUAL "iOS")

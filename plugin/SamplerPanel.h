@@ -77,6 +77,8 @@ namespace bashui
         Knob winStart, winSize, tune, attack, release, level, pan;
         juce::ToggleButton pitchFollow { "Pitch follow" }, reverse { "Reverse" };
         juce::ToggleButton warpButton { "Warp" };
+        juce::TextButton loopsButton { "Loops" };
+        void showLoopsMenu();
         juce::Label bpmLabel;                       // the file's tempo, editable
         juce::TextButton halfButton { "/2" }, doubleButton { "x2" };
         double shownBpm = -1.0;

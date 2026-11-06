@@ -71,6 +71,15 @@ Full spec: *BASH! — Software Requirements Specification* (Claude doc).
 
 - `m4l/BASH Key Lock.amxd`: put it before BASH! on the track and BASH! follows the set's key and scale (any Live scale maps to BASH!'s nearest). See `m4l/README.md`
 
+**0.3.0** ✅ — the BASH! library
+
+- **133 drum sounds**, all synthesised by BASH! (nothing sampled from anyone's records), voiced for UK bass, DnB, dubstep, UKG, broken beat, techno, electro, IDM and beat tape: sub kicks tuned to F/G/A/A#, halfstep, roller, garage, warehouse (with rumble), dusty and broken kicks; halfstep, roller, garage, dusty, ghost and industrial snares and rims; claps; closed/open hats; rides and crashes; shakers; congas, bongos, timbales, woodblocks, bleeps, zaps, metal and glass hits; toms; FX (sub drop, impact, horn stab, dub siren, reese and wobble stabs, risers); glitch. Drum panel > **Library** puts any of them on the selected pad (the menu stays open so you can click through and hear them)
+- **12 kits** with starter beats: Halfstep Pressure, 2-Step Shuffle, Rollers, Jungle Ruff, Bleep & Bass, Warehouse, Broken Electro, Glass Garden, Beat Tape, Glitch Lab, Sub Weight, Funky Percs (Drum panel > **Kits**)
+- **50 groove presets** in the step sequencer (**Grooves**): UK Garage, UK Funky, Dubstep / Halfstep, Drum & Bass, Jungle, Footwork, Broken Beat, UK Bass / Bleep, Techno / Warehouse, Electro, IDM / Glitch, Beat Tape / Wonky. Each sets the pattern, swing and rate; written for the kit lane layout, so they work with every kit
+- **32 slicer loops** (Slice Sampler > **Loops**): breaks (jungle, rollers, halfstep, 2-step, funky, broken beat, beat tape, wonky, IDM, techno, electro), basses (reese, wobble, sub, garage, bleep), chords (garage organ, dub chords, pads, glass arp, beat-tape keys, bleep melody), vox chops and pads, textures. They load at their own tempo and warp to yours
+- The library is written once to **Music/BASH Library** the first time BASH! runs (a few seconds), so the sounds are ordinary WAVs you can also drag into your DAW
+- Warp reads the tempo from file names ("loop 140bpm", "Reese 174") before guessing
+
 **0.2.0** ✅
 
 - **Step sequencer** on any track (GENERATIVE / STEP switch in the Sequencer box). 16 lanes: drum pads, slices, or scale notes on synth tracks; up to 64 steps per lane (4 pages). Per step: velocity, chance, ratchet (1-8, flat/up/down), condition (Fill, Not fill, First, Not first, 1:2 ... 4:4), nudge. Per lane: length and speed (polymeter, x1/4 to x4), mute, an algorithm (Euclid, Random, Groove, Rolls, Mutate, Humanize) with its own die, and Evolve (the lane varies a little every loop). Per track: Fill latch and Auto fill every 2/4/8/16 bars. Click to toggle, drag to paint, Shift-drag for velocity, right-click a step for everything else

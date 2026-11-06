@@ -602,6 +602,13 @@ namespace bash::library
             auto k = buildKits();
             for (auto& kit : k)   // Glitch Lab's closed hat: the micro hat lives in Glitch
                 for (auto& p : kit.pads) if (p.sound == "Hats/Micro Hat") p = KitPad { "Glitch/Micro Hat", 0, -3, 0.2f, 1 };
+            const std::pair<const char*, const char*> starters[] = {
+                { "Halfstep Pressure", "Halfstep Classic" }, { "2-Step Shuffle", "2-Step Classic" }, { "Rollers", "Two-Step Roller" },
+                { "Jungle Ruff", "Break Chop" }, { "Bleep & Bass", "Bleep Stepper" }, { "Warehouse", "Warehouse Rumble" },
+                { "Broken Electro", "Broken Electro" }, { "Glass Garden", "Tribal Halfstep" }, { "Beat Tape", "Lo-Fi Head Nod" },
+                { "Glitch Lab", "Glitch Ratchets" }, { "Sub Weight", "Deep Halfstep" }, { "Funky Percs", "Funky Percussion" } };
+            for (auto& kit : k)
+                for (auto [kitName, groove] : starters) if (kit.name == kitName) kit.groove = groove;
             return k;
         }();
         return list;
