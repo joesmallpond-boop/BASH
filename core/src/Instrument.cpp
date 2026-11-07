@@ -1443,6 +1443,13 @@ namespace bash
         }
         if (sel == "refresh") { if (! loadPhaseDone) loadStartTick = tickCount; emitAll(); return; }   // the device has loaded
         if (sel == "stateid")  { const int id = (int) num (0); if (id > 0 && id != stateId) claimStateId (id); return; }
+        if (sel == "freshdefaults")   // freshdefaults <id> <value> ...: applied only when the device is new
+        {
+            freshDefaults.clear();
+            for (size_t k = 0; k + 1 < a.size(); k += 2)
+                if (paramIndex (str (k)) >= 0) freshDefaults.push_back ({ paramIndex (str (k)), (float) num (k + 1) });
+            return;
+        }
         if (sel == "statedir") { setStateFolder (restOfLine (0)); return; }
     }
 
@@ -1881,7 +1888,10 @@ namespace bash
         if (! loadPhaseDone && tickCount > loadStartTick + (uint64_t) loadSettleTicks)
         {
             loadPhaseDone = true;
+            const bool fresh = stateId <= 0 && ! restoredOk;   // never saved: a device just dropped in
             if (! restoredOk && readStateFile()) { dirty = true; dirtyAt = tickCount; lastSaved.clear(); }   // and back into the set
+            if (fresh)
+                for (const auto& [i, v] : freshDefaults) setParamValue (i, v, false);   // the starting patch (shown on the device too)
             if (needNewId || stateId <= 0) newStateId();
         }
 

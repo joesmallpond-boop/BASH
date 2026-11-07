@@ -1895,6 +1895,21 @@ static void testSessionRecall()
         b.waitForWarp();
         CHECK (b.saveState() == text);
     }
+    // a brand-new device: the starting patch is applied (and shown); a saved one keeps its own
+    {
+        Instrument f; f.prepare (48000.0, 512);
+        f.command ("param", { std::string ("seqon"), 0.0 });
+        f.command ("param", { std::string ("reverse"), 1.0 });
+        f.command ("freshdefaults", { std::string ("seqon"), 1.0, std::string ("reverse"), 0.0 });
+        run (f, Instrument::loadSettleTicks + 5);
+        CHECK (f.param ("seqon") == 1.0f && f.param ("reverse") == 0.0f);
+        Instrument g; g.prepare (48000.0, 512);
+        g.command ("stateid", { 4242.0 });
+        g.command ("param", { std::string ("reverse"), 1.0 });
+        g.command ("freshdefaults", { std::string ("reverse"), 0.0 });
+        run (g, Instrument::loadSettleTicks + 5);
+        CHECK (g.param ("reverse") == 1.0f);
+    }
     // 2) Live gave nothing back: the backup file for the device's State ID
     {
         Instrument c; c.prepare (48000.0, 512);

@@ -106,6 +106,7 @@ namespace bash
         int  stateId = 0;
         bool needNewId = false, restoredOk = false, loadPhaseDone = false;
         uint64_t loadStartTick = 0;
+        std::vector<std::pair<int, float>> freshDefaults;   // the device's starting patch, for a brand-new device
         std::string stateFile (int id);
         void newStateId();
         void writeStateFile (const std::string& text);
