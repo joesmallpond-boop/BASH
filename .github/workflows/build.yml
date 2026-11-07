@@ -107,6 +107,6 @@ jobs:
           target_commitish: ${{ github.sha }}
           body: |
             **BASH! by Kalabash, for Ableton Live (Max for Live, Mac):** BASH!, BASH! Voice and BASH! Sequencer. Download BASH-mac.dmg, quit Live, open the DMG and double-click "Install BASH!.pkg". If macOS blocks it, right-click the .pkg > Open.
-            Then in Live: User Library > Presets > Instruments > Max Instrument > Kalabash (BASH!, BASH! Voice) and MIDI Effects > Max MIDI Effect > Kalabash (BASH! Sequencer).
+            Or drag the Kalabash folder from the DMG into your Live User Library. Then in Live: User Library > Kalabash.
           files: |
             dist/BASH-mac/BASH-mac.dmg

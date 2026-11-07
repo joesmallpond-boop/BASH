@@ -41,6 +41,7 @@ Build on a Mac: `./scripts/build-mac.sh` (add `--install` to install it for you)
 
 ## History
 
+- **1.1.1** - Installs as one Kalabash folder in the User Library (devices + bash~ + display scripts together), so the displays and page switching load; the DMG also has that folder to drag in by hand.
 - **1.1.0** - Three devices in one installer, under Kalabash: BASH!, BASH! Voice (instrument) and BASH! Sequencer (MIDI effect: Notes / Slices / Drum Rack targets). Scale button like Live's scale awareness: follows the set's key and Live's Scale on / off.
 - **1.0.2** - LFO 1 and 2 can MAP to any parameter in Live, like Live's LFO: press Map, click a parameter (any device, any track), the LFO drives it between Min and Max; x unmaps; the target shows in the LFO display and is saved with the set.
 - **1.0.1** - Looks like Live's own devices: Live's knobs, menus and buttons in your Live theme, displays in Live's screen colours (they follow the theme), grouped sections; EXPAND opens a big window (all 16 step lanes, a large waveform, the pads, keys and LFOs), like EQ Eight; the Decompression Tapes mark as the play light, the lane arrows and a quiet signature in the big view.

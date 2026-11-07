@@ -11,23 +11,23 @@ Three devices:
 
 Install
 -------
-1. Quit Live.
-2. Double-click "Install BASH!.pkg". It puts:
-     BASH!, BASH! Voice   -> your Live User Library > Presets > Instruments > Max Instrument > Kalabash
-     BASH! Sequencer      -> your Live User Library > Presets > MIDI Effects > Max MIDI Effect > Kalabash
-     the BASH package     -> Documents/Max 9/Packages and Documents/Max 8/Packages
-                             (the bash~ object and the display scripts the device uses)
-3. Open Live: Browser > User Library > Presets > ... > Kalabash, drag a device onto a MIDI track.
+Either:
+  A. Quit Live and double-click "Install BASH!.pkg" (if macOS blocks it: right-click > Open).
+or, with no installer:
+  B. Drag the "Kalabash" folder from this DMG into your Live User Library
+     (Finder: Music > Ableton > User Library; or drop it on "User Library" in Live's browser).
 
-Needs Live 11 or 12 Suite (or Live Standard with Max for Live). Live 12 is needed
-for BASH! to follow the set's key and scale.
+Then in Live: Browser > User Library > Kalabash. Drag BASH! or BASH! Voice onto a MIDI
+track, and BASH! Sequencer onto a MIDI track before any instrument.
 
-The installer isn't notarised yet, so the first time macOS may say it "can't be
-opened": right-click (Control-click) the .pkg, choose Open, then Open again.
+Keep everything in the Kalabash folder together: the devices load bash~.mxo and the .js
+display scripts from the folder they're in.
 
-If your User Library is somewhere else, drag the .amxd files from "Manual install" in
-this DMG into it. If Live says it can't find "bash~", copy the "Manual install/BASH"
-folder into Documents/Max 9/Packages (and Max 8/Packages), then reload the device.
+Needs Live 11 or 12 Suite (or Max for Live); Live 12 for following the set's key and scale.
+
+If Max says "bash~" can't be opened (macOS quarantine on files from a download), open
+Terminal and run:  xattr -dr com.apple.quarantine ~/Music/Ableton/"User Library"/Kalabash
+then reload the devices.
 
 Using it
 --------

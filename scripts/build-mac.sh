@@ -47,7 +47,10 @@ mkdir -p "$PKG/externals" "$PKG/javascript" "$PKG/patchers" dist/scripts dist/dm
 cp -R "$MXO" "$PKG/externals/"
 cp max/javascript/*.js dist/device/bash_ui*.js "$PKG/javascript/"
 cp dist/device/*.maxpat "$PKG/patchers/"
-cp dist/device/*.amxd "$PKGROOT/"
+mkdir -p "$PKGROOT/Kalabash"
+cp dist/device/*.amxd "$PKGROOT/Kalabash/"
+cp -R "$MXO" "$PKGROOT/Kalabash/"
+cp max/javascript/*.js dist/device/bash_ui*.js "$PKGROOT/Kalabash/"
 cat > "$PKG/package-info.json" <<JSON
 { "name": "BASH", "displayname": "BASH!", "version": "$VERSION", "author": "Kalabash",
   "description": "BASH! for Max for Live: the bash~ instrument and its display scripts.",
@@ -57,27 +60,32 @@ JSON
 # after install: copy into the user's Max Packages (Max 8 and 9) and Live's User Library
 cat > dist/scripts/postinstall <<'POST'
 #!/bin/sh
+# Puts one "Kalabash" folder in the user's Live User Library: the three devices + bash~ + the
+# display scripts together (Max looks in a device's own folder). Logs to /tmp/kalabash-bash-install.log
+# and never fails the install.
+LOG=/tmp/kalabash-bash-install.log
+exec >>"$LOG" 2>&1
+echo "---- $(date)"
 SRC="/Library/Application Support/Kalabash/BASH"
 USER_NAME=$(stat -f%Su /dev/console)
 HOME_DIR=$(dscl . -read "/Users/$USER_NAME" NFSHomeDirectory 2>/dev/null | awk '{print $2}')
 [ -z "$HOME_DIR" ] && HOME_DIR="/Users/$USER_NAME"
+echo "user $USER_NAME home $HOME_DIR"
+UL="$HOME_DIR/Music/Ableton/User Library"
+DEST="$UL/Kalabash"
+mkdir -p "$DEST" || echo "could not create $DEST"
+rm -rf "$DEST/bash~.mxo"
+cp -R "$SRC/Kalabash/." "$DEST/" && echo "copied to $DEST" || echo "copy to $DEST failed"
+# tidy up where 1.0 / 1.1.0 put things
+rm -f "$UL/Presets/Instruments/Max Instrument/BASH!.amxd"
+rm -rf "$UL/Presets/Instruments/Max Instrument/Kalabash" "$UL/Presets/MIDI Effects/Max MIDI Effect/Kalabash"
+chown -R "$USER_NAME" "$DEST" 2>/dev/null
+xattr -dr com.apple.quarantine "$DEST" 2>/dev/null
+# Max's Packages too (macOS may refuse this one; the folder above is what the devices use)
 for MAXV in "Max 9" "Max 8"; do
-  DEST="$HOME_DIR/Documents/$MAXV/Packages"
-  mkdir -p "$DEST"
-  rm -rf "$DEST/BASH"
-  cp -R "$SRC/Max Package/BASH" "$DEST/BASH"
-  chown -R "$USER_NAME" "$HOME_DIR/Documents/$MAXV"
+  P="$HOME_DIR/Documents/$MAXV/Packages"
+  ( mkdir -p "$P" && rm -rf "$P/BASH" && cp -R "$SRC/Max Package/BASH" "$P/BASH" && chown -R "$USER_NAME" "$P/BASH" ) 2>/dev/null && echo "package -> $P" || echo "package -> $P refused"
 done
-# Live's browser: User Library > Presets > ... > Kalabash
-UL="$HOME_DIR/Music/Ableton/User Library/Presets"
-INST="$UL/Instruments/Max Instrument/Kalabash"
-MIDI="$UL/MIDI Effects/Max MIDI Effect/Kalabash"
-mkdir -p "$INST" "$MIDI"
-rm -f "$UL/Instruments/Max Instrument/BASH!.amxd"   # 1.0.x put BASH! straight in Max Instrument
-cp "$SRC/BASH!.amxd" "$SRC/BASH! Voice.amxd" "$INST/"
-cp "$SRC/BASH! Sequencer.amxd" "$MIDI/"
-chown -R "$USER_NAME" "$UL/Instruments" "$UL/MIDI Effects"
-xattr -dr com.apple.quarantine "$HOME_DIR/Documents/Max 9/Packages/BASH" "$HOME_DIR/Documents/Max 8/Packages/BASH" "$INST" "$MIDI" 2>/dev/null || true
 exit 0
 POST
 chmod +x dist/scripts/postinstall
@@ -90,11 +98,11 @@ cat > dist/distribution.xml <<DIST
   <title>BASH! $VERSION by Kalabash, for Ableton Live</title>
   <welcome mime-type="text/plain"><![CDATA[BASH! by Kalabash - for Ableton Live (Max for Live).
 
-This installs three devices into your Live User Library, in Kalabash folders:
-  - BASH!            (Instruments > Max Instrument > Kalabash)  sequencer + synth / slicer / drums
-  - BASH! Voice      (Instruments > Max Instrument > Kalabash)  the synth / slicer / drums on their own
-  - BASH! Sequencer  (MIDI Effects > Max MIDI Effect > Kalabash) the sequencers, as MIDI for anything
-and the BASH package (the bash~ object + display scripts) -> Documents/Max 9 and Max 8 Packages
+This puts a Kalabash folder in your Live User Library with three devices:
+  - BASH!            sequencer + synth / slicer / drums
+  - BASH! Voice      the synth / slicer / drums on their own
+  - BASH! Sequencer  the sequencers, as MIDI for any instrument or Drum Rack
+In Live: Browser > User Library > Kalabash.
 
 Needs Ableton Live 11 or 12 Suite (or Max for Live). Quit Live first.]]></welcome>
   <options customize="never" require-scripts="false" hostArchitectures="arm64,x86_64"/>
@@ -106,22 +114,15 @@ Needs Ableton Live 11 or 12 Suite (or Max for Live). Quit Live first.]]></welcom
 DIST
 productbuild --distribution dist/distribution.xml --package-path dist "dist/dmg/Install BASH!.pkg"
 cp packaging/INSTALL-mac.txt dist/dmg/README.txt
-mkdir -p "dist/dmg/Manual install"
-cp -R "$PKG" "dist/dmg/Manual install/BASH"
-cp dist/device/*.amxd "dist/dmg/Manual install/"
+# no installer needed: the same Kalabash folder, to drag into Live's User Library
+cp -R "$PKGROOT/Kalabash" "dist/dmg/Kalabash"
 rm -f BASH-mac.dmg
 hdiutil create -volname "BASH! $VERSION" -srcfolder dist/dmg -ov -format UDZO BASH-mac.dmg >/dev/null
 echo "    BASH-mac.dmg"
 
 if [[ $INSTALL == 1 ]]; then
   echo "==> Installing for this user"
-  for MAXV in "Max 9" "Max 8"; do
-    mkdir -p ~/Documents/"$MAXV"/Packages && rm -rf ~/Documents/"$MAXV"/Packages/BASH
-    cp -R "$PKG" ~/Documents/"$MAXV"/Packages/BASH
-  done
-  UL=~/Music/Ableton/"User Library"/Presets
-  mkdir -p "$UL/Instruments/Max Instrument/Kalabash" "$UL/MIDI Effects/Max MIDI Effect/Kalabash"
-  cp "dist/device/BASH!.amxd" "dist/device/BASH! Voice.amxd" "$UL/Instruments/Max Instrument/Kalabash/"
-  cp "dist/device/BASH! Sequencer.amxd" "$UL/MIDI Effects/Max MIDI Effect/Kalabash/"
-  echo "    Done. In Live: User Library > Presets > Instruments / MIDI Effects > ... > Kalabash"
+  UL=~/Music/Ableton/"User Library"
+  rm -rf "$UL/Kalabash" && cp -R "$PKGROOT/Kalabash" "$UL/Kalabash"
+  echo "    Done. In Live: Browser > User Library > Kalabash"
 fi
