@@ -16,7 +16,7 @@ Voiced for UK bass, drum & bass, dubstep, UKG and broken / wonky beats.
 | Synth | Machine, filter type, Character, Timbre, Cutoff, Resonance, Env mod, Decay, Drive, Glide, amp ADSR; a keyboard that lights up and blows bubbles |
 | Slicer | Drop / load a sample or pick a library loop; warp to Live's tempo (sample BPM found from the name or by listening, halve / double / drag to fix); transients / grid / random slicing (up to 256), drag / add / delete slices, click to audition; slice mode, window, tune, attack, release, reverse, pitch follow |
 | Drums | 4x4 pads with ripples on every hit; library kits (UK bass / DnB / dubstep / UKG...) and FM kits; a sound per pad from the library or FM presets, or drop your own; per-pad tune, gain, pan, decay, start, end, cutoff, choke, reverse |
-| Mod | LFO 1 / 2 (shape, rate or sync division), Life, six slots: source (LFO 1/2, Life, velocity, aftertouch, mod wheel, pitch bend) to destination (sequencer and voice) with an amount |
+| Mod | LFO 1 / 2 (shape, rate or sync division, MAP to any Live parameter with Min / Max), Life, six slots: source (LFO 1/2, Life, velocity, aftertouch, mod wheel, pitch bend) to destination (sequencer and voice) with an amount |
 
 Every control is a Live parameter. Pattern, steps, slices, sample paths and the kit are
 saved in the Live set with the device.
@@ -37,6 +37,7 @@ Build on a Mac: `./scripts/build-mac.sh` (add `--install` to install it for you)
 
 ## History
 
+- **1.0.2** - LFO 1 and 2 can MAP to any parameter in Live, like Live's LFO: press Map, click a parameter (any device, any track), the LFO drives it between Min and Max; x unmaps; the target shows in the LFO display and is saved with the set.
 - **1.0.1** - Looks like Live's own devices: Live's knobs, menus and buttons in your Live theme, displays in Live's screen colours (they follow the theme), grouped sections; EXPAND opens a big window (all 16 step lanes, a large waveform, the pads, keys and LFOs), like EQ Eight; the Decompression Tapes mark as the play light, the lane arrows and a quiet signature in the big view.
 - **1.0.0** - BASH! becomes a one-channel Max for Live instrument. The 8-track JUCE plugin
   (mixer, effects, MICRO) is retired; its sequencers, voices, library, grooves, warp and

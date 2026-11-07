@@ -71,6 +71,10 @@ namespace bash
         static std::string unpackState (const std::vector<int>&);
         static constexpr int stateChunkSize = 1024;   // ints per pattr chunk
         static constexpr int stateChunks = 48;
+        /** LFO k (0, 1) as a value for the parameter it's mapped to (in that parameter's own
+            units), updated every block. Feeds live.remote~ in the device. */
+        float mapOutput (int k) const          { return mapOut[(size_t) k].load(); }
+        bool  isMapped (int k);
         bool warpBusy() const                  { return warpThreadBusy.load(); }
         void waitForWarp();
         double sourceBpm() const               { return srcBpm; }
@@ -171,5 +175,11 @@ namespace bash
         std::string lastStepViewKey;
         int lastLiveRoot = -1, lastLiveMask = -1;
         int keyShown = -1;
+        // LFO -> any Live parameter (like Live's LFO: MAP, then click a parameter)
+        struct LfoMap { std::string path, name, device; float lo = 0.0f, hi = 1.0f; bool waiting = false; };
+        std::array<LfoMap, 2> maps;
+        std::array<std::atomic<float>, 2> mapLo {}, mapHi {}, mapOut {};
+        void emitMap (int k);
+        void mapCommand (const std::string& sel, const Atoms&);
     };
 }

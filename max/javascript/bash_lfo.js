@@ -37,14 +37,17 @@ function col(c, a) { mgraphics.set_source_rgba(c[0], c[1], c[2], a === undefined
 var which = jsarguments.length > 1 ? jsarguments[1] : 1;
 var shape = which === 2 ? 5 : 0, value = 0, trail = [];
 var shapeNames = ["SINE", "TRI", "SAW", "SQUARE", "S&H", "SMOOTH"];
+var mapLabel = "", mapWaiting = 0, blink = 0;
 
 
 function anything()
 {
     var a = arrayfromargs(arguments);
     if (messagename === "pv" && a[0] === "lfo" + which + "shape") { shape = a[1]; mgraphics.redraw(); }
+    if (messagename === "mapname" && a[0] === which) { mapLabel = String(a[1] || ""); mapWaiting = a[2]; mgraphics.redraw(); return; }
     if (messagename === "frame")
     {
+        blink++;
         value = which === 1 ? a[7] : which === 2 ? a[8] : a[9];
         trail.push(value);
         if (trail.length > 60) trail.shift();
@@ -103,6 +106,19 @@ function paint()
     mgraphics.set_font_size(7.5);
     mgraphics.move_to(4, 9);
     mgraphics.show_text(which === 3 ? "LIFE" : "LFO " + which);
+    // what it's mapped to (Live's LFO shows its target the same way)
+    if (which !== 3 && (mapWaiting || mapLabel !== ""))
+    {
+        var label = mapWaiting ? "click a parameter..." : mapLabel;
+        mgraphics.set_font_size(7.5);
+        while (label.length > 1 && mgraphics.text_measure(label)[0] > w - 8) label = label.substr(0, label.length - 1);
+        col(C.bg, 0.75);
+        mgraphics.rectangle(2, h - 12, w - 4, 10);
+        mgraphics.fill();
+        col(mapWaiting ? C.amber : C.alt, mapWaiting ? (Math.floor(blink / 6) % 2 ? 1 : 0.35) : 1);
+        mgraphics.move_to(4, h - 4);
+        mgraphics.show_text(label);
+    }
 }
 
 function onresize() { mgraphics.redraw(); }

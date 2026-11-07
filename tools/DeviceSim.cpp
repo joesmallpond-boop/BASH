@@ -39,7 +39,10 @@ int main (int argc, char** argv)
     if (scenario == "drum")  { p ("engine", 2); in.command ("kit", { std::string ("pick"), 1.0 }); in.command ("pad", { std::string ("select"), 2.0 }); p ("mode", 0); p ("slicemode", 3); }
     if (scenario == "step")  { p ("engine", 2); in.command ("kit", { std::string ("pick"), 0.0 }); in.command ("groove", { 5.0 });
                                in.command ("lane", { std::string ("select"), 3.0 }); in.command ("step", { 1.0, 6.0, std::string ("ratchet") }); }
-    if (scenario == "mod")   { p ("engine", 0); p ("m1src", 1); p ("m1dst", 6); p ("m1amt", 0.6); p ("m2src", 3); p ("m2dst", 1); p ("m2amt", -0.3); p ("lfo2sync", 1); }
+    if (scenario == "mod")   { p ("engine", 0); p ("m1src", 1); p ("m1dst", 6); p ("m1amt", 0.6); p ("m2src", 3); p ("m2dst", 1); p ("m2amt", -0.3); p ("lfo2sync", 1);
+                               in.command ("mappath", { 1.0, std::string ("live_set tracks 1 devices 0 parameters 3") });
+                               in.command ("mapname", { 1.0, std::string ("Frequency") }); in.command ("mapdevice", { 1.0, std::string ("Auto Filter") });
+                               in.command ("mapwait", { 2.0, 1.0 }); }
 
     bash::Transport tp; tp.hostAvailable = true; tp.hostPlaying = true; tp.hostBpm = 172.0;
     std::vector<float> l (128), r (128);

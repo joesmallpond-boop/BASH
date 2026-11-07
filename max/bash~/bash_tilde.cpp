@@ -2,7 +2,8 @@
 // driving a synth, slicer or drum kit. All the work happens in bash::Instrument (core);
 // this file only connects it to Max: audio out, messages in and out, Live's transport.
 //
-// Outlets (left to right): signal L, signal R, messages (ui / state / display data / msg).
+// Outlets (left to right): signal L, signal R, signal LFO 1 map, signal LFO 2 map (each in its
+// mapped parameter's units, for live.remote~), messages (ui / state / display data / msg).
 // Every message into the left inlet goes to Instrument::command (see core/src/Instrument.cpp).
 
 #include "ext.h"
@@ -116,8 +117,8 @@ namespace
     // ---- audio ------------------------------------------------------------------------------------
     void perform64 (Bash* x, t_object*, double**, long, double** outs, long numouts, long n, long, void*)
     {
-        if (numouts < 2) return;
-        if ((long) x->bufL->size() < n) { for (long i = 0; i < n; ++i) { outs[0][i] = 0.0; outs[1][i] = 0.0; } return; }
+        if (numouts < 4) return;
+        if ((long) x->bufL->size() < n) { for (int o = 0; o < 4; ++o) for (long i = 0; i < n; ++i) outs[o][i] = 0.0; return; }
 
         // Live's transport (Max's global ITM follows Live inside Max for Live)
         bash::Transport tp;
@@ -145,7 +146,8 @@ namespace
         float* l = x->bufL->data();
         float* r = x->bufR->data();
         x->inst->process (l, r, (int) n, tp);
-        for (long i = 0; i < n; ++i) { outs[0][i] = l[i]; outs[1][i] = r[i]; }
+        const double m1 = x->inst->mapOutput (0), m2 = x->inst->mapOutput (1);
+        for (long i = 0; i < n; ++i) { outs[0][i] = l[i]; outs[1][i] = r[i]; outs[2][i] = m1; outs[3][i] = m2; }
     }
 
     void dsp64 (Bash* x, t_object* dsp, short*, double samplerate, long maxvectorsize, long)
@@ -163,6 +165,8 @@ namespace
         if (m == ASSIST_INLET) snprintf_zero (s, 256, "Messages: param, note, key, load, pad, step, lane, dice ...");
         else if (a == 0) snprintf_zero (s, 256, "(signal) Left");
         else if (a == 1) snprintf_zero (s, 256, "(signal) Right");
+        else if (a == 2) snprintf_zero (s, 256, "(signal) LFO 1 for its mapped parameter");
+        else if (a == 3) snprintf_zero (s, 256, "(signal) LFO 2 for its mapped parameter");
         else snprintf_zero (s, 256, "ui / state / display data");
     }
 
@@ -172,6 +176,8 @@ namespace
         if (x == nullptr) return nullptr;
         dsp_setup ((t_pxobject*) x, 0);
         x->msgOut = outlet_new (x, nullptr);          // rightmost
+        outlet_new (x, "signal");                      // LFO 2 map
+        outlet_new (x, "signal");                      // LFO 1 map
         outlet_new (x, "signal");                      // R
         outlet_new (x, "signal");                      // L (leftmost)
         x->inst = new bash::Instrument();

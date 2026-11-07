@@ -1619,6 +1619,44 @@ static void testInstrumentSequencing()
     CHECK (e > 1.0);
 }
 
+static void testLfoMapping()
+{
+    Instrument in; Recorder rec; rec.attach (in);
+    in.prepare (48000.0, 512);
+    // MAP pressed: the display asks for a parameter
+    in.command ("mapwait", { 1.0, 1.0 });
+    const auto* mn = rec.last ("mapname");
+    CHECK (mn != nullptr && atomStr ((*mn)[1]).find ("click") != std::string::npos);
+    // a parameter was clicked: path, names and its range arrive
+    in.command ("mappath", { 1.0, std::string ("live_set"), std::string ("tracks"), 2.0, std::string ("devices"), 1.0, std::string ("parameters"), 5.0 });
+    in.command ("mapname", { 1.0, std::string ("Frequency") });
+    in.command ("mapdevice", { 1.0, std::string ("Auto"), std::string ("Filter") });
+    in.command ("mapmin", { 1.0, 20.0 });
+    in.command ("mapmax", { 1.0, 120.0 });
+    mn = rec.last ("mapname");
+    CHECK (mn != nullptr && atomStr ((*mn)[1]) == "Auto Filter | Frequency" && atomNum ((*mn)[2]) == 0.0);
+    CHECK (in.isMapped (0) && ! in.isMapped (1));
+    // the output sweeps the target's range, inside Min..Max
+    in.command ("param", { std::string ("lfo1rate"), 8.0 });
+    in.command ("param", { std::string ("lfo1min"), 0.25 });
+    in.command ("param", { std::string ("lfo1max"), 0.75 });
+    Transport tp; tp.hostAvailable = true; tp.hostBpm = 120.0;
+    std::vector<float> l (480), r (480);
+    float lo = 1e9f, hi = -1e9f;
+    for (int b = 0; b < 400; ++b) { in.process (l.data(), r.data(), 480, tp); lo = std::min (lo, in.mapOutput (0)); hi = std::max (hi, in.mapOutput (0)); }
+    CHECK (lo >= 20.0f + 100.0f * 0.25f - 0.5f && hi <= 20.0f + 100.0f * 0.75f + 0.5f && hi - lo > 40.0f);
+    // saved and restored, and on refresh the device is told where to find it again
+    const auto text = in.saveState();
+    Instrument other; Recorder rec2; rec2.attach (other);
+    CHECK (other.loadState (text) && other.isMapped (0));
+    other.command ("refresh", {});
+    const auto* mr = rec2.last ("maprestore");
+    CHECK (mr != nullptr && mr->size() == 8 && atomNum ((*mr)[0]) == 1.0 && atomStr ((*mr)[1]) == "live_set" && atomNum ((*mr)[3]) == 2.0);
+    // unmap
+    in.command ("mapclear", { 1.0 });
+    CHECK (! in.isMapped (0));
+}
+
 int main()
 {
     testDeterminism();
@@ -1652,6 +1690,7 @@ int main()
     testInstrumentBasics();
     testInstrumentSamplesAndKit();
     testInstrumentSequencing();
+    testLfoMapping();
     std::printf ("%d checks, %d failures\n", checks, failures);
     return failures == 0 ? 0 : 1;
 }

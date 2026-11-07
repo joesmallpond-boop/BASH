@@ -170,7 +170,8 @@ def plain_dial(label, lo, hi, init, rect, group=None, exp=1.0):
 
 # =====================================================================================
 # the engine
-bash = obj("bash~", 1, 3, ["signal", "signal", ""])
+bash = obj("bash~", 1, 5, ["signal", "signal", "signal", "signal", ""])
+MSG = 4   # bash~ outlets: L, R, LFO 1 map, LFO 2 map, messages
 plugout = obj("plugout~ 1 2", 2, 2, ["signal", "signal"])
 wire(bash, 0, plugout, 0)
 wire(bash, 1, plugout, 1)
@@ -183,7 +184,7 @@ for rect in ([1, 1, 110, 167], [115, 1, 472, 167], [590, 1, 472, 167], [1065, 1,
 def button(label, rect, message, group=None):
     """A Live button (not a parameter) that sends `message` to bash~ when clicked."""
     b = {"id": new_id(), "maxclass": "live.text", "numinlets": 1, "numoutlets": 2, "outlettype": ["", ""],
-         "parameter_enable": 0, "mode": 0, "text": label, "texton": label, "varname": "btn_" + label.lower().replace(" ", "_")}
+         "parameter_enable": 0, "mode": 0, "text": label, "texton": label, "varname": "btn_%s_%d" % (label.lower().replace(" ", "_"), _n[0] + 1)}
     pres(b, rect)
     oid = add(b, group)
     sel = obj("sel 1", 2, 2, ["bang", ""])
@@ -282,24 +283,35 @@ pres(pad_rev, [912, 122, 70, 18])
 pad_rev_id = add(pad_rev, "drum")
 comment("Click a pad to play it, shift-click to select, alt-click to clear.", [738, 144, 322, 22], 8.0, group="drum")
 
-# mod page
+# mod page: two LFOs (each can MAP to any parameter in Live, like Live's LFO), Life, six slots
+map_buttons = {}
 for k, y in ((1, 24), (2, 82)):
-    jsuis.append(jsui("bash_lfo.js", [592, y, 100, 52], "mod", args=[k]))
-    live_param("live.dial", "lfo%drate" % k, [696, y, 44, 50], "mod")
-    live_param("live.menu", "lfo%dshape" % k, [744, y + 2, 82, 16], "mod")
-    live_param("live.menu", "lfo%ddiv" % k, [744, y + 20, 82, 16], "mod")
-    toggle("lfo%dsync" % k, "SYNC", [744, y + 38, 82, 14], "mod")
-jsuis.append(jsui("bash_lfo.js", [592, 140, 100, 26], "mod", args=[3]))
-comment("LIFE", [696, 140, 30, 14], group="mod")
-live_param("live.numbox", "liferate", [728, 142, 98, 16], "mod")
-comment("SOURCE", [832, 24, 70, 14], group="mod")
-comment("DESTINATION", [906, 24, 90, 14], group="mod")
-comment("AMOUNT", [1000, 24, 60, 14], group="mod")
+    jsuis.append(jsui("bash_lfo.js", [592, y, 80, 52], "mod", args=[k]))
+    live_param("live.dial", "lfo%drate" % k, [674, y, 44, 50], "mod")
+    live_param("live.menu", "lfo%dshape" % k, [720, y + 2, 70, 16], "mod")
+    live_param("live.menu", "lfo%ddiv" % k, [720, y + 20, 70, 16], "mod")
+    toggle("lfo%dsync" % k, "Sync", [720, y + 38, 70, 14], "mod")
+    mb = {"id": new_id(), "maxclass": "live.text", "numinlets": 1, "numoutlets": 2, "outlettype": ["", ""],
+          "parameter_enable": 0, "mode": 1, "text": "Map", "texton": "Map", "varname": "map%d" % k}
+    pres(mb, [794, y + 2, 48, 16])
+    mbid = add(mb, "mod")
+    unmap, unmap_msg = button("x", [844, y + 2, 20, 16], "mapclear %d" % k, "mod")
+    live_param("live.numbox", "lfo%dmin" % k, [794, y + 20, 34, 16], "mod")
+    live_param("live.numbox", "lfo%dmax" % k, [830, y + 20, 34, 16], "mod")
+    comment("Min   Max", [796, y + 36, 70, 14], 8.0, group="mod")
+    map_buttons[k] = (mbid, unmap_msg)
+    actions.append((unmap, unmap_msg))
+jsuis.append(jsui("bash_lfo.js", [592, 140, 80, 26], "mod", args=[3]))
+comment("Life", [674, 142, 30, 14], group="mod")
+live_param("live.numbox", "liferate", [702, 142, 88, 16], "mod")
+comment("Source", [868, 24, 62, 14], group="mod")
+comment("Destination", [932, 24, 80, 14], group="mod")
+comment("Amount", [1014, 24, 46, 14], group="mod")
 for k in range(1, 7):
     y = 40 + (k - 1) * 21
-    live_param("live.menu", "m%dsrc" % k, [832, y, 70, 16], "mod")
-    live_param("live.menu", "m%ddst" % k, [906, y, 90, 16], "mod")
-    live_param("live.numbox", "m%damt" % k, [1000, y, 60, 16], "mod")
+    live_param("live.menu", "m%dsrc" % k, [868, y, 62, 16], "mod")
+    live_param("live.menu", "m%ddst" % k, [932, y, 80, 16], "mod")
+    live_param("live.numbox", "m%damt" % k, [1014, y, 46, 16], "mod")
 
 # ---- column D: level, pan, meter -------------------------------------------------------------
 live_param("live.dial", "level", [1068, 22, 44, 50])
@@ -355,7 +367,7 @@ big = add({"id": new_id(), "maxclass": "newobj", "text": "p BASH!", "numinlets":
            "patching_rect": ppos(80), "patcher": big_patcher, "saved_object_attributes": {"globalpatchername": ""}})
 wire(pctl, 0, big, 0)
 view_send = obj("s ---bashview", 1, 0)
-wire(bash, 2, view_send, 0)
+wire(bash, MSG, view_send, 0)
 view_cmd = obj("r ---bashcmd", 0, 1)
 cmd_route = obj("route browse", 1, 2)
 wire(view_cmd, 0, cmd_route, 0)
@@ -371,15 +383,15 @@ for oid, pid in param_objects:
 # bash~ messages -> every display + the view switcher + routers
 ui_js = obj("js bash_ui.js", 1, 1)
 for j in jsuis:
-    wire(bash, 2, j, 0)
-wire(bash, 2, ui_js, 0)
+    wire(bash, MSG, j, 0)
+wire(bash, MSG, ui_js, 0)
 for j in jsuis:
     if j == wave:
         continue
     wire(j, 0, bash, 0)
 
 router = obj("route ui menu state padedit", 1, 5)
-wire(bash, 2, router, 0)
+wire(bash, MSG, router, 0)
 
 # ui <id> <value> -> the parameter's object (it then reports back as "param", which bash~ ignores)
 ids = [pid for _, pid in param_objects]
@@ -512,6 +524,84 @@ wire(bits, 0, total, 0)
 wire(total, 0, keypak, 1)
 wire(keypak, 0, keyp, 0)
 wire(keyp, 0, bash, 0)
+
+# ---- LFO MAP (like Live's LFO): press Map, click any parameter in Live, the LFO drives it -----------
+# live_set view's selected_parameter tells us what was clicked; live.remote~ takes it over.
+selpath_msg = msg("path live_set view")
+selpath = obj("live.path", 1, 3, ["", "", ""])
+selobs = obj("live.observer selected_parameter", 2, 2)
+wire(start, 0, selpath_msg, 0)
+wire(selpath_msg, 0, selpath, 0)
+wire(selpath, 0, selobs, 1)
+restore_route = obj("route 1 2", 1, 3)
+maproute = obj("route maprestore", 1, 2)
+wire(bash, MSG, maproute, 0)
+wire(maproute, 0, restore_route, 0)
+for k in (1, 2):
+    mbid, unmap_msg = map_buttons[k]
+    # Map lit = waiting: the gate lets the next clicked parameter through
+    gate = obj("gate 1", 2, 1)
+    waitp = obj("prepend mapwait %d" % k, 2, 1)
+    wire(mbid, 0, gate, 0)
+    wire(mbid, 0, waitp, 0)
+    wire(waitp, 0, bash, 0)
+    wire(selobs, 0, gate, 1)
+    # a clicked parameter (or a saved one found again): id N
+    rid = obj("route id", 1, 2)
+    nonzero = obj("sel 0", 2, 2, ["bang", ""])
+    wire(gate, 0, rid, 0)
+    wire(rid, 0, nonzero, 0)
+    found = obj("t b b b b b b i", 1, 7, ["bang", "bang", "bang", "bang", "bang", "bang", "int"])
+    wire(nonzero, 1, found, 0)
+    remote = obj("live.remote~", 2, 1)
+    idp = obj("prepend id", 2, 1)
+    wire(found, 6, idp, 0)
+    wire(idp, 0, remote, 1)
+    wire(bash, 1 + k, remote, 0)          # the LFO, already in the parameter's units
+    info = obj("live.object", 2, 1)
+    wire(idp, 0, info, 1)
+    for idx, text in ((5, "getpath"), (4, "get min"), (3, "get max"), (2, "get name"), (1, "get canonical_parent")):
+        mm = msg(text)
+        wire(found, idx, mm, 0)
+        wire(mm, 0, info, 0)
+    # done: Map goes dark, the gate closes
+    done = msg("set 0")
+    close = msg("0")
+    stopw = msg("mapwait %d 0" % k)
+    wire(found, 0, done, 0); wire(done, 0, mbid, 0)
+    wire(found, 0, close, 0); wire(close, 0, gate, 0)
+    wire(found, 0, stopw, 0); wire(stopw, 0, bash, 0)
+    # what live.object says -> bash~ (saved with the set, shown in the LFO display)
+    iroute = obj("route path min max name canonical_parent", 1, 6)
+    wire(info, 0, iroute, 0)
+    for idx, sel in ((0, "mappath"), (1, "mapmin"), (2, "mapmax"), (3, "mapname")):
+        pp = obj("prepend %s %d" % (sel, k), 2, 1)
+        wire(iroute, idx, pp, 0)
+        wire(pp, 0, bash, 0)
+    # the device's name: canonical_parent id M -> its name
+    devid = obj("route id", 1, 2)
+    wire(iroute, 4, devid, 0)
+    devobj = obj("live.object", 2, 1)
+    devget = obj("t b i", 1, 2, ["bang", "int"])
+    devidp = obj("prepend id", 2, 1)
+    devname = msg("get name")
+    wire(devid, 0, devget, 0)
+    wire(devget, 1, devidp, 0); wire(devidp, 0, devobj, 1)
+    wire(devget, 0, devname, 0); wire(devname, 0, devobj, 0)
+    devroute = obj("route name", 1, 2)
+    devp = obj("prepend mapdevice %d" % k, 2, 1)
+    wire(devobj, 0, devroute, 0); wire(devroute, 0, devp, 0); wire(devp, 0, bash, 0)
+    # unmap: let go of the parameter
+    zero = msg("id 0")
+    unsel = obj("t b b", 1, 2, ["bang", "bang"])
+    wire(unmap_msg, 0, unsel, 0)
+    wire(unsel, 0, zero, 0); wire(zero, 0, remote, 1)
+    # a saved mapping: maprestore k <path> -> live.path -> id N -> the same chain
+    rpath = obj("prepend path", 2, 1)
+    rlp = obj("live.path", 1, 3, ["", "", ""])
+    wire(restore_route, k - 1, rpath, 0)
+    wire(rpath, 0, rlp, 0)
+    wire(rlp, 0, rid, 0)
 
 # when the device opens: every parameter and saved chunk reports in, then the displays fill
 refresh = msg("refresh")

@@ -188,6 +188,11 @@ namespace bash
                 s.choices = divs; s.max = (float) divs.size() - 1.0f; s.def = 4.0f; s.group = 2; p.push_back (s);
             }
             f ("liferate", "Life Rate", "Life", 0.005f, 2.0f, 0.08f, 2, "Hz", 0.1f);
+            // where each LFO sweeps the parameter it's mapped to (0..100 % of its range)
+            f ("lfo1min", "LFO 1 Map Min", "L1Min", 0.0f, 1.0f, 0.0f, 2);
+            f ("lfo1max", "LFO 1 Map Max", "L1Max", 0.0f, 1.0f, 1.0f, 2);
+            f ("lfo2min", "LFO 2 Map Min", "L2Min", 0.0f, 1.0f, 0.0f, 2);
+            f ("lfo2max", "LFO 2 Map Max", "L2Max", 0.0f, 1.0f, 1.0f, 2);
             for (int k = 1; k <= numModSlots; ++k)
             {
                 const std::string n = "m" + std::to_string (k), N = "Mod " + std::to_string (k);
@@ -215,6 +220,7 @@ namespace bash
         : values (paramSpecs().size())
     {
         for (size_t i = 0; i < values.size(); ++i) values[i].store (paramSpecs()[i].def);
+        for (int k = 0; k < 2; ++k) { mapLo[(size_t) k].store (0.0f); mapHi[(size_t) k].store (1.0f); mapOut[(size_t) k].store (0.0f); }
         rngState ^= (uint64_t) std::chrono::steady_clock::now().time_since_epoch().count();
         restoring = true;   // the starting kit is not an edit: nothing to save yet
         loadFmKit (0);
@@ -338,6 +344,52 @@ namespace bash
     {
         pull();
         eng.process (left, right, n, tp);
+        for (int k = 0; k < 2; ++k)
+        {
+            // like Live's LFO: the LFO (-1..1) sweeps Min..Max of the target's range
+            const float lfo = eng.sourceValue (k == 0 ? ModSource::Lfo1 : ModSource::Lfo2);
+            const float a = values[(size_t) paramIndex (k == 0 ? "lfo1min" : "lfo2min")].load (std::memory_order_relaxed);
+            const float b = values[(size_t) paramIndex (k == 0 ? "lfo1max" : "lfo2max")].load (std::memory_order_relaxed);
+            const float norm = a + (b - a) * (0.5f + 0.5f * std::clamp (lfo, -1.0f, 1.0f));
+            const float lo = mapLo[(size_t) k].load (std::memory_order_relaxed), hi = mapHi[(size_t) k].load (std::memory_order_relaxed);
+            mapOut[(size_t) k].store (lo + (hi - lo) * norm, std::memory_order_relaxed);
+        }
+    }
+
+    bool Instrument::isMapped (int k)
+    {
+        std::lock_guard<std::recursive_mutex> g (lock);
+        return k >= 0 && k < 2 && ! maps[(size_t) k].path.empty();
+    }
+
+    void Instrument::emitMap (int k)
+    {
+        const auto& m = maps[(size_t) k];
+        std::string label = m.waiting ? std::string ("click a parameter...")
+                          : m.path.empty() ? std::string ("")
+                          : (m.device.empty() ? m.name : m.device + " | " + m.name);
+        emit ("mapname", { (double) (k + 1), label, m.waiting ? 1.0 : 0.0 });
+    }
+
+    void Instrument::mapCommand (const std::string& sel, const Atoms& a)
+    {
+        // from the device's mapping patch, k = 1 or 2:
+        //   mapwait k 0|1   mappath k <path words>   mapname k <name>   mapdevice k <name>
+        //   mapmin k v   mapmax k v   mapclear k
+        if (a.empty()) return;
+        const int k = std::clamp ((int) atomNum (a[0]) - 1, 0, 1);
+        auto& m = maps[(size_t) k];
+        std::string rest;
+        for (size_t i = 1; i < a.size(); ++i) { if (i > 1) rest += ' '; rest += atomStr (a[i]); }
+        if (sel == "mapwait")        { m.waiting = a.size() > 1 && atomNum (a[1]) > 0.5; }
+        else if (sel == "mappath")   { if (m.path != rest) { m.path = rest; changed(); } m.waiting = false; }
+        else if (sel == "mapname")   { if (m.name != rest) { m.name = rest; changed(); } }
+        else if (sel == "mapdevice") { if (m.device != rest) { m.device = rest; changed(); } }
+        else if (sel == "mapmin" && a.size() > 1) { m.lo = (float) atomNum (a[1]); mapLo[(size_t) k].store (m.lo); }
+        else if (sel == "mapmax" && a.size() > 1) { m.hi = (float) atomNum (a[1]); mapHi[(size_t) k].store (m.hi); }
+        else if (sel == "mapclear")  { m = LfoMap(); mapLo[(size_t) k].store (0.0f); mapHi[(size_t) k].store (1.0f); changed(); msg ("LFO " + std::to_string (k + 1) + " unmapped"); }
+        if (sel == "mappath" && ! m.path.empty()) msg ("LFO " + std::to_string (k + 1) + " mapped");
+        emitMap (k);
     }
 
     // ---- parameters from the device / to the device ----------------------------------------
@@ -1062,6 +1114,7 @@ namespace bash
             return;
         }
         if (sel == "unlockall") { std::lock_guard<SpinMutex> g2 (eng.pattern().mutex()); eng.pattern().clearLocks(); changed(); return; }
+        if (sel.rfind ("map", 0) == 0) { mapCommand (sel, a); return; }
         if (sel == "dice")      { rollDice(); return; }
         if (sel == "undo")      { undoDice(); return; }
 
@@ -1116,6 +1169,10 @@ namespace bash
         }
         else if (! missingSample.empty())
             o << "@missing\n" << missingSample << "\n";
+        for (int k = 0; k < 2; ++k)
+            if (! maps[(size_t) k].path.empty())
+                o << "@map" << k << "\n" << maps[(size_t) k].path << "\n" << maps[(size_t) k].name << "\t" << maps[(size_t) k].device
+                  << "\t" << maps[(size_t) k].lo << " " << maps[(size_t) k].hi << "\n";
         o << "@kit\n" << kitName << "\n";
         for (int i = 0; i < numCells; ++i)
         {
@@ -1139,6 +1196,7 @@ namespace bash
         std::istringstream in (text);
         std::string line;
         if (! std::getline (in, line) || line != "BASHDEV1") return false;
+        maps = {};
         std::string section;
         std::string patText, stepText, samplePath, sliceLine;
         double bpm = 0.0; int loop = -1;
@@ -1159,9 +1217,22 @@ namespace bash
                 ++sampleLine;
             }
             else if (section == "missing") missingSample = line;
+            else if (section == "map0" || section == "map1")
+            {
+                auto& m = maps[(size_t) (section == "map0" ? 0 : 1)];
+                if (m.path.empty()) m.path = line;
+                else
+                {
+                    std::istringstream ls (line);
+                    std::getline (ls, m.name, '\t');
+                    std::getline (ls, m.device, '\t');
+                    ls >> m.lo >> m.hi;
+                }
+            }
             else if (section == "kit") kitLines.push_back (line);
         }
 
+        for (int k = 0; k < 2; ++k) { mapLo[(size_t) k].store (maps[(size_t) k].lo); mapHi[(size_t) k].store (maps[(size_t) k].hi); }
         { std::lock_guard<SpinMutex> g (eng.pattern().mutex()); eng.pattern().deserialise (patText); }
         { StepPattern sp; if (sp.deserialise (stepText)) { std::lock_guard<SpinMutex> g (eng.stepMutex()); eng.stepPattern() = sp; } }
 
@@ -1419,6 +1490,24 @@ namespace bash
     {
         for (size_t i = 0; i < values.size(); ++i) emit ("pv", { paramSpecs()[i].id, (double) values[i].load() });
         emitMenus();
+        for (int k = 0; k < 2; ++k)
+        {
+            emitMap (k);
+            if (! maps[(size_t) k].path.empty())
+            {
+                // maprestore <k> <path words>: the device resolves the path to a parameter again
+                Atoms r { (double) (k + 1) };
+                std::istringstream words (maps[(size_t) k].path);
+                std::string w;
+                while (words >> w)
+                {
+                    char* end = nullptr;
+                    const double d = std::strtod (w.c_str(), &end);
+                    if (end != w.c_str() && *end == 0) r.push_back (d); else r.push_back (w);
+                }
+                emit ("maprestore", r);
+            }
+        }
         emitPads();
         emitPad (selectedPad);
         emitWave();
