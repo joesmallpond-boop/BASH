@@ -128,6 +128,7 @@ namespace bash
 
         // views
         void emitAll();
+        void emitKey();
         void emitMenus();
         void emitSeqView();
         void emitStepView();
@@ -177,6 +178,12 @@ namespace bash
         std::string lastStepViewKey;
         int lastLiveRoot = -1, lastLiveMask = -1;
         int keyShown = -1;
+        std::atomic<bool> liveScaleOn { true };   // Live 12's Scale switch (with Scale on, BASH! follows it)
+        bool scaleLockNow (float scaleLockParam) const
+        {
+            // like Live's scale awareness: following Live and Live's Scale is off -> play unquantised
+            return scaleLockParam > 0.5f && ! (values[(size_t) paramIndex ("keylock")].load() > 0.5f && ! liveScaleOn.load());
+        }
         // LFO -> any Live parameter (like Live's LFO: MAP, then click a parameter)
         struct LfoMap { std::string path, name, device; float lo = 0.0f, hi = 1.0f; bool waiting = false; };
         std::array<LfoMap, 2> maps;

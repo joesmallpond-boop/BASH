@@ -30,6 +30,7 @@ namespace
         t_pxobject ob;
         void* msgOut;
         void* clock;
+        void* midiClock;
         void* qelem;
         bash::Instrument* inst;
         std::vector<float>* bufL;
@@ -67,6 +68,21 @@ namespace
     {
         qelem_set (x->qelem);
         clock_fdelay (x->clock, frameMs);
+    }
+
+    // BASH! Sequencer: send the sequencer's notes on as "midi <note> <velocity>" (scheduler thread)
+    void midiFired (Bash* x)
+    {
+        bash::Engine::MidiNote notes[128];
+        const int n = x->inst->takeMidi (notes, 128);
+        for (int i = 0; i < n; ++i)
+        {
+            t_atom av[2];
+            atom_setlong (av, notes[i].note);
+            atom_setlong (av + 1, notes[i].velocity);
+            outlet_anything (x->msgOut, gensym ("midi"), 2, av);
+        }
+        clock_fdelay (x->midiClock, 1.0);
     }
 
     std::string conformPath (const std::string& maxPath)
@@ -191,6 +207,8 @@ namespace
         x->qelem = qelem_new (x, (method) tickMain);
         x->clock = clock_new (x, (method) clockFired);
         clock_fdelay (x->clock, frameMs);
+        x->midiClock = clock_new (x, (method) midiFired);
+        clock_fdelay (x->midiClock, 1.0);
         return x;
     }
 
@@ -199,6 +217,8 @@ namespace
         dsp_free ((t_pxobject*) x);
         clock_unset (x->clock);
         object_free (x->clock);
+        clock_unset (x->midiClock);
+        object_free (x->midiClock);
         qelem_free (x->qelem);
         x->inst->setEmitter (nullptr);
         delete x->inst;

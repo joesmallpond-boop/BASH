@@ -49,6 +49,7 @@ namespace bash
         bool              fill = false;       // Fill latched
         int               autoFillBars = 0;   // 0 off, else the last bar of every N is a fill
         bool              midiThru = true;    // notes in play the voice (except into the Arpeggiator)
+        int               midiSlices = 16;    // BASH! Sequencer, Slices target: how many slices to play (no sample there)
 
         // key and clock
         int    root       = 0;     // pitch class of the key

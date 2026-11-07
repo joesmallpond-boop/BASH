@@ -18,6 +18,10 @@ import json, os, struct, sys
 
 PARAMS = json.load(open(sys.argv[1]))
 OUT = sys.argv[2] if len(sys.argv) > 2 else "."
+# full = BASH! (sequencer + voice), voice = BASH! Voice (instrument), seq = BASH! Sequencer (MIDI effect)
+VARIANT = sys.argv[3] if len(sys.argv) > 3 else "full"
+NAMES = {"full": "BASH!", "voice": "BASH! Voice", "seq": "BASH! Sequencer"}
+CUR = ["core"]      # which part of the layout boxes belong to (the variants drop parts)
 P = {p["id"]: p for p in PARAMS}
 
 W, H = 1114, 169
@@ -50,6 +54,7 @@ def ppos(w=60, h=22):
     return [x, y, w, h]
 
 def add(box, group=None):
+    box["_sec"] = CUR[0]
     boxes.append({"box": box})
     if group:
         box.setdefault("varname", box["id"])
@@ -178,7 +183,10 @@ wire(bash, 1, plugout, 1)
 
 # sections, like Live's own devices: a faint shade over Live's device colour (works in any theme)
 SECTION = [0.0, 0.0, 0.0, 0.07]
-for rect in ([1, 1, 110, 167], [115, 1, 472, 167], [590, 1, 472, 167], [1065, 1, 48, 167]):
+FRAMES = {"full": [[1, 1, 110, 167], [115, 1, 472, 167], [590, 1, 472, 167], [1065, 1, 48, 167]],
+          "voice": [[1, 1, 110, 167], [115, 1, 472, 167], [590, 1, 48, 167]],
+          "seq": [[1, 1, 110, 167], [115, 1, 472, 167], [590, 1, 472, 167]]}
+for rect in FRAMES[VARIANT]:
     panel(rect, SECTION, rounded=4)
 
 def button(label, rect, message, group=None):
@@ -196,19 +204,23 @@ def button(label, rect, message, group=None):
 jsuis = []   # every display gets everything bash~ sends
 
 # ---- column A: badge, clock, key, dice ---------------------------------------------------
+CUR[0] = "key"
 jsuis.append(jsui("bash_badge.js", [4, 4, 104, 62]))
-toggle("play", "PLAY", [4, 70, 50, 16])
-toggle("sync", "SYNC", [58, 70, 50, 16])
-live_param("live.numbox", "tempo", [4, 90, 50, 16])
-toggle("keylock", "LIVE KEY", [58, 90, 50, 16])
+# Scale: like Live's scale awareness, follow the set's key and scale (and Live's Scale on / off)
+toggle("keylock", "Scale", [4, 70, 50, 16])
 live_param("live.menu", "root", [4, 110, 36, 16])
 live_param("live.menu", "scale", [42, 110, 66, 16])
+CUR[0] = "clock"
+toggle("sync", "Sync", [58, 70, 50, 16])
+toggle("play", "Play", [4, 90, 50, 16])
+live_param("live.numbox", "tempo", [58, 90, 50, 16])
 dice = jsui("bash_btns.js", [4, 130, 104, 18], args=["DICE|dice", "UNDO|undo"])
 jsuis.append(dice)
-toggle("thru", "THRU", [4, 151, 50, 15])
-toggle("seqon", "SEQ ON", [58, 151, 50, 15])
+toggle("thru", "Thru", [4, 151, 50, 15])
+toggle("seqon", "Seq on", [58, 151, 50, 15])
 
 # ---- column B: the sequencer --------------------------------------------------------------
+CUR[0] = "seq"
 live_param("live.tab", "mode", [118, 4, 116, 16])
 live_param("live.menu", "rate", [238, 4, 44, 16])
 live_param("live.menu", "algo", [286, 4, 108, 16], "gen")
@@ -226,10 +238,19 @@ jsuis.append(jsui("bash_lane.js", [118, 112, 318, 54], "step"))
 live_param("live.dial", "gate", [440, 112, 44, 50])
 live_param("live.dial", "swing", [486, 112, 44, 50])
 live_param("live.menu", "direction", [534, 114, 50, 16], "gen")
-toggle("scalelock", "SCALE", [534, 134, 50, 16])
+toggle("scalelock", "In key", [534, 134, 50, 16])
 
 # ---- column C: the voice ------------------------------------------------------------------
-live_param("live.tab", "engine", [592, 4, 150, 16])
+CUR[0] = "engine"
+if VARIANT == "seq":
+    # the Sequencer's Target: what its notes are for
+    eng_tab = live_param("live.tab", "engine", [592, 4, 220, 16])
+    boxes[-1]["box"]["saved_attribute_attributes"]["valueof"]["parameter_enum"] = ["Notes", "Slices", "Drum Rack"]
+    comment("Slices", [816, 5, 36, 14])
+    live_param("live.numbox", "midislices", [852, 4, 40, 16])
+else:
+    live_param("live.tab", "engine", [592, 4, 150, 16])
+CUR[0] = "voice"
 page_tab = {"id": new_id(), "maxclass": "live.tab", "numinlets": 1, "numoutlets": 3, "outlettype": ["", "", "float"],
             "parameter_enable": 1, "varname": "view", "num_lines_patching": 1, "num_lines_presentation": 1,
             "saved_attribute_attributes": {"valueof": {"parameter_longname": "View", "parameter_shortname": "View",
@@ -237,7 +258,9 @@ page_tab = {"id": new_id(), "maxclass": "live.tab", "numinlets": 1, "numoutlets"
                                                        "parameter_mmax": 1, "parameter_initial": [0],
                                                        "parameter_initial_enable": 1, "parameter_invisible": 1}}}
 pres(page_tab, [746, 4, 88, 16])
+CUR[0] = "page"
 page = add(page_tab)
+CUR[0] = "voice"
 
 # synth
 live_param("live.menu", "machine", [838, 4, 110, 16], "synth")
@@ -283,6 +306,7 @@ pres(pad_rev, [912, 122, 70, 18])
 pad_rev_id = add(pad_rev, "drum")
 comment("Click a pad to play it, shift-click to select, alt-click to clear.", [738, 144, 322, 22], 8.0, group="drum")
 
+CUR[0] = "mod"
 # mod page: two LFOs (each can MAP to any parameter in Live, like Live's LFO), Life, six slots
 map_buttons = {}
 for k, y in ((1, 24), (2, 82)):
@@ -314,6 +338,7 @@ for k in range(1, 7):
     live_param("live.numbox", "m%damt" % k, [1014, y, 46, 16], "mod")
 
 # ---- column D: level, pan, meter -------------------------------------------------------------
+CUR[0] = "out"
 live_param("live.dial", "level", [1068, 22, 44, 50])
 live_param("live.dial", "pan", [1068, 80, 44, 50])
 meter = {"id": new_id(), "maxclass": "live.meter~", "numinlets": 1, "numoutlets": 1, "outlettype": ["list"],
@@ -324,6 +349,7 @@ wire(bash, 0, meter_id, 0)
 
 for _, m in actions:
     wire(m, 0, bash, 0)
+CUR[0] = "expand"
 
 # ---- the expanded window (like EQ Eight's): EXPAND opens a big view in its own window ------------
 expand_btn, expand_msg = button("Expand", [1067, 4, 44, 16], "open")
@@ -348,22 +374,27 @@ big_r = big_add({"maxclass": "newobj", "text": "r ---bashview", "numinlets": 0, 
 big_s = big_add({"maxclass": "newobj", "text": "s ---bashcmd", "numinlets": 1, "numoutlets": 0, "patching_rect": [200, 10, 100, 22]})
 big_bg = big_add({"maxclass": "panel", "numinlets": 1, "numoutlets": 0, "bgcolor": [0.0, 0.0, 0.0, 0.07], "rounded": 0,
                   "background": 1, "patching_rect": [0, 0, BIG_W, BIG_H], "presentation": 1, "presentation_rect": [0, 0, BIG_W, BIG_H]})
-for f, rect, args in [("bash_seq.js", [8, 8, 1184, 330], None),
-                      ("bash_lane.js", [8, 344, 560, 54], None),
-                      ("bash_wave.js", [8, 404, 560, 248], None),
-                      ("bash_pads.js", [576, 344, 308, 308], None),
-                      ("bash_keys.js", [892, 344, 300, 96], None),
-                      ("bash_lfo.js", [892, 446, 300, 64], [1]),
-                      ("bash_lfo.js", [892, 516, 300, 64], [2]),
-                      ("bash_lfo.js", [892, 586, 300, 66], [3])]:
+BIG = {
+    "full":  [("bash_seq.js", [8, 8, 1184, 330], None), ("bash_lane.js", [8, 344, 560, 54], None),
+              ("bash_wave.js", [8, 404, 560, 248], None), ("bash_pads.js", [576, 344, 308, 308], None),
+              ("bash_keys.js", [892, 344, 300, 96], None), ("bash_lfo.js", [892, 446, 300, 64], [1]),
+              ("bash_lfo.js", [892, 516, 300, 64], [2]), ("bash_lfo.js", [892, 586, 300, 66], [3])],
+    "voice": [("bash_wave.js", [8, 8, 770, 330], None), ("bash_pads.js", [786, 8, 406, 406], None),
+              ("bash_keys.js", [8, 344, 770, 160], None), ("bash_lfo.js", [8, 510, 380, 142], [1]),
+              ("bash_lfo.js", [396, 510, 382, 142], [2]), ("bash_lfo.js", [786, 420, 406, 232], [3])],
+    "seq":   [("bash_seq.js", [8, 8, 1184, 440], None), ("bash_lane.js", [8, 456, 760, 60], None),
+              ("bash_keys.js", [8, 522, 760, 130], None), ("bash_lfo.js", [776, 456, 416, 62], [1]),
+              ("bash_lfo.js", [776, 524, 416, 62], [2]), ("bash_lfo.js", [776, 592, 416, 60], [3])],
+}
+for f, rect, args in BIG[VARIANT]:
     j = big_jsui(f, rect, args)
     big_lines.append({"patchline": {"source": [big_r, 0], "destination": [j, 0]}})
     big_lines.append({"patchline": {"source": [j, 0], "destination": [big_s, 0]}})
 big_patcher = {"fileversion": 1, "appversion": {"major": 8, "minor": 6, "revision": 0, "architecture": "x64", "modernui": 1},
                "classnamespace": "box", "rect": [80.0, 80.0, float(BIG_W), float(BIG_H)], "openinpresentation": 1,
                "default_fontsize": 10.0, "gridsize": [15.0, 15.0], "toolbarvisible": 0, "statusbarvisible": 0,
-               "title": "BASH!", "boxes": big_boxes, "lines": big_lines}
-big = add({"id": new_id(), "maxclass": "newobj", "text": "p BASH!", "numinlets": 1, "numoutlets": 0,
+               "title": NAMES[VARIANT], "boxes": big_boxes, "lines": big_lines}
+big = add({"id": new_id(), "maxclass": "newobj", "text": "p BASH_view", "numinlets": 1, "numoutlets": 0,
            "patching_rect": ppos(80), "patcher": big_patcher, "saved_object_attributes": {"globalpatchername": ""}})
 wire(pctl, 0, big, 0)
 view_send = obj("s ---bashview", 1, 0)
@@ -373,6 +404,7 @@ cmd_route = obj("route browse", 1, 2)
 wire(view_cmd, 0, cmd_route, 0)
 wire(cmd_route, 1, bash, 0)
 
+CUR[0] = "core"
 # =====================================================================================
 # wiring: parameters -> bash~
 for oid, pid in param_objects:
@@ -381,7 +413,8 @@ for oid, pid in param_objects:
     wire(pre, 0, bash, 0)
 
 # bash~ messages -> every display + the view switcher + routers
-ui_js = obj("js bash_ui.js", 1, 1)
+UI_JS = {"full": "bash_ui.js", "voice": "bash_ui_voice.js", "seq": "bash_ui_seq.js"}[VARIANT]
+ui_js = obj("js " + UI_JS, 1, 1)
 for j in jsuis:
     wire(bash, MSG, j, 0)
 wire(bash, MSG, ui_js, 0)
@@ -524,6 +557,12 @@ wire(bits, 0, total, 0)
 wire(total, 0, keypak, 1)
 wire(keypak, 0, keyp, 0)
 wire(keyp, 0, bash, 0)
+# Live's Scale switch on / off (scale awareness): with Scale off, BASH! stops quantising to it
+modeobs = obj("live.observer scale_mode", 2, 2)
+modep = obj("prepend scalemode", 2, 1)
+wire(lpath, 0, modeobs, 1)
+wire(modeobs, 0, modep, 0)
+wire(modep, 0, bash, 0)
 
 # ---- LFO MAP (like Live's LFO): press Map, click any parameter in Live, the LFO drives it -----------
 # live_set view's selected_parameter tells us what was clicked; live.remote~ takes it over.
@@ -614,13 +653,61 @@ for pid in pattrs:
 wire(start, 2, page, 0)
 
 # =====================================================================================
+# the variants
+if VARIANT == "seq":
+    # MIDI effect: the sequencer's notes go out as MIDI; other MIDI (CCs, bend, aftertouch) passes through
+    init = msg("midiout 1, param seqon 1")
+    wire(start, 2, init, 0); wire(init, 0, bash, 0)
+    mroute2 = obj("route midi", 1, 2)
+    wire(bash, MSG, mroute2, 0)
+    fmt = obj("midiformat 1", 7, 1, ["int"])
+    mout = obj("midiout", 1, 0)
+    wire(mroute2, 0, fmt, 0)
+    wire(fmt, 0, mout, 0)
+    for k in (2, 3, 4, 5):
+        wire(parse, k, fmt, k)
+if VARIANT == "voice":
+    # an instrument: notes from clips / a keyboard play the voice; no sequencer
+    init = msg("param seqon 0, param thru 1, param mode 0")
+    wire(start, 2, init, 0); wire(init, 0, bash, 0)
+
+if VARIANT != "full":
+    drop = {"voice": {"clock", "seq"}, "seq": {"voice", "page", "out"}}[VARIANT]
+    removed = {b["box"]["id"] for b in boxes if b["box"]["_sec"] in drop}
+    if VARIANT == "seq":
+        removed.add(plugout)
+    boxes[:] = [b for b in boxes if b["box"]["id"] not in removed]
+    lines[:] = [l for l in lines if l["patchline"]["source"][0] not in removed and l["patchline"]["destination"][0] not in removed]
+    keep = {b["box"].get("varname") for b in boxes}
+    for g in groups:
+        groups[g] = [v for v in groups[g] if v in keep]
+    param_objects[:] = [(o, p) for o, p in param_objects if o not in removed]
+    if VARIANT == "voice":
+        W = 640
+        for b in boxes:
+            if b["box"].get("varname") in ("root", "scale"):
+                b["box"]["presentation_rect"][1] = 90
+        for b in boxes:
+            bx = b["box"]
+            if bx["_sec"] in ("engine", "voice", "page", "mod", "out", "expand") and bx.get("presentation"):
+                bx["presentation_rect"][0] -= 474
+    if VARIANT == "seq":
+        W = 1064
+        for b in boxes:
+            bx = b["box"]
+            if bx["_sec"] == "expand" and bx.get("presentation"):
+                bx["presentation_rect"] = [1016, 4, 44, 16]
+for b in boxes:
+    b["box"].pop("_sec", None)
+
+# =====================================================================================
 # the view switcher script (generated: it knows which objects belong to which view)
 ui_js_text = """// BASH! view switcher (generated by make_device.py): shows the objects for the
 // sequencer mode (Generative / Step), the voice (Synth / Slicer / Drums) and the page (Voice / Mod).
 inlets = 1;
 outlets = 1;
 var groups = %s;
-var mode = 0, engine = 0, page = 0;
+var mode = 0, engine = 0, page = %d;
 
 function apply()
 {
@@ -652,7 +739,7 @@ function anything()
 }
 
 function loadbang() { apply(); }
-""" % json.dumps(groups, indent=1)
+""" % (json.dumps(groups, indent=1), 1 if VARIANT == "seq" else 0)
 
 patcher = {
     "patcher": {
@@ -674,17 +761,24 @@ patcher = {
 }
 
 os.makedirs(OUT, exist_ok=True)
+NAME = NAMES[VARIANT]
+patcher["patcher"]["devicewidth"] = float(W)
+patcher["patcher"]["description"] = {
+    "full": "BASH! one-channel groovebox: generative acid / step sequencer driving a synth, slicer or drum kit. By Kalabash.",
+    "voice": "BASH! Voice: the synth, slicer and drum kit from BASH!, played from clips or a keyboard. By Kalabash.",
+    "seq": "BASH! Sequencer: BASH!'s generative acid and step sequencers as MIDI, for any instrument or Drum Rack. By Kalabash."}[VARIANT]
+patcher["patcher"]["tags"] = "Kalabash BASH"
 text = json.dumps(patcher, indent=1)
-with open(os.path.join(OUT, "BASH!.maxpat"), "w") as f:
+with open(os.path.join(OUT, NAME + ".maxpat"), "w") as f:
     f.write(text)
-with open(os.path.join(OUT, "bash_ui.js"), "w") as f:
+with open(os.path.join(OUT, UI_JS), "w") as f:
     f.write(ui_js_text)
 
-# .amxd: 'ampf' header (device type 'iiii' = instrument), 'meta', then the patch JSON in 'ptch'
+# .amxd: 'ampf' header (device type 'iiii' instrument / 'mmmm' MIDI effect), 'meta', then the patch JSON
 payload = text.encode("utf-8") + b"\x00"
-amxd = (b"ampf" + struct.pack("<I", 4) + b"iiii" +
+amxd = (b"ampf" + struct.pack("<I", 4) + (b"mmmm" if VARIANT == "seq" else b"iiii") +
         b"meta" + struct.pack("<I", 4) + struct.pack("<I", 0) +
         b"ptch" + struct.pack("<I", len(payload)) + payload)
-with open(os.path.join(OUT, "BASH!.amxd"), "wb") as f:
+with open(os.path.join(OUT, NAME + ".amxd"), "wb") as f:
     f.write(amxd)
-print("wrote BASH!.amxd, BASH!.maxpat and bash_ui.js to", OUT, "-", len(boxes), "objects,", len(lines), "connections,", len(param_objects), "parameters")
+print("wrote", NAME + ".amxd", "to", OUT, "-", len(boxes), "objects,", len(lines), "connections,", len(param_objects), "parameters")

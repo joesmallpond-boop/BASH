@@ -44,17 +44,22 @@ jobs:
       - name: Generate and check the device
         run: |
           ./build/bash_params_json > build/params.json
-          python3 max/make_device.py build/params.json build/device
+          for v in full voice seq; do python3 max/make_device.py build/params.json build/device "$v"; done
           python3 max/check_device.py "build/device/BASH!.maxpat" build/device/bash_ui.js max/javascript
+          python3 max/check_device.py "build/device/BASH! Voice.maxpat" build/device/bash_ui_voice.js max/javascript
+          python3 max/check_device.py "build/device/BASH! Sequencer.maxpat" build/device/bash_ui_seq.js max/javascript
 
       - name: Display scripts (ES5 + previews)
         run: |
           mkdir -p build/node && cd build/node && npm init -y >/dev/null && npm install acorn@8.14.0 @napi-rs/canvas@0.1.65 >/dev/null && cd ../..
           export NODE_PATH="$PWD/build/node/node_modules"
-          node max/check_es5.js max/javascript/*.js build/device/bash_ui.js
+          node max/check_es5.js max/javascript/*.js build/device/bash_ui*.js
           for s in synth slice drum step; do ./build/bash_device_sim $s > build/sim_$s.jsonl; node max/preview.js "build/device/BASH!.maxpat" max/javascript build/device/bash_ui.js build/sim_$s.jsonl build/preview-$s.png 0; done
           ./build/bash_device_sim mod > build/sim_mod.jsonl
           node max/preview.js "build/device/BASH!.maxpat" max/javascript build/device/bash_ui.js build/sim_mod.jsonl build/preview-mod.png 1
+          ./build/bash_device_sim seq > build/sim_seq.jsonl
+          node max/preview.js "build/device/BASH! Sequencer.maxpat" max/javascript build/device/bash_ui_seq.js build/sim_seq.jsonl build/preview-sequencer.png 1
+          node max/preview.js "build/device/BASH! Voice.maxpat" max/javascript build/device/bash_ui_voice.js build/sim_drum.jsonl build/preview-voice.png 0
 
       - name: bash~ compile check
         run: |
@@ -101,7 +106,7 @@ jobs:
           name: BASH! ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || steps.ver.outputs.tag }}
           target_commitish: ${{ github.sha }}
           body: |
-            **BASH! for Ableton Live (Max for Live, Mac).** Download BASH-mac.dmg, quit Live, open the DMG and double-click "Install BASH!.pkg". If macOS blocks it, right-click the .pkg > Open.
-            Then in Live: Browser > User Library > Presets > Instruments > Max Instrument > BASH!
+            **BASH! by Kalabash, for Ableton Live (Max for Live, Mac):** BASH!, BASH! Voice and BASH! Sequencer. Download BASH-mac.dmg, quit Live, open the DMG and double-click "Install BASH!.pkg". If macOS blocks it, right-click the .pkg > Open.
+            Then in Live: User Library > Presets > Instruments > Max Instrument > Kalabash (BASH!, BASH! Voice) and MIDI Effects > Max MIDI Effect > Kalabash (BASH! Sequencer).
           files: |
             dist/BASH-mac/BASH-mac.dmg

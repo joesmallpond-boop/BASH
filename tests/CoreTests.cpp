@@ -1707,6 +1707,42 @@ static void testMidiOut()
     }
 }
 
+static void testScaleAwareness()
+{
+    // like Live's scale awareness: following Live (Scale button on) + Live's Scale switched off -> unquantised
+    Instrument in; Recorder rec; rec.attach (in);
+    in.prepare (48000.0, 512);
+    Transport tp; tp.hostAvailable = true; tp.hostBpm = 120.0;
+    std::vector<float> l (480), r (480);
+    in.process (l.data(), r.data(), 480, tp);
+    CHECK (in.engine().settings().seq.scaleLock);
+    in.command ("scalemode", { 0.0 });
+    in.process (l.data(), r.data(), 480, tp);
+    CHECK (! in.engine().settings().seq.scaleLock);
+    in.tick();
+    const auto* ks = rec.last ("keyscale");
+    CHECK (ks != nullptr && atomNum ((*ks)[2]) == 0.0);
+    // not following Live: BASH!'s own Scale Lock decides
+    in.command ("param", { std::string ("keylock"), 0.0 });
+    in.process (l.data(), r.data(), 480, tp);
+    CHECK (in.engine().settings().seq.scaleLock);
+    in.command ("param", { std::string ("keylock"), 1.0 });
+    in.command ("scalemode", { 1.0 });
+    in.tick();
+    ks = rec.last ("keyscale");
+    CHECK (ks != nullptr && atomNum ((*ks)[2]) == 1.0 && (((int) atomNum ((*ks)[1])) & 1));
+    // the Sequencer's Slices target plays as many slices as asked, with no sample
+    in.command ("midiout", { 1.0 });
+    in.command ("param", { std::string ("engine"), 1.0 });
+    in.command ("param", { std::string ("midislices"), 4.0 });
+    in.command ("param", { std::string ("density"), 1.0 });
+    in.command ("param", { std::string ("slicemode"), 2.0 });
+    tp.hostPlaying = true;
+    Engine::MidiNote buf[256]; std::set<int> notes;
+    for (int b = 0; b < 300; ++b) { in.process (l.data(), r.data(), 480, tp); tp.hostPpq += 0.02; const int n = in.takeMidi (buf, 256); for (int i = 0; i < n; ++i) if (buf[i].velocity) notes.insert (buf[i].note); }
+    CHECK (! notes.empty() && *notes.begin() >= drumBaseNote && *notes.rbegin() < drumBaseNote + 4);
+}
+
 int main()
 {
     testDeterminism();
@@ -1742,6 +1778,7 @@ int main()
     testInstrumentSequencing();
     testLfoMapping();
     testMidiOut();
+    testScaleAwareness();
     std::printf ("%d checks, %d failures\n", checks, failures);
     return failures == 0 ? 0 : 1;
 }

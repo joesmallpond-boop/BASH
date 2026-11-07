@@ -1,6 +1,10 @@
 # BASH!
 
-A one-channel groovebox for Ableton Live, as a Max for Live instrument: a sequencer
+By Kalabash. Three Max for Live devices: **BASH!** (the whole thing), **BASH! Voice** (the
+synth / slicer / drums on their own) and **BASH! Sequencer** (the sequencers as a MIDI effect for
+any instrument: melodic notes, slices from C1 for Simpler / Sampler, or Drum Rack pads from C1).
+
+BASH! is a one-channel groovebox for Ableton Live: a sequencer
 (the generative acid sequencer or a step sequencer) driving one voice (a synth, a slice
 sampler or a 16-pad drum kit), with LFO / Life modulation, locked to Live's tempo and key.
 Voiced for UK bass, drum & bass, dubstep, UKG and broken / wonky beats.
@@ -37,6 +41,7 @@ Build on a Mac: `./scripts/build-mac.sh` (add `--install` to install it for you)
 
 ## History
 
+- **1.1.0** - Three devices in one installer, under Kalabash: BASH!, BASH! Voice (instrument) and BASH! Sequencer (MIDI effect: Notes / Slices / Drum Rack targets). Scale button like Live's scale awareness: follows the set's key and Live's Scale on / off.
 - **1.0.2** - LFO 1 and 2 can MAP to any parameter in Live, like Live's LFO: press Map, click a parameter (any device, any track), the LFO drives it between Min and Max; x unmaps; the target shows in the LFO display and is saved with the set.
 - **1.0.1** - Looks like Live's own devices: Live's knobs, menus and buttons in your Live theme, displays in Live's screen colours (they follow the theme), grouped sections; EXPAND opens a big window (all 16 step lanes, a large waveform, the pads, keys and LFOs), like EQ Eight; the Decompression Tapes mark as the play light, the lane arrows and a quiet signature in the big view.
 - **1.0.0** - BASH! becomes a one-channel Max for Live instrument. The 8-track JUCE plugin

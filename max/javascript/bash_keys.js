@@ -36,6 +36,7 @@ function refreshTheme()
 }
 function col(c, a) { mgraphics.set_source_rgba(c[0], c[1], c[2], a === undefined ? c[3] : a); }
 var lastCount = -1, glow = [], bubbles = [], octave = 2, root = 0, lastNote = -1;
+var scaleMask = 0xAD5, scaleOn = 1;   // keyscale from bash~: the key's notes light faintly
 for (var i = 0; i < 128; i++) glow.push(0);
 var BLACK = [false, true, false, true, false, false, true, false, true, false, true, false];
 
@@ -51,6 +52,7 @@ function anything()
         mgraphics.redraw();
         return;
     }
+    if (messagename === "keyscale") { root = a[0]; scaleMask = a[1]; scaleOn = a[2]; mgraphics.redraw(); return; }
     if (messagename !== "frame") return;
     var count = a[10], note = a[11];
     if (lastCount >= 0 && count !== lastCount && note >= 0)
@@ -98,11 +100,13 @@ function paint()
         {
             var p = keyPos(n);
             if (p === null || (pass === 0) === p.black) continue;
-            var inKey = ((n - root) % 12 + 12) % 12 === 0;
+            var deg = ((n - root) % 12 + 12) % 12;
+            var isRoot = deg === 0, inScale = scaleOn && ((scaleMask >> deg) & 1);
             col(p.black ? C.bg : C.panel);
             mgraphics.rectangle_rounded(p.x, p.y, p.w, p.h, 2, 2);
             mgraphics.fill();
-            if (inKey) { col(C.amberDim, 0.5); mgraphics.rectangle(p.x + 1, p.y + p.h - 4, p.w - 2, 2); mgraphics.fill(); }
+            if (inScale && ! isRoot) { col(C.alt, 0.35); mgraphics.rectangle(p.x + 1, p.y + p.h - 3, p.w - 2, 2); mgraphics.fill(); }
+            if (isRoot) { col(C.amber, 0.7); mgraphics.rectangle(p.x + 1, p.y + p.h - 4, p.w - 2, 3); mgraphics.fill(); }
             if (glow[n] > 0.03) { col(C.amber, glow[n]); mgraphics.rectangle_rounded(p.x, p.y, p.w, p.h, 2, 2); mgraphics.fill(); }
         }
     for (var b = 0; b < bubbles.length; b++)

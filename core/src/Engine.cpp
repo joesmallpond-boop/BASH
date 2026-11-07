@@ -366,7 +366,8 @@ namespace bash
         else if (ts.engine == EngineType::Slicer)
         {
             std::lock_guard<SpinMutex> g (sliceStore.m);
-            ts.seq.sliceCount = lastSample != nullptr ? (uint32_t) sliceStore.points.size() : 0u;
+            ts.seq.sliceCount = midiOutOn.load (std::memory_order_relaxed) ? (uint32_t) std::clamp (ts.midiSlices, 1, maxSlices)
+                              : lastSample != nullptr ? (uint32_t) sliceStore.points.size() : 0u;
         }
         else
             ts.seq.sliceCount = 0;

@@ -134,6 +134,7 @@ namespace bash
             t ("fill", "Fill", "Fill", false, 0);
             e ("autofill", "Auto Fill", "AutoFill", { "Off", "2 bars", "4 bars", "8 bars", "16 bars" }, 0, 0);
             t ("thru", "MIDI Thru", "Thru", true, 0);
+            i ("midislices", "Slices", "Slices", 1, 128, 16, 0);   // BASH! Sequencer, Slices target
 
             // clock + key
             t ("play", "Play", "Play", false, 3);
@@ -271,7 +272,7 @@ namespace bash
         q.accentAmount = v ("accent");
         q.gate         = v ("gate");
         q.baseNote     = 12 * ((int) v ("octave") + 1) + (int) v ("root");
-        q.scaleLock    = v ("scalelock") > 0.5f;
+        q.scaleLock    = scaleLockNow (v ("scalelock"));
         q.sliceMode    = (SliceMode) std::clamp ((int) v ("slicemode"), 0, (int) SliceMode::count - 1);
         q.windowStart  = (uint32_t) std::max (0, (int) v ("winstart") - 1);
         q.windowSize   = (uint32_t) std::max (1, (int) v ("winsize"));
@@ -282,6 +283,7 @@ namespace bash
         static constexpr int fillBars[] = { 0, 2, 4, 8, 16 };
         s.autoFillBars = fillBars[std::clamp ((int) v ("autofill"), 0, 4)];
         s.midiThru     = v ("thru") > 0.5f;
+        s.midiSlices   = (int) v ("midislices");
 
         s.playing    = v ("play") > 0.5f;
         s.hostSync   = v ("sync") > 0.5f;
@@ -472,7 +474,7 @@ namespace bash
         q.accentAmount = param ("accent");
         q.gate         = param ("gate");
         q.baseNote     = 12 * ((int) param ("octave") + 1) + (int) param ("root");
-        q.scaleLock    = param ("scalelock") > 0.5f;
+        q.scaleLock    = scaleLockNow (param ("scalelock"));
         q.sliceMode    = (SliceMode) std::clamp ((int) param ("slicemode"), 0, (int) SliceMode::count - 1);
         q.windowStart  = (uint32_t) std::max (0, (int) param ("winstart") - 1);
         q.windowSize   = (uint32_t) std::max (1, (int) param ("winsize"));
@@ -1115,6 +1117,7 @@ namespace bash
         }
         if (sel == "unlockall") { std::lock_guard<SpinMutex> g2 (eng.pattern().mutex()); eng.pattern().clearLocks(); changed(); return; }
         if (sel.rfind ("map", 0) == 0) { mapCommand (sel, a); return; }
+        if (sel == "scalemode") { liveScaleOn.store (num (0, 1.0) > 0.5); viewDirty = true; emitKey(); return; }   // Live's Scale switch
         if (sel == "midiout") { eng.setMidiOut (num (0) > 0.5); return; }   // BASH! Sequencer: notes out as MIDI
         if (sel == "dice")      { rollDice(); return; }
         if (sel == "undo")      { undoDice(); return; }
@@ -1487,6 +1490,18 @@ namespace bash
         emit ("lanepos", lanes);
     }
 
+    void Instrument::emitKey()
+    {
+        // keyname <text>   keyscale <root> <12-bit mask of the scale's notes> <quantising 0/1>
+        const int root = (int) param ("root");
+        const auto& sc = allScales()[(size_t) std::clamp ((int) param ("scale"), 0, (int) allScales().size() - 1)];
+        int mask = 0;
+        for (int iv : sc.intervals) mask |= 1 << (iv % 12);
+        const bool off = param ("keylock") > 0.5f && ! liveScaleOn.load();
+        emit ("keyname", { off ? std::string ("Scale off in Live") : std::string (noteName (root)) + " " + sc.name });
+        emit ("keyscale", { (double) root, (double) mask, off ? 0.0 : 1.0 });
+    }
+
     void Instrument::emitAll()
     {
         for (size_t i = 0; i < values.size(); ++i) emit ("pv", { paramSpecs()[i].id, (double) values[i].load() });
@@ -1513,9 +1528,7 @@ namespace bash
         emitPad (selectedPad);
         emitWave();
         viewDirty = true;
-        const auto sc = scaleNow();
-        emit ("keyname", { std::string (noteName ((int) param ("root"))) + " " + allScales()[(size_t) std::clamp ((int) param ("scale"), 0, (int) allScales().size() - 1)].name });
-        (void) sc;
+        emitKey();
     }
 
     void Instrument::tick()
@@ -1555,12 +1568,8 @@ namespace bash
                          graveyard.end());
 
         // the displays
-        const int keyNow = (int) param ("root") * 1000 + (int) param ("scale");
-        if (keyNow != keyShown)
-        {
-            keyShown = keyNow;
-            emit ("keyname", { std::string (noteName ((int) param ("root"))) + " " + allScales()[(size_t) std::clamp ((int) param ("scale"), 0, (int) allScales().size() - 1)].name });
-        }
+        const int keyNow = (int) param ("root") * 1000 + (int) param ("scale") * 2 + (liveScaleOn.load() ? 1 : 0) + (param ("keylock") > 0.5f ? 100000 : 0);
+        if (keyNow != keyShown) { keyShown = keyNow; emitKey(); }
         if (viewDirty)
         {
             viewDirty = false;

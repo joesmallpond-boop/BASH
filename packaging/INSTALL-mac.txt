@@ -1,15 +1,23 @@
-BASH! for Ableton Live (Max for Live)
-=====================================
+BASH! by Kalabash, for Ableton Live (Max for Live)
+==================================================
+
+Three devices:
+  BASH!            sequencer + synth / slicer / drums, the whole thing
+  BASH! Voice      the synth / slicer / drums on their own, played from clips or a keyboard
+  BASH! Sequencer  the generative acid + step sequencers as a MIDI effect: put it before
+                   any instrument. Target: Notes (melodies in key), Slices (C1 upwards,
+                   for Simpler / Sampler in slice mode, "Slices" sets how many) or
+                   Drum Rack (pads from C1)
 
 Install
 -------
 1. Quit Live.
 2. Double-click "Install BASH!.pkg". It puts:
-     BASH!.amxd           -> your Live User Library > Presets > Instruments > Max Instrument
+     BASH!, BASH! Voice   -> your Live User Library > Presets > Instruments > Max Instrument > Kalabash
+     BASH! Sequencer      -> your Live User Library > Presets > MIDI Effects > Max MIDI Effect > Kalabash
      the BASH package     -> Documents/Max 9/Packages and Documents/Max 8/Packages
                              (the bash~ object and the display scripts the device uses)
-3. Open Live: Browser > User Library > Presets > Instruments > Max Instrument > BASH!
-   Drag it onto a MIDI track.
+3. Open Live: Browser > User Library > Presets > ... > Kalabash, drag a device onto a MIDI track.
 
 Needs Live 11 or 12 Suite (or Live Standard with Max for Live). Live 12 is needed
 for BASH! to follow the set's key and scale.
@@ -17,15 +25,16 @@ for BASH! to follow the set's key and scale.
 The installer isn't notarised yet, so the first time macOS may say it "can't be
 opened": right-click (Control-click) the .pkg, choose Open, then Open again.
 
-If your User Library is somewhere else, drag "Manual install/BASH!.amxd" from this
-DMG into it. If Live says it can't find "bash~", copy the "Manual install/BASH"
+If your User Library is somewhere else, drag the .amxd files from "Manual install" in
+this DMG into it. If Live says it can't find "bash~", copy the "Manual install/BASH"
 folder into Documents/Max 9/Packages (and Max 8/Packages), then reload the device.
 
 Using it
 --------
 - Press play in Live: BASH! follows Live's tempo and position. With Live stopped,
   BASH!'s own PLAY button runs it at Live's tempo.
-- LIVE KEY on: BASH! uses the set's key and scale (Live 12's Scale settings).
+- Scale on (top left): BASH! follows the set's key and scale like Live's scale-aware
+  devices, and stops quantising when Live's Scale is switched off (Live 12).
 - Left: the sequencer. GENERATIVE (the acid generator: Type, Density, Steps...) or
   STEP (16 lanes, each with its own length, speed, algorithm and die).
 - Right: the voice. SYNTH, SLICER (drop or load a sample, or pick a loop) or DRUMS

@@ -39,6 +39,8 @@ int main (int argc, char** argv)
     if (scenario == "drum")  { p ("engine", 2); in.command ("kit", { std::string ("pick"), 1.0 }); in.command ("pad", { std::string ("select"), 2.0 }); p ("mode", 0); p ("slicemode", 3); }
     if (scenario == "step")  { p ("engine", 2); in.command ("kit", { std::string ("pick"), 0.0 }); in.command ("groove", { 5.0 });
                                in.command ("lane", { std::string ("select"), 3.0 }); in.command ("step", { 1.0, 6.0, std::string ("ratchet") }); }
+    if (scenario == "seq")   { in.command ("midiout", { 1.0 }); p ("engine", 2); p ("mode", 1); in.command ("groove", { 7.0 }); }
+    if (scenario == "seqgen"){ in.command ("midiout", { 1.0 }); p ("engine", 0); p ("density", 0.8); }
     if (scenario == "mod")   { p ("engine", 0); p ("m1src", 1); p ("m1dst", 6); p ("m1amt", 0.6); p ("m2src", 3); p ("m2dst", 1); p ("m2amt", -0.3); p ("lfo2sync", 1);
                                in.command ("mappath", { 1.0, std::string ("live_set tracks 1 devices 0 parameters 3") });
                                in.command ("mapname", { 1.0, std::string ("Frequency") }); in.command ("mapdevice", { 1.0, std::string ("Auto Filter") });
