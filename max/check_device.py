@@ -43,10 +43,11 @@ member_of = {}
 for g, members in groups.items():
     for m in members: member_of[m] = g
 interactive = [b for b in boxes if b.get("presentation") and b["maxclass"] not in ("panel", "comment")]
-for mode, engine, page, sync in [(m, e, p, y) for m in (0, 1) for e in (0, 1, 2) for p in (0, 1) for y in (0, 1)]:
+for mode, engine, page, sync, padfm in [(m, e, p, y, f) for m in (0, 1) for e in (0, 1, 2) for p in (0, 1) for y in (0, 1) for f in (0, 1)]:
             show = {"gen": mode == 0, "step": mode == 1, "synth": page == 0 and engine == 0,
                     "slice": page == 0 and engine == 1, "drum": page == 0 and engine == 2, "mod": page == 1,
-                    "free": sync == 0, "synced": sync == 1}
+                    "free": sync == 0, "synced": sync == 1,
+                    "padsample": page == 0 and engine == 2 and padfm == 0, "padfm": page == 0 and engine == 2 and padfm == 1}
             vis = [b for b in interactive if show.get(member_of.get(b.get("varname")), True)]
             for i in range(len(vis)):
                 for j in range(i + 1, len(vis)):

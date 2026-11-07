@@ -1516,7 +1516,19 @@ static void testInstrumentSamplesAndKit()
     in.command ("pad", { std::string ("sound"), 3.0, 4.0 });
     CHECK (in.engine().cell (3).kind == DrumCell::Kind::Sample);
     const auto* pe = rec.last ("padedit");
-    CHECK (pe != nullptr && atomNum ((*pe)[0]) == 3.0);
+    CHECK (pe != nullptr && atomNum ((*pe)[0]) == 3.0 && pe->size() == 21);
+    // SAMPLE <-> FM per pad, with a starting point of the same kind
+    {
+        Instrument k; k.prepare (48000.0, 512);
+        k.command ("pad", { std::string ("kind"), 0.0, std::string ("fm") });
+        CHECK (k.engine().cell (0).kind == DrumCell::Kind::Fm);
+        k.command ("pad", { std::string ("set"), 0.0, std::string ("sweep"), 30.0 });
+        CHECK (std::abs (k.engine().cell (0).fm.pitchAmt - 30.0f) < 1e-4f);
+        k.command ("pad", { std::string ("kind"), 1.0, std::string ("fm") });
+        CHECK (k.engine().cell (1).kind == DrumCell::Kind::Fm);
+        k.command ("pad", { std::string ("kind"), 1.0, std::string ("sample") });
+        CHECK (k.engine().cell (1).kind == DrumCell::Kind::Sample);
+    }
 
     // state: save, then load into a fresh instrument
     const auto text = in.saveState();

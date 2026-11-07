@@ -113,6 +113,7 @@ namespace bash
         std::string loadCellFile (int i, const std::string& path);
         void setCellSample (int i, std::shared_ptr<SampleData>, const std::string& name, const std::string& path, int libSound);
         void setCellFm (int i, int preset);
+        void setPadKind (int i, bool fm);
         void clearCell (int i);
         void loadFmKit (int k);
         void loadLibraryKit (int k, bool withGroove);

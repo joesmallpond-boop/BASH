@@ -5,6 +5,7 @@
 #include "bash/Warp.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -25,6 +26,8 @@
 //   srcbpm <bpm> | half | double
 //   pad select <i> | play <i> | load <i> <path> | sound <i> <index> | fm <i> <preset> | clear <i>
 //   pad set <i> <field> <value>      field: tune gain pan decay start end cutoff choke reverse
+//                                    FM: pitch sweep fm ratio noise tone decay click drive
+//   pad kind <i> sample | fm         switch a pad between a sample and the FM drum (a matching starting point)
 //   kit lib <index> | fm <index> | libgroove <index>
 //   step <lane> <i> toggle | vel <v> | ratchet | cond | prob   (drag / click / modifier clicks)
 //   lane select <l> | algo <l> <a> | length <l> <n> | speed <l> <s> | mute <l> | roll <l> | gen <l>
@@ -761,6 +764,11 @@ namespace bash
         else if (field == "pitch")   c.fm.pitch = std::clamp (v, 20.0f, 2000.0f);
         else if (field == "noise")   c.fm.noise = std::clamp (v, 0.0f, 1.0f);
         else if (field == "fm")      c.fm.fmAmt = std::clamp (v, 0.0f, 20.0f);
+        else if (field == "sweep")   c.fm.pitchAmt = std::clamp (v, 0.0f, 48.0f);
+        else if (field == "ratio")   c.fm.ratio = std::clamp (v, 0.25f, 8.0f);
+        else if (field == "tone")    c.fm.tone = std::clamp (v, 0.0f, 1.0f);
+        else if (field == "click")   c.fm.click = std::clamp (v, 0.0f, 1.0f);
+        else if (field == "drive")   c.fm.drive = std::clamp (v, 0.0f, 1.0f);
         else return;
         eng.setCell (i, c);
         changed();
@@ -774,7 +782,65 @@ namespace bash
         emit ("padedit", { (double) i, cells[(size_t) i].name.empty() ? std::string ("(empty)") : cells[(size_t) i].name,
                            (double) (int) c.kind, (double) c.tune, (double) c.gain, (double) c.pan,
                            (double) (fm ? c.fm.decay : c.fadeOut), (double) c.start, (double) c.end, (double) c.cutoff,
-                           (double) c.choke, (double) (c.reverse ? 1 : 0) });
+                           (double) c.choke, (double) (c.reverse ? 1 : 0),
+                           (double) c.fm.pitch, (double) c.fm.pitchAmt, (double) c.fm.fmAmt, (double) c.fm.ratio,
+                           (double) c.fm.noise, (double) c.fm.tone, (double) c.fm.decay, (double) c.fm.click, (double) c.fm.drive });
+    }
+
+    namespace
+    {
+        std::string lower (std::string s) { for (auto& ch : s) ch = (char) std::tolower ((unsigned char) ch); return s; }
+
+        // what kind of drum a pad is, from its name or (empty pads) its place in the kit
+        std::string drumRole (const std::string& name, int pad)
+        {
+            const auto n = lower (name);
+            static const char* roles[] = { "kick", "snare", "rim", "clap", "open", "pedal", "hat", "ride", "crash", "cymbal",
+                                           "tom low", "tom mid", "tom high", "tom", "cowbell", "clave", "shaker", "perc", "sub", "zap", "blip", "metal" };
+            for (const char* r : roles) if (n.find (r) != std::string::npos) return r;
+            static const char* byPad[] = { "kick", "snare", "hat", "open", "clap", "cowbell", "tom low", "tom mid",
+                                           "rim", "ride", "crash", "tom high", "blip", "shaker", "sub", "metal" };
+            return byPad[(size_t) std::clamp (pad, 0, 15)];
+        }
+    }
+
+    void Instrument::setPadKind (int i, bool fm)
+    {
+        if (i < 0 || i >= numCells) return;
+        const auto c = eng.cell (i);
+        if ((c.kind == DrumCell::Kind::Fm) == fm && c.kind != DrumCell::Kind::Empty) return;
+        auto role = drumRole (cells[(size_t) i].name, i);
+        if (fm)
+        {
+            // the FM starting point for this kind of drum
+            if (role == "hat") role = "hat closed";
+            if (role == "open") role = "hat open";
+            if (role == "pedal") role = "hat pedal";
+            if (role == "perc") role = "blip";
+            if (role == "tom") role = "tom mid";
+            if (role == "sub") role = "sub drop";
+            const auto& presets = fmPresets();
+            int pick = 0;
+            for (int k = 0; k < (int) presets.size(); ++k)
+                if (lower (presets[(size_t) k].name).find (role) != std::string::npos) { pick = k; break; }
+            setCellFm (i, pick);
+        }
+        else
+        {
+            // a library one-shot of the same kind
+            const auto& shots = library::oneShots();
+            if (role == "open" || role == "pedal") role = "hat";
+            if (role.rfind ("tom", 0) == 0) role = "tom";
+            int pick = -1;
+            for (int k = 0; k < (int) shots.size() && pick < 0; ++k)
+                if (lower (shots[(size_t) k].category + " " + shots[(size_t) k].name).find (role) != std::string::npos) pick = k;
+            if (pick < 0) pick = 0;
+            if (shots.empty()) { clearCell (i); return; }
+            auto data = shots[(size_t) pick].render();
+            if (data == nullptr) return;
+            data->path = "lib:" + library::oneShotPath (shots[(size_t) pick]);
+            setCellSample (i, data, shots[(size_t) pick].name, data->path, pick);
+        }
     }
 
     // ---- step sequencer ------------------------------------------------------------------------
@@ -1067,6 +1133,7 @@ namespace bash
                 eng.audition (i);
                 return;
             }
+            if (how == "kind")   { setPadKind (i, str (2) == "fm" || num (2) > 0.5); selectedPad = i; emitPads(); emitPad (i); eng.audition (i); return; }
             if (how == "fm")     { setCellFm (i, (int) num (2)); selectedPad = i; emitPads(); emitPad (i); eng.audition (i); return; }
             if (how == "clear")  { clearCell (i); emitPads(); emitPad (i); return; }
             if (how == "set")    { setCellField (i, str (2), (float) num (3)); return; }
@@ -1394,8 +1461,10 @@ namespace bash
         emit ("menu", kits);
         Atoms sounds { std::string ("sounds") };
         for (auto& s : library::oneShots()) sounds.push_back (s.category + ": " + s.name);
-        for (auto& f : fmPresets()) sounds.push_back (std::string ("FM: ") + f.name);
         emit ("menu", sounds);
+        Atoms fms { std::string ("fmsounds") };
+        for (auto& f : fmPresets()) fms.push_back (std::string (f.name));
+        emit ("menu", fms);
         Atoms gr { std::string ("grooves") };
         for (auto& g : grooves::all()) gr.push_back (g.style + ": " + g.name);
         emit ("menu", gr);

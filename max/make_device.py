@@ -36,7 +36,7 @@ QUIET = [0.545, 0.541, 0.525, 1.0]
 
 boxes, lines = [], []
 _n = [0]
-groups = {"gen": [], "step": [], "synth": [], "slice": [], "drum": [], "mod": [], "free": [], "synced": []}
+groups = {"gen": [], "step": [], "synth": [], "slice": [], "drum": [], "padsample": [], "padfm": [], "mod": [], "free": [], "synced": []}
 param_objects = []        # (box id, param id) for every live.* parameter
 
 def new_id():
@@ -294,24 +294,61 @@ for i, pid in enumerate(["winstart", "winsize", "tune", "sattack", "srelease"]):
     live_param("live.dial", pid, [592 + i * 46, 116, 44, 50], "slice")
 comment("Slice mode: how the sequencer moves through the slices", [830, 118, 268, 30], 7.5, group="slice")
 
-# drums
+# drums: each pad is a sample or an FM drum (SAMPLE / FM), with its own controls
 kit_menu = umenu([838, 4, 262, 16], "drum")
 jsuis.append(jsui("bash_pads.js", [592, 24, 142, 142], "drum"))
-sound_menu = umenu([738, 24, 170, 16], "drum")
-pad_drop = drop([912, 24, 188, 40], "DROP ON PAD", "drum")
-comment("SOUND FOR THE SELECTED PAD", [738, 42, 172, 14], 7.5, group="drum")
-pad_fields = [("tune", "TUNE", -24, 24, 0, 1.0), ("gain", "GAIN", 0, 2, 1, 1.0), ("pan", "PAN", -1, 1, 0, 1.0),
-              ("decay", "DECAY", 0.01, 4, 0.4, 2.0), ("start", "START", 0, 1, 0, 1.0), ("end", "END", 0, 1, 1, 1.0),
-              ("cutoff", "CUTOFF", 40, 20000, 20000, 3.0), ("choke", "CHOKE", 0, 8, 0, 1.0)]
+
+def pad_param(cls, name, short, rect, group, extra_valueof, **extra):
+    """A per-pad control: a Live parameter so it draws its name and value, but Hidden (not stored or
+    automated) because it edits whichever pad is selected; the pad settings live in BASH!'s own state."""
+    outs = {"live.dial": (2, ["", "float"]), "live.tab": (3, ["", "", "float"])}[cls]
+    v = {"parameter_longname": name, "parameter_shortname": short, "parameter_invisible": 2}
+    v.update(extra_valueof)
+    b = {"id": new_id(), "maxclass": cls, "numinlets": 1, "numoutlets": outs[0], "outlettype": outs[1],
+         "parameter_enable": 1, "varname": "pad_" + short.lower().replace(" ", "_"),
+         "saved_attribute_attributes": {"valueof": v}}
+    b.update(extra)
+    pres(b, rect)
+    return add(b, group)
+
+pad_kind = pad_param("live.tab", "Pad Source", "Source", [738, 24, 84, 16], "drum",
+                     {"parameter_type": 2, "parameter_enum": ["SAMPLE", "FM"], "parameter_mmax": 1},
+                     num_lines_patching=1, num_lines_presentation=1)
+sound_menu = umenu([826, 24, 274, 16], "padsample")
+fm_menu = umenu([826, 24, 274, 16], "padfm")
+pad_drop = drop([738, 44, 362, 18], "DROP A SAMPLE ON THE SELECTED PAD", "padsample")
+comment("FM drum: pick a starting point above, then shape it", [738, 46, 362, 14], 8.0, group="padfm")
+
+def pad_dial(field, label, lo, hi, init, x, group, exp=1.0, unit=""):
+    vo = {"parameter_type": 0, "parameter_mmin": lo, "parameter_mmax": hi, "parameter_initial": [init],
+          "parameter_unitstyle": 1, "parameter_exponent": exp}
+    if unit:
+        vo["parameter_unitstyle"] = 9
+        vo["parameter_units"] = unit
+    return pad_param("live.dial", ("Pad FM " if group == "padfm" else "Pad ") + label.title(), label.title(),
+                     [x, 66, 40, 50], group, vo, showname=1, shownumber=1)
+
+# sample pads (padedit order: tune gain pan decay start end cutoff choke)
+pad_fields = [("tune", "TUNE", -24, 24, 0, 1.0, "%0.1f st"), ("gain", "GAIN", 0, 2, 1, 1.0, ""), ("pan", "PAN", -1, 1, 0, 1.0, ""),
+              ("decay", "DECAY", 0.01, 4, 0.4, 2.0, "%0.2f s"), ("start", "START", 0, 1, 0, 1.0, ""), ("end", "END", 0, 1, 1, 1.0, ""),
+              ("cutoff", "CUTOFF", 40, 20000, 20000, 3.0, "%0.0f Hz"), ("choke", "CHOKE", 0, 8, 0, 1.0, "%0.0f")]
 pad_dials = {}
-for i, (field, label, lo, hi, init, exp) in enumerate(pad_fields):
-    pad_dials[field] = plain_dial(label, lo, hi, init, [738 + i * 40, 66, 40, 50], "drum", exp)
+for i, (field, label, lo, hi, init, exp, unit) in enumerate(pad_fields):
+    pad_dials[field] = pad_dial(field, label, lo, hi, init, 738 + i * 40, "padsample", exp, unit)
+# FM pads (padedit order after the sample fields: pitch sweep fm ratio noise tone decay click drive)
+fm_fields = [("pitch", "PITCH", 20, 2000, 55, 3.0, "%0.0f Hz"), ("sweep", "SWEEP", 0, 48, 24, 1.0, "%0.0f st"),
+             ("fm", "FM", 0, 20, 0, 2.0, ""), ("ratio", "RATIO", 0.25, 8, 1, 2.0, ""), ("noise", "NOISE", 0, 1, 0, 1.0, ""),
+             ("tone", "TONE", 0, 1, 0.5, 1.0, ""), ("decay", "BODY", 0.01, 4, 0.4, 2.0, "%0.2f s"),
+             ("click", "CLICK", 0, 1, 0.3, 1.0, ""), ("drive", "DRIVE", 0, 1, 0.2, 1.0, "")]
+fm_dials = {}
+for i, (field, label, lo, hi, init, exp, unit) in enumerate(fm_fields):
+    fm_dials[field] = pad_dial(field, label, lo, hi, init, 738 + i * 40, "padfm", exp, unit)
 actions.append(button("Play pad", [738, 122, 82, 18], "pad play -1", "drum"))
 actions.append(button("Clear pad", [824, 122, 84, 18], "pad clear -1", "drum"))
 pad_rev = {"id": new_id(), "maxclass": "live.text", "numinlets": 1, "numoutlets": 2, "outlettype": ["", ""],
            "parameter_enable": 0, "mode": 1, "text": "REVERSE", "texton": "REVERSE", "varname": "pad_reverse"}
 pres(pad_rev, [912, 122, 70, 18])
-pad_rev_id = add(pad_rev, "drum")
+pad_rev_id = add(pad_rev, "padsample")
 comment("Click a pad to play it, shift-click to select, alt-click to clear.", [738, 144, 362, 22], 8.0, group="drum")
 
 CUR[0] = "mod"
@@ -479,9 +516,9 @@ for start in range(0, len(ids), 24):
         wire(r, k, obj_for[pid], 0)
 
 # menus
-mroute = obj("route loops kits sounds grooves", 1, 5)
+mroute = obj("route loops kits sounds grooves fmsounds", 1, 6)
 wire(router, 1, mroute, 0)
-for k, (menu, action) in enumerate([(loop_menu, "loop"), (kit_menu, "kit pick"), (sound_menu, "pad sound -1"), (groove_menu, "groove")]):
+for k, (menu, action) in enumerate([(loop_menu, "loop"), (kit_menu, "kit pick"), (sound_menu, "pad sound -1"), (groove_menu, "groove"), (fm_menu, "pad fm -1")]):
     trig = obj("t l b", 1, 2)
     clear = msg("clear")
     it = obj("zl.iter 1 @zlmaxsize 4096", 2, 2)
@@ -516,7 +553,8 @@ for k in range(CHUNKS):
     wire(back, 0, bash, 0)
 
 # pad editor: padedit <i> <name> <kind> <tune> <gain> <pan> <decay> <start> <end> <cutoff> <choke> <reverse>
-unp = obj("unpack i s i f f f f f f f i i", 1, 12, ["int", "", "int", "float", "float", "float", "float", "float", "float", "float", "int", "int"])
+#                     <pitch> <sweep> <fm> <ratio> <noise> <tone> <body> <click> <drive>
+unp = obj("unpack i s i f f f f f f f i i f f f f f f f f f", 1, 21, ["int", "", "int"] + ["float"] * 7 + ["int", "int"] + ["float"] * 9)
 wire(router, 3, unp, 0)
 for k, (field, *_rest) in enumerate(pad_fields):
     setter = obj("prepend set", 2, 1)
@@ -525,12 +563,28 @@ for k, (field, *_rest) in enumerate(pad_fields):
     out = obj("prepend pad set -1 " + field, 2, 1)
     wire(pad_dials[field], 0, out, 0)
     wire(out, 0, bash, 0)
+for k, (field, *_rest) in enumerate(fm_fields):
+    setter = obj("prepend set", 2, 1)
+    wire(unp, 12 + k, setter, 0)
+    wire(setter, 0, fm_dials[field], 0)
+    out = obj("prepend pad set -1 " + field, 2, 1)
+    wire(fm_dials[field], 0, out, 0)
+    wire(out, 0, bash, 0)
 rev_set = obj("prepend set", 2, 1)
 wire(unp, 11, rev_set, 0)
 wire(rev_set, 0, pad_rev_id, 0)
 rev_out = obj("prepend pad set -1 reverse", 2, 1)
 wire(pad_rev_id, 0, rev_out, 0)
 wire(rev_out, 0, bash, 0)
+# SAMPLE / FM: shows the pad's source; clicking it switches the pad (to a matching sample or FM starting point)
+kind_is_fm = obj("== 2", 2, 1, ["int"])
+kind_set = obj("prepend set", 2, 1)
+wire(unp, 2, kind_is_fm, 0)
+wire(kind_is_fm, 0, kind_set, 0)
+wire(kind_set, 0, pad_kind, 0)
+kind_out = obj("prepend pad kind -1", 2, 1)
+wire(pad_kind, 0, kind_out, 0)
+wire(kind_out, 0, bash, 0)
 
 # the slicer display can ask for a file browser
 wroute = obj("route browse", 1, 2)
@@ -770,13 +824,14 @@ ui_js_text = """// BASH! view switcher (generated by make_device.py): shows the 
 inlets = 1;
 outlets = 1;
 var groups = %s;
-var mode = 0, engine = 0, sync = 1, page = %d;
+var mode = 0, engine = 0, sync = 1, padfm = 0, page = %d;
 
 function apply()
 {
     var show = {
         gen: mode === 0, step: mode === 1,
         synth: page === 0 && engine === 0, slice: page === 0 && engine === 1, drum: page === 0 && engine === 2,
+        padsample: page === 0 && engine === 2 && padfm === 0, padfm: page === 0 && engine === 2 && padfm === 1,
         mod: page === 1, free: sync === 0, synced: sync === 1
     };
     for (var g in groups)
@@ -800,6 +855,7 @@ function anything()
         else if (a[0] === "sync") { sync = a[1] > 0.5 ? 1 : 0; apply(); }
     }
     else if (messagename === "page") { page = a[0]; apply(); }
+    else if (messagename === "padedit") { var f = a[2] === 2 ? 1 : 0; if (f !== padfm) { padfm = f; apply(); } }
 }
 
 function loadbang() { apply(); }
