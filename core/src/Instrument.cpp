@@ -216,8 +216,11 @@ namespace bash
     {
         for (size_t i = 0; i < values.size(); ++i) values[i].store (paramSpecs()[i].def);
         rngState ^= (uint64_t) std::chrono::steady_clock::now().time_since_epoch().count();
+        restoring = true;   // the starting kit is not an edit: nothing to save yet
         loadFmKit (0);
         { std::lock_guard<SpinMutex> g (eng.stepMutex()); eng.stepPattern().clear(); }
+        restoring = false;
+        dirty = false;
         pull();
     }
 
@@ -347,6 +350,7 @@ namespace bash
         const float old = values[(size_t) index].exchange (v);
         if (! fromUi) emitParam (s.id, v);
         if (old == v) return;
+        emit ("pv", { s.id, (double) v });   // the displays follow some parameters
 
         // side effects
         if (s.id == "engine" || s.id == "root" || s.id == "scale" || s.id == "octave" || s.id == "scalelock"
@@ -387,6 +391,7 @@ namespace bash
 
     void Instrument::keyFromLive (int root, int mask)
     {
+        if (mask <= 0) return;   // Live's observers report the root before the scale
         lastLiveRoot = root; lastLiveMask = mask;
         if (param ("keylock") < 0.5f) return;
         const int r = ((root % 12) + 12) % 12;
@@ -979,7 +984,7 @@ namespace bash
         if (sel == "pad")
         {
             const auto how = str (0);
-            const int i = std::clamp ((int) num (1), 0, numCells - 1);
+            const int i = num (1) < 0 ? selectedPad : std::clamp ((int) num (1), 0, numCells - 1);   // -1 = the selected pad
             if (how == "select") { selectedPad = i; emitPad (i); viewDirty = true; return; }
             if (how == "play")   { selectedPad = i; eng.audition (i); emitPad (i); return; }
             if (how == "load")   { const auto err = loadCellFile (i, restOfLine (2)); if (! err.empty()) msg (err); selectedPad = i; emitPads(); emitPad (i); return; }
@@ -987,7 +992,12 @@ namespace bash
             {
                 const int s = (int) num (2);
                 const auto& shots = library::oneShots();
-                if (s < 0 || s >= (int) shots.size()) return;
+                if (s >= (int) shots.size())   // the menu lists the FM sounds after the samples
+                {
+                    setCellFm (i, s - (int) shots.size()); selectedPad = i; emitPads(); emitPad (i); eng.audition (i);
+                    return;
+                }
+                if (s < 0) return;
                 auto data = shots[(size_t) s].render();
                 if (data == nullptr) return;
                 data->path = "lib:" + library::oneShotPath (shots[(size_t) s]);
@@ -1006,7 +1016,8 @@ namespace bash
         {
             const auto how = str (0);
             const int k = (int) num (1);
-            if (how == "lib")        loadLibraryKit (k, false);
+            if (how == "pick")       { if (k < (int) library::kits().size()) loadLibraryKit (k, false); else loadFmKit (k - (int) library::kits().size()); }
+            else if (how == "lib")   loadLibraryKit (k, false);
             else if (how == "libgroove") loadLibraryKit (k, true);
             else if (how == "fm")    loadFmKit (k);
             if (engineType() != EngineType::Drums) setParamValue (paramIndex ("engine"), 2.0f, false);
@@ -1406,6 +1417,7 @@ namespace bash
 
     void Instrument::emitAll()
     {
+        for (size_t i = 0; i < values.size(); ++i) emit ("pv", { paramSpecs()[i].id, (double) values[i].load() });
         emitMenus();
         emitPads();
         emitPad (selectedPad);

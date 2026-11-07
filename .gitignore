@@ -5,3 +5,5 @@ cmake-build-*/
 .DS_Store
 *.dmg
 *.zip
+build-core/
+build-max/

@@ -1,26 +1,36 @@
-BASH! - an all-in-one kalabash solution
-=======================================
+BASH! for Ableton Live (Max for Live)
+=====================================
 
 Install
 -------
-Double-click "Install BASH!.pkg" and follow the steps. It installs:
+1. Quit Live.
+2. Double-click "Install BASH!.pkg". It puts:
+     BASH!.amxd           -> your Live User Library > Presets > Instruments > Max Instrument
+     the BASH package     -> Documents/Max 9/Packages and Documents/Max 8/Packages
+                             (the bash~ object and the display scripts the device uses)
+3. Open Live: Browser > User Library > Presets > Instruments > Max Instrument > BASH!
+   Drag it onto a MIDI track.
 
-  BASH! app (standalone)   ->  Applications
-  BASH! VST3               ->  /Library/Audio/Plug-Ins/VST3      (Ableton, Bitwig, Cubase, Reaper, FL...)
-  BASH! Audio Unit         ->  /Library/Audio/Plug-Ins/Components (Logic, GarageBand...)
+Needs Live 11 or 12 Suite (or Live Standard with Max for Live). Live 12 is needed
+for BASH! to follow the set's key and scale.
 
-Untick anything you don't want under "Customize".
+The installer isn't notarised yet, so the first time macOS may say it "can't be
+opened": right-click (Control-click) the .pkg, choose Open, then Open again.
 
-The installer isn't notarised yet, so the first time macOS may say it
-"can't be opened". Right-click (or Control-click) the .pkg and choose Open,
-then Open again. Or: System Settings > Privacy & Security > "Open Anyway".
-
-Restart your DAW afterwards. In Logic, BASH! is under AU Instruments > Kalabash.
+If your User Library is somewhere else, drag "Manual install/BASH!.amxd" from this
+DMG into it. If Live says it can't find "bash~", copy the "Manual install/BASH"
+folder into Documents/Max 9/Packages (and Max 8/Packages), then reload the device.
 
 Using it
 --------
-- Load BASH! as an instrument. Press play in your DAW: track 1 plays.
-- In the BASH! app, press Play (top bar) to run its own clock.
-- The die in the top-right corner rolls everything; right-click it for options.
-- Drag the WAV / MIDI chips (Sequencer panel, mixer strips, master MIX) into
-  your DAW or onto the desktop.
+- Press play in Live: BASH! follows Live's tempo and position. With Live stopped,
+  BASH!'s own PLAY button runs it at Live's tempo.
+- LIVE KEY on: BASH! uses the set's key and scale (Live 12's Scale settings).
+- Left: the sequencer. GENERATIVE (the acid generator: Type, Density, Steps...) or
+  STEP (16 lanes, each with its own length, speed, algorithm and die).
+- Right: the voice. SYNTH, SLICER (drop or load a sample, or pick a loop) or DRUMS
+  (16 pads: pick a kit, a sound per pad, or drop samples on the selected pad).
+  MOD: two LFOs, Life (slow drift) and six modulation slots.
+- Every knob is a Live parameter: automate it, map it in a rack, MIDI-map it.
+- DICE rolls the sequencer (UNDO brings it back). Notes from a clip or keyboard
+  play the voice directly (THRU), or feed the Arpeggiator algorithm.

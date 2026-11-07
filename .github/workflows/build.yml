@@ -1,10 +1,10 @@
 name: Build
 
-# Every push: tests on Linux (cheap) and the Windows build.
-# The Mac installer builds on version tags or when started by hand;
-# the iPad check only when ticked by hand
-# (Actions tab > Build > Run workflow), because private-repo macOS minutes
-# are billed at 10x. Or build on your own Mac with scripts/build-mac.sh.
+# Every push: core tests, the device generated + checked, display previews and a
+# compile check of the bash~ external (Linux, cheap). The Mac build (external +
+# installer) runs on version tags or when started by hand (Actions tab > Build >
+# Run workflow), because private-repo macOS minutes are billed at 10x.
+# Or build on your own Mac with scripts/build-mac.sh.
 
 on:
   push:
@@ -18,111 +18,75 @@ on:
         type: boolean
         default: true
       release:
-        description: "Publish the builds as a GitHub Release (version from CMakeLists.txt)"
-        type: boolean
-        default: false
-      ipad:
-        description: "Also run the iPad compile check"
+        description: "Publish the build as a GitHub Release (version from CMakeLists.txt)"
         type: boolean
         default: false
 
 permissions:
   contents: write
 
+env:
+  MAX_SDK_COMMIT: c03a2922a2a8ff149165a1e2ea134e9321d6e202
+
 jobs:
   tests:
-    name: Tests (Linux)
+    name: Tests + device checks (Linux)
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install JUCE dependencies
+      - name: Core
         run: |
-          sudo apt-get update -q
-          sudo apt-get install -y -q --no-install-recommends libasound2-dev libfreetype-dev libfontconfig1-dev \
-            libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxext-dev xvfb
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build -j 4
+          ./build/bash_core_tests
 
-      - name: Configure
-        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBASH_BUILD_TOOLS=ON
-
-      - name: Build
-        run: cmake --build build -j 4 --target bash_core_tests bash_plugin_tests BASH_VST3
-
-      - name: Core tests
-        run: ./build/bash_core_tests
-
-      - name: Plugin tests
-        run: xvfb-run -a ./build/bash_plugin_tests
-
-  windows:
-    name: Windows (VST3, Standalone)
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Configure
-        run: cmake -S . -B build
-
-      - name: Build
-        run: cmake --build build --config Release -j 4 --target bash_core_tests BASH_VST3 BASH_Standalone
-
-      - name: Core tests
-        run: ./build/Release/bash_core_tests.exe
-
-      - name: Package
-        shell: pwsh
+      - name: Generate and check the device
         run: |
-          $art = "build/plugin/BASH_artefacts/Release"
-          New-Item -ItemType Directory -Force -Path win | Out-Null
-          Copy-Item -Recurse "$art/VST3/BASH.vst3" win/
-          Copy-Item "$art/Standalone/BASH.exe" win/
-          Copy-Item packaging/INSTALL-windows.txt win/
-          Compress-Archive -Path win/* -DestinationPath BASH-windows.zip
+          ./build/bash_params_json > build/params.json
+          python3 max/make_device.py build/params.json build/device
+          python3 max/check_device.py "build/device/BASH!.maxpat" build/device/bash_ui.js max/javascript
+
+      - name: Display scripts (ES5 + previews)
+        run: |
+          mkdir -p build/node && cd build/node && npm init -y >/dev/null && npm install acorn@8.14.0 @napi-rs/canvas@0.1.65 >/dev/null && cd ../..
+          export NODE_PATH="$PWD/build/node/node_modules"
+          node max/check_es5.js max/javascript/*.js build/device/bash_ui.js
+          for s in synth slice drum step; do ./build/bash_device_sim $s > build/sim_$s.jsonl; node max/preview.js "build/device/BASH!.maxpat" max/javascript build/device/bash_ui.js build/sim_$s.jsonl build/preview-$s.png 0; done
+          ./build/bash_device_sim mod > build/sim_mod.jsonl
+          node max/preview.js "build/device/BASH!.maxpat" max/javascript build/device/bash_ui.js build/sim_mod.jsonl build/preview-mod.png 1
+
+      - name: bash~ compile check
+        run: |
+          git clone -q https://github.com/Cycling74/max-sdk-base.git build/max-sdk-base
+          git -C build/max-sdk-base checkout -q "$MAX_SDK_COMMIT"
+          cmake -S max -B build/max -DMAX_SDK_BASE="$PWD/build/max-sdk-base" -DCMAKE_BUILD_TYPE=Release
+          cmake --build build/max -j 4
 
       - uses: actions/upload-artifact@v4
         with:
-          name: BASH-windows
-          path: BASH-windows.zip
+          name: BASH-previews
+          path: build/preview-*.png
 
   macos:
-    name: macOS (VST3, AU, Standalone)
+    name: macOS (Max for Live device)
     if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.mac)
     runs-on: macos-15-intel
     steps:
       - uses: actions/checkout@v4
 
       - name: Build, test and package
-        run: ./scripts/build-mac.sh --no-install
+        run: ./scripts/build-mac.sh
 
       - uses: actions/upload-artifact@v4
         with:
           name: BASH-mac
           path: BASH-mac.dmg
 
-  ios:
-    name: iPad (AUv3 + app, simulator compile check)
-    if: github.event_name == 'workflow_dispatch' && inputs.ipad
-    runs-on: macos-15-intel
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Configure
-        run: >
-          cmake -S . -B build-ios -G Xcode
-          -DCMAKE_SYSTEM_NAME=iOS
-          -DCMAKE_OSX_DEPLOYMENT_TARGET=15.0
-          -DBASH_BUILD_TESTS=OFF
-          -DCMAKE_XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED=NO
-          -DCMAKE_XCODE_ATTRIBUTE_CODE_SIGNING_REQUIRED=NO
-          -DCMAKE_XCODE_ATTRIBUTE_CODE_SIGN_IDENTITY=
-
-      - name: Build (simulator, unsigned)
-        run: cmake --build build-ios --config Release --target BASH_AUv3 BASH_Standalone -- -sdk iphonesimulator -arch arm64 -quiet
-
   release:
     name: Publish release
     if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.mac && inputs.release)
-    needs: [macos, windows]
+    needs: [tests, macos]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -137,8 +101,7 @@ jobs:
           name: BASH! ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || steps.ver.outputs.tag }}
           target_commitish: ${{ github.sha }}
           body: |
-            **Mac:** download BASH-mac.dmg, open it and double-click "Install BASH!.pkg" (standalone app + VST3 + AU). If macOS blocks it, right-click the .pkg > Open.
-            **Windows:** BASH-windows.zip (VST3 + standalone), see INSTALL-windows.txt inside.
+            **BASH! for Ableton Live (Max for Live, Mac).** Download BASH-mac.dmg, quit Live, open the DMG and double-click "Install BASH!.pkg". If macOS blocks it, right-click the .pkg > Open.
+            Then in Live: Browser > User Library > Presets > Instruments > Max Instrument > BASH!
           files: |
             dist/BASH-mac/BASH-mac.dmg
-            dist/BASH-windows/BASH-windows.zip
