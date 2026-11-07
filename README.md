@@ -37,6 +37,7 @@ Build on a Mac: `./scripts/build-mac.sh` (add `--install` to install it for you)
 
 ## History
 
+- **1.0.1** - Looks like Live's own devices: Live's knobs, menus and buttons in your Live theme, displays in Live's screen colours (they follow the theme), grouped sections; EXPAND opens a big window (all 16 step lanes, a large waveform, the pads, keys and LFOs), like EQ Eight; the Decompression Tapes mark as the play light, the lane arrows and a quiet signature in the big view.
 - **1.0.0** - BASH! becomes a one-channel Max for Live instrument. The 8-track JUCE plugin
   (mixer, effects, MICRO) is retired; its sequencers, voices, library, grooves, warp and
   modulation carry over unchanged. Tempo and key come straight from Live.

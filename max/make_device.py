@@ -78,9 +78,10 @@ def pres(b, rect):
     b["patching_rect"] = ppos(rect[2], rect[3])
     return b
 
-def comment(text, rect, size=8.5, color=QUIET, group=None, bold=False):
-    b = {"id": new_id(), "maxclass": "comment", "text": text, "numinlets": 1, "numoutlets": 0,
-         "fontsize": size, "textcolor": color, "fontname": "Arial Bold" if bold else "Arial"}
+def comment(text, rect, size=9.0, color=None, group=None, bold=False):
+    b = {"id": new_id(), "maxclass": "comment", "text": text, "numinlets": 1, "numoutlets": 0, "fontsize": size}
+    if color: b["textcolor"] = color
+    if bold: b["fontface"] = 1
     pres(b, rect)
     return add(b, group)
 
@@ -122,13 +123,9 @@ def live_param(cls, pid, rect, group=None, **extra):
     b = {"id": new_id(), "maxclass": cls, "numinlets": 1, "numoutlets": outs[0], "outlettype": outs[1],
          "parameter_enable": 1, "varname": pid,
          "saved_attribute_attributes": {"valueof": valueof(p)}}
+    # no colours of our own: Live's controls follow Live's theme, like the stock devices
     if cls == "live.dial":
-        b.update({"showname": 1, "shownumber": 1, "textcolor": INK, "activedialcolor": AMBER, "activeneedlecolor": AMBER,
-                  "dialcolor": RAISED, "needlecolor": INK, "fontsize": 8.0})
-    if cls in ("live.menu", "live.tab", "live.text", "live.numbox"):
-        b.update({"bgcolor": PANEL, "textcolor": INK, "activebgcolor": PANEL, "activetextcolor": INK,
-                  "bgoncolor": ACTIVE, "activebgoncolor": ACTIVE, "textoncolor": AMBER, "activetextoncolor": AMBER,
-                  "bordercolor": [0.227, 0.227, 0.227, 1.0], "focusbordercolor": AMBER, "fontsize": 8.5})
+        b.update({"showname": 1, "shownumber": 1})
     if cls == "live.tab":
         b.update({"num_lines_patching": 1, "num_lines_presentation": 1})
     b.update(extra)
@@ -150,23 +147,20 @@ def jsui(filename, rect, group=None, args=None):
 
 def umenu(rect, group=None):
     b = {"id": new_id(), "maxclass": "umenu", "numinlets": 1, "numoutlets": 3, "outlettype": ["int", "", ""],
-         "parameter_enable": 0, "bgcolor": PANEL, "bgfillcolor_color": PANEL, "textcolor": INK, "fontsize": 8.5,
-         "arrow": 1, "items": ["(loading)"]}
+         "parameter_enable": 0, "fontsize": 9.0, "arrow": 1, "items": ["(loading)"]}
     pres(b, rect)
     return add(b, group)
 
 def drop(rect, label, group=None):
     b = {"id": new_id(), "maxclass": "live.drop", "numinlets": 1, "numoutlets": 2, "outlettype": ["", ""],
-         "parameter_enable": 0, "bgcolor": PANEL, "bordercolor": AMBER_DIM, "textcolor": QUIET, "legend": label,
-         "fontsize": 8.5}
+         "parameter_enable": 0, "legend": label}
     pres(b, rect)
     return add(b, group)
 
 def plain_dial(label, lo, hi, init, rect, group=None, exp=1.0):
     """A live.dial that is not a Live parameter (per-pad settings live in BASH!'s own state)."""
     b = {"id": new_id(), "maxclass": "live.dial", "numinlets": 1, "numoutlets": 2, "outlettype": ["", "float"],
-         "parameter_enable": 0, "showname": 1, "shownumber": 1, "textcolor": INK, "activedialcolor": AMBER,
-         "dialcolor": RAISED, "fontsize": 8.0, "varname": "pad_" + label.lower(),
+         "parameter_enable": 0, "showname": 1, "shownumber": 1, "varname": "pad_" + label.lower(),
          "saved_attribute_attributes": {"valueof": {"parameter_longname": "Pad " + label, "parameter_shortname": label,
                                                     "parameter_type": 0, "parameter_mmin": lo, "parameter_mmax": hi,
                                                     "parameter_initial": [init], "parameter_unitstyle": 1,
@@ -181,11 +175,22 @@ plugout = obj("plugout~ 1 2", 2, 2, ["signal", "signal"])
 wire(bash, 0, plugout, 0)
 wire(bash, 1, plugout, 1)
 
-# background
-panel([0, 0, W, H], BG, rounded=0)
-panel([112, 0, 2, H], [0.18, 0.18, 0.18, 1.0], rounded=0)
-panel([586, 0, 2, H], [0.18, 0.18, 0.18, 1.0], rounded=0)
-panel([1062, 0, 2, H], [0.18, 0.18, 0.18, 1.0], rounded=0)
+# sections, like Live's own devices: a faint shade over Live's device colour (works in any theme)
+SECTION = [0.0, 0.0, 0.0, 0.07]
+for rect in ([1, 1, 110, 167], [115, 1, 472, 167], [590, 1, 472, 167], [1065, 1, 48, 167]):
+    panel(rect, SECTION, rounded=4)
+
+def button(label, rect, message, group=None):
+    """A Live button (not a parameter) that sends `message` to bash~ when clicked."""
+    b = {"id": new_id(), "maxclass": "live.text", "numinlets": 1, "numoutlets": 2, "outlettype": ["", ""],
+         "parameter_enable": 0, "mode": 0, "text": label, "texton": label, "varname": "btn_" + label.lower().replace(" ", "_")}
+    pres(b, rect)
+    oid = add(b, group)
+    sel = obj("sel 1", 2, 2, ["bang", ""])
+    m = msg(message)
+    wire(oid, 0, sel, 0)
+    wire(sel, 0, m, 0)
+    return oid, m
 
 jsuis = []   # every display gets everything bash~ sends
 
@@ -209,8 +214,10 @@ live_param("live.menu", "algo", [286, 4, 108, 16], "gen")
 groove_menu = umenu([286, 4, 108, 16], "step")
 toggle("fill", "FILL", [398, 4, 32, 16])
 live_param("live.menu", "autofill", [434, 4, 54, 16])
-jsuis.append(jsui("bash_btns.js", [492, 4, 92, 16], "gen", args=["NEW|regen", "UNLOCK|unlockall"]))
-jsuis.append(jsui("bash_btns.js", [492, 4, 92, 16], "step", args=["CLEAR ALL|steps clear"]))
+actions = []
+actions.append(button("New", [492, 4, 44, 16], "regen", "gen"))
+actions.append(button("Unlock", [540, 4, 44, 16], "unlockall", "gen"))
+actions.append(button("Clear all", [492, 4, 92, 16], "steps clear", "step"))
 jsuis.append(jsui("bash_seq.js", [118, 24, 466, 84]))
 for i, pid in enumerate(["type", "density", "steps", "offset", "accent", "octave", "jitter"]):
     live_param("live.dial", pid, [118 + i * 46, 112, 44, 50], "gen")
@@ -224,7 +231,6 @@ toggle("scalelock", "SCALE", [534, 134, 50, 16])
 live_param("live.tab", "engine", [592, 4, 150, 16])
 page_tab = {"id": new_id(), "maxclass": "live.tab", "numinlets": 1, "numoutlets": 3, "outlettype": ["", "", "float"],
             "parameter_enable": 1, "varname": "view", "num_lines_patching": 1, "num_lines_presentation": 1,
-            "bgcolor": PANEL, "textcolor": INK, "bgoncolor": ACTIVE, "textoncolor": AMBER, "fontsize": 8.5,
             "saved_attribute_attributes": {"valueof": {"parameter_longname": "View", "parameter_shortname": "View",
                                                        "parameter_type": 2, "parameter_enum": ["VOICE", "MOD"],
                                                        "parameter_mmax": 1, "parameter_initial": [0],
@@ -268,10 +274,10 @@ pad_fields = [("tune", "TUNE", -24, 24, 0, 1.0), ("gain", "GAIN", 0, 2, 1, 1.0),
 pad_dials = {}
 for i, (field, label, lo, hi, init, exp) in enumerate(pad_fields):
     pad_dials[field] = plain_dial(label, lo, hi, init, [738 + i * 40, 66, 40, 50], "drum", exp)
-jsuis.append(jsui("bash_btns.js", [738, 122, 170, 18], "drum", args=["PLAY|pad play -1", "CLEAR|pad clear -1"]))
+actions.append(button("Play pad", [738, 122, 82, 18], "pad play -1", "drum"))
+actions.append(button("Clear pad", [824, 122, 84, 18], "pad clear -1", "drum"))
 pad_rev = {"id": new_id(), "maxclass": "live.text", "numinlets": 1, "numoutlets": 2, "outlettype": ["", ""],
-           "parameter_enable": 0, "mode": 1, "text": "REVERSE", "texton": "REVERSE", "varname": "pad_reverse",
-           "bgcolor": PANEL, "textcolor": INK, "bgoncolor": ACTIVE, "textoncolor": AMBER, "fontsize": 8.5}
+           "parameter_enable": 0, "mode": 1, "text": "REVERSE", "texton": "REVERSE", "varname": "pad_reverse"}
 pres(pad_rev, [912, 122, 70, 18])
 pad_rev_id = add(pad_rev, "drum")
 comment("Click a pad to play it, shift-click to select, alt-click to clear.", [738, 144, 322, 22], 8.0, group="drum")
@@ -299,11 +305,61 @@ for k in range(1, 7):
 live_param("live.dial", "level", [1068, 22, 44, 50])
 live_param("live.dial", "pan", [1068, 80, 44, 50])
 meter = {"id": new_id(), "maxclass": "live.meter~", "numinlets": 1, "numoutlets": 1, "outlettype": ["list"],
-         "coldcolor": AMBER_DIM, "warmcolor": AMBER, "hotcolor": [1.0, 0.5, 0.0, 1.0], "overloadcolor": [1.0, 0.2, 0.1, 1.0],
          "orientation": 1}
 pres(meter, [1072, 136, 36, 28])
 meter_id = add(meter)
 wire(bash, 0, meter_id, 0)
+
+for _, m in actions:
+    wire(m, 0, bash, 0)
+
+# ---- the expanded window (like EQ Eight's): EXPAND opens a big view in its own window ------------
+expand_btn, expand_msg = button("Expand", [1067, 4, 44, 16], "open")
+pctl = obj("pcontrol", 1, 1)
+wire(expand_msg, 0, pctl, 0)
+BIG_W, BIG_H = 1200, 660
+big_boxes, big_lines = [], []
+_bn = [0]
+def big_add(box):
+    _bn[0] += 1
+    box["id"] = "big-%d" % _bn[0]
+    big_boxes.append({"box": box})
+    return box["id"]
+def big_jsui(filename, rect, args=None):
+    b = {"maxclass": "jsui", "filename": filename, "numinlets": 1, "numoutlets": 1, "outlettype": [""],
+         "parameter_enable": 0, "border": 0, "patching_rect": [rect[0], rect[1] + 60, rect[2], rect[3]],
+         "presentation": 1, "presentation_rect": rect}
+    if args: b["jsarguments"] = args
+    return big_add(b)
+big_in = big_add({"maxclass": "inlet", "numinlets": 0, "numoutlets": 1, "outlettype": [""], "patching_rect": [20, 10, 30, 30], "comment": ""})
+big_r = big_add({"maxclass": "newobj", "text": "r ---bashview", "numinlets": 0, "numoutlets": 1, "outlettype": [""], "patching_rect": [80, 10, 100, 22]})
+big_s = big_add({"maxclass": "newobj", "text": "s ---bashcmd", "numinlets": 1, "numoutlets": 0, "patching_rect": [200, 10, 100, 22]})
+big_bg = big_add({"maxclass": "panel", "numinlets": 1, "numoutlets": 0, "bgcolor": [0.0, 0.0, 0.0, 0.07], "rounded": 0,
+                  "background": 1, "patching_rect": [0, 0, BIG_W, BIG_H], "presentation": 1, "presentation_rect": [0, 0, BIG_W, BIG_H]})
+for f, rect, args in [("bash_seq.js", [8, 8, 1184, 330], None),
+                      ("bash_lane.js", [8, 344, 560, 54], None),
+                      ("bash_wave.js", [8, 404, 560, 248], None),
+                      ("bash_pads.js", [576, 344, 308, 308], None),
+                      ("bash_keys.js", [892, 344, 300, 96], None),
+                      ("bash_lfo.js", [892, 446, 300, 64], [1]),
+                      ("bash_lfo.js", [892, 516, 300, 64], [2]),
+                      ("bash_lfo.js", [892, 586, 300, 66], [3])]:
+    j = big_jsui(f, rect, args)
+    big_lines.append({"patchline": {"source": [big_r, 0], "destination": [j, 0]}})
+    big_lines.append({"patchline": {"source": [j, 0], "destination": [big_s, 0]}})
+big_patcher = {"fileversion": 1, "appversion": {"major": 8, "minor": 6, "revision": 0, "architecture": "x64", "modernui": 1},
+               "classnamespace": "box", "rect": [80.0, 80.0, float(BIG_W), float(BIG_H)], "openinpresentation": 1,
+               "default_fontsize": 10.0, "gridsize": [15.0, 15.0], "toolbarvisible": 0, "statusbarvisible": 0,
+               "title": "BASH!", "boxes": big_boxes, "lines": big_lines}
+big = add({"id": new_id(), "maxclass": "newobj", "text": "p BASH!", "numinlets": 1, "numoutlets": 0,
+           "patching_rect": ppos(80), "patcher": big_patcher, "saved_object_attributes": {"globalpatchername": ""}})
+wire(pctl, 0, big, 0)
+view_send = obj("s ---bashview", 1, 0)
+wire(bash, 2, view_send, 0)
+view_cmd = obj("r ---bashcmd", 0, 1)
+cmd_route = obj("route browse", 1, 2)
+wire(view_cmd, 0, cmd_route, 0)
+wire(cmd_route, 1, bash, 0)
 
 # =====================================================================================
 # wiring: parameters -> bash~
@@ -396,6 +452,7 @@ wire(wroute, 1, bash, 0)
 dialog = obj("opendialog sound", 1, 2)
 loadp = obj("prepend load", 2, 1)
 wire(wroute, 0, dialog, 0)
+wire(cmd_route, 0, dialog, 0)   # the big waveform can ask for a file too
 wire(dialog, 0, loadp, 0)
 wire(loadp, 0, bash, 0)
 

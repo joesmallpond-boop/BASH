@@ -9,11 +9,53 @@ mgraphics.init();
 mgraphics.relative_coords = 0;
 mgraphics.autofill = 0;
 
-var C = {
-    bg: [0.114, 0.114, 0.114, 1], panel: [0.145, 0.145, 0.145, 1], raised: [0.18, 0.18, 0.18, 1],
-    line: [0.227, 0.227, 0.227, 1], ink: [0.914, 0.902, 0.875, 1], quiet: [0.545, 0.541, 0.525, 1],
-    amber: [1.0, 0.722, 0.0, 1], amberDim: [0.541, 0.396, 0.031, 1], active: [0.29, 0.224, 0.063, 1]
-};
+// colours: Live's theme when Max can tell us (max.getcolor), else Live's default dark display
+var C = { bg: [0.11, 0.11, 0.11, 1], ink: [0.86, 0.86, 0.86, 1], quiet: [0.5, 0.5, 0.5, 1],
+          amber: [1.0, 0.66, 0.18, 1], alt: [0.36, 0.84, 0.95, 1], line: [0.24, 0.24, 0.24, 1] };
+var FONT = "Ableton Sans Medium", FONT_BOLD = "Ableton Sans Bold";
+var THEME = [["bg", "live_lcd_bg"], ["ink", "live_lcd_title"], ["amber", "live_lcd_control_fg"],
+             ["alt", "live_lcd_control_fg_alt"], ["line", "live_lcd_frame"]];
+function mix(a, b, t) { return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t, 1]; }
+function derive()
+{
+    C.panel = mix(C.bg, C.ink, 0.07); C.raised = mix(C.bg, C.ink, 0.13);
+    C.amberDim = mix(C.bg, C.amber, 0.5); C.active = mix(C.bg, C.amber, 0.22); C.quiet = mix(C.bg, C.ink, 0.5);
+}
+derive();
+// The Decompression Tapes mark: a thin rounded chevron trailing a bold one.
+// dir: 0 right, 1 left, 2 up. Drawn in a size x size box centred on (cx, cy).
+function drawMark(cx, cy, size, dir, c, alpha)
+{
+    var g = mgraphics;
+    g.save();
+    g.translate(cx, cy);
+    g.rotate(dir === 1 ? Math.PI : dir === 2 ? -Math.PI / 2 : 0);
+    try { g.set_line_cap("round"); g.set_line_join("round"); } catch (e) {}
+    col(c, alpha);
+    var s = size;
+    g.set_line_width(Math.max(1, s * 0.17));
+    g.move_to(-0.08 * s, -0.42 * s); g.line_to(0.34 * s, 0); g.line_to(-0.08 * s, 0.42 * s);
+    g.stroke();
+    g.set_line_width(Math.max(0.8, s * 0.1));
+    g.move_to(-0.42 * s, -0.3 * s); g.line_to(-0.12 * s, 0); g.line_to(-0.42 * s, 0.3 * s);
+    g.stroke();
+    g.restore();
+}
+function refreshTheme()
+{
+    var changed = false;
+    for (var i = 0; i < THEME.length; i++)
+    {
+        try
+        {
+            var c = max.getcolor(THEME[i][1]);
+            if (c && c.length >= 3) { C[THEME[i][0]] = [c[0], c[1], c[2], 1]; changed = true; }
+        }
+        catch (e) { return; }
+    }
+    if (changed) derive();
+}
+function col(c, a) { mgraphics.set_source_rgba(c[0], c[1], c[2], a === undefined ? c[3] : a); }
 var algoNames = ["Euclid", "Random", "Groove", "Rolls", "Mutate", "Humanize"];
 var speedNames = ["x1/4", "x1/2", "x2/3", "x1", "x3/2", "x2", "x4"];
 var lanes = [];
@@ -21,7 +63,6 @@ var sel = 0, flash = 0, lastHits = [], rollSpin = 0;
 var fields = [], drag = null;
 for (var i = 0; i < 16; i++) lanes.push({ name: "", len: 16, speed: 3, mute: 0, algo: 0, density: 0.5, pulses: 4, rotate: 0, evolve: 0 });
 
-function col(c, a) { mgraphics.set_source_rgba(c[0], c[1], c[2], a === undefined ? c[3] : a); }
 
 function anything()
 {
@@ -66,7 +107,7 @@ function layout(w, h)
         { id: "algo",  x: 116, y: row1, w: 70,  h: rh, title: "ALGO", text: algoNames[L.algo] || "?" },
         { id: "speed", x: 188, y: row1, w: 48,  h: rh, title: "SPEED", text: speedNames[L.speed] || "x1" },
         { id: "mute",  x: 238, y: row1, w: 38,  h: rh, label: "MUTE", on: L.mute },
-        { id: "roll",  x: 278, y: row1, w: w - 280, h: rh, label: "ROLL" },
+        { id: "roll",  x: 278, y: row1, w: 318 - 280, h: rh, label: "ROLL" },
         { id: "len",   x: 2,   y: row2, w: 46,  h: rh, title: "LEN", text: String(L.len), drag: [1, 64, 0.25] },
         { id: euclid ? "pulses" : "density", x: 50, y: row2, w: 54, h: rh, title: euclid ? "PULSES" : "DENS",
           text: euclid ? String(L.pulses) : Math.round(L.density * 100) + "%", drag: euclid ? [0, 64, 0.25] : [0, 1, 0.01] },
@@ -74,23 +115,35 @@ function layout(w, h)
         { id: "evolve", x: 152, y: row2, w: 54, h: rh, title: "EVOLVE", text: Math.round(L.evolve * 100) + "%", drag: [0, 1, 0.01] },
         { id: "gen",   x: 208, y: row2, w: 34,  h: rh, label: "GEN" },
         { id: "clear", x: 244, y: row2, w: 32,  h: rh, label: "CLR" },
-        { id: "dice",  x: 278, y: row2, w: w - 280, h: rh, label: "" }
+        { id: "dice",  x: 278, y: row2, w: 318 - 280, h: rh, label: "" }
     ];
+    // laid out for 318 px; wider (the expanded window) scales it up
+    var sx = w / 318;
+    for (var k = 0; k < fields.length; k++) { fields[k].x *= sx; fields[k].w *= sx; }
 }
 
 function paint()
 {
+    refreshTheme();
     var w = mgraphics.size[0], h = mgraphics.size[1];
     layout(w, h);
     col(C.bg);
     mgraphics.rectangle_rounded(0, 0, w, h, 6, 6);
     mgraphics.fill();
-    mgraphics.select_font_face("Arial");
+    mgraphics.select_font_face(FONT);
     var L = lanes[sel];
     for (var i = 0; i < fields.length; i++)
     {
         var f = fields[i];
         if (f.id === "dice") { drawDie(f); continue; }
+        if (f.id === "prev" || f.id === "next")
+        {
+            col(C.panel);
+            mgraphics.rectangle_rounded(f.x, f.y, f.w, f.h, 4, 4);
+            mgraphics.fill();
+            drawMark(f.x + f.w / 2, f.y + f.h / 2, Math.min(f.w, f.h) * 0.7, f.id === "prev" ? 1 : 0, C.ink, 0.85);
+            continue;
+        }
         col(f.on ? C.active : C.panel);
         mgraphics.rectangle_rounded(f.x, f.y, f.w, f.h, 4, 4);
         mgraphics.fill();

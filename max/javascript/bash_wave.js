@@ -10,11 +10,34 @@ mgraphics.init();
 mgraphics.relative_coords = 0;
 mgraphics.autofill = 0;
 
-var C = {
-    bg: [0.114, 0.114, 0.114, 1], panel: [0.145, 0.145, 0.145, 1], raised: [0.18, 0.18, 0.18, 1],
-    line: [0.227, 0.227, 0.227, 1], ink: [0.914, 0.902, 0.875, 1], quiet: [0.545, 0.541, 0.525, 1],
-    amber: [1.0, 0.722, 0.0, 1], amberDim: [0.541, 0.396, 0.031, 1], active: [0.29, 0.224, 0.063, 1]
-};
+// colours: Live's theme when Max can tell us (max.getcolor), else Live's default dark display
+var C = { bg: [0.11, 0.11, 0.11, 1], ink: [0.86, 0.86, 0.86, 1], quiet: [0.5, 0.5, 0.5, 1],
+          amber: [1.0, 0.66, 0.18, 1], alt: [0.36, 0.84, 0.95, 1], line: [0.24, 0.24, 0.24, 1] };
+var FONT = "Ableton Sans Medium", FONT_BOLD = "Ableton Sans Bold";
+var THEME = [["bg", "live_lcd_bg"], ["ink", "live_lcd_title"], ["amber", "live_lcd_control_fg"],
+             ["alt", "live_lcd_control_fg_alt"], ["line", "live_lcd_frame"]];
+function mix(a, b, t) { return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t, 1]; }
+function derive()
+{
+    C.panel = mix(C.bg, C.ink, 0.07); C.raised = mix(C.bg, C.ink, 0.13);
+    C.amberDim = mix(C.bg, C.amber, 0.5); C.active = mix(C.bg, C.amber, 0.22); C.quiet = mix(C.bg, C.ink, 0.5);
+}
+derive();
+function refreshTheme()
+{
+    var changed = false;
+    for (var i = 0; i < THEME.length; i++)
+    {
+        try
+        {
+            var c = max.getcolor(THEME[i][1]);
+            if (c && c.length >= 3) { C[THEME[i][0]] = [c[0], c[1], c[2], 1]; changed = true; }
+        }
+        catch (e) { return; }
+    }
+    if (changed) derive();
+}
+function col(c, a) { mgraphics.set_source_rgba(c[0], c[1], c[2], a === undefined ? c[3] : a); }
 var STRIP = 15;
 var frames = 0, srcBpm = 0, ratio = 1, name = "drop a sample", bins = [];
 var slices = [], winStart = 1, winSize = 4;
@@ -22,7 +45,6 @@ var playSlice = -1, playPos = -1, flash = 0, lastHits = [], frameCount = 0;
 var sens = 50, count = 16;
 var buttons = [], drag = null;
 
-function col(c, a) { mgraphics.set_source_rgba(c[0], c[1], c[2], a === undefined ? c[3] : a); }
 
 function anything()
 {
@@ -63,6 +85,7 @@ function waveArea(w, h) { return { x: 2, y: STRIP + 3, w: w - 4, h: h - STRIP - 
 
 function paint()
 {
+    refreshTheme();
     var w = mgraphics.size[0], h = mgraphics.size[1];
     col(C.bg);
     mgraphics.rectangle_rounded(0, 0, w, h, 6, 6);
@@ -73,7 +96,7 @@ function paint()
     col(C.panel);
     mgraphics.rectangle_rounded(A.x, A.y, A.w, A.h, 4, 4);
     mgraphics.fill();
-    mgraphics.select_font_face("Arial");
+    mgraphics.select_font_face(FONT);
 
     if (frames <= 0)
     {
@@ -116,7 +139,7 @@ function paint()
         var bx = A.x + i * A.w / n;
         var bh = Math.max(0.5, bins[i] * (A.h / 2 - 2));
         var inPlay = playSlice >= 0 && playPos >= 0 && Math.abs(i / n - playPos) < 0.01;
-        col(inPlay ? C.ink : C.amberDim, inPlay ? 1 : 0.95);
+        col(inPlay ? C.amber : C.ink, inPlay ? 1 : 0.55);   // Live-style grey waveform, the playing spot lit
         mgraphics.rectangle(bx, mid - bh, Math.max(1, A.w / n - 0.3), bh * 2);
         mgraphics.fill();
     }
@@ -163,7 +186,7 @@ function paintStrip(w)
     ];
     buttons = [];
     var x = 2;
-    mgraphics.select_font_face("Arial");
+    mgraphics.select_font_face(FONT);
     mgraphics.set_font_size(8.5);
     for (var i = 0; i < defs.length; i++)
     {

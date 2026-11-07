@@ -13,13 +13,57 @@ mgraphics.init();
 mgraphics.relative_coords = 0;
 mgraphics.autofill = 0;
 
-var C = {
-    bg: [0.114, 0.114, 0.114, 1], panel: [0.145, 0.145, 0.145, 1], raised: [0.18, 0.18, 0.18, 1],
-    line: [0.227, 0.227, 0.227, 1], ink: [0.914, 0.902, 0.875, 1], quiet: [0.545, 0.541, 0.525, 1],
-    amber: [1.0, 0.722, 0.0, 1], amberDim: [0.541, 0.396, 0.031, 1], active: [0.29, 0.224, 0.063, 1]
-};
+// colours: Live's theme when Max can tell us (max.getcolor), else Live's default dark display
+var C = { bg: [0.11, 0.11, 0.11, 1], ink: [0.86, 0.86, 0.86, 1], quiet: [0.5, 0.5, 0.5, 1],
+          amber: [1.0, 0.66, 0.18, 1], alt: [0.36, 0.84, 0.95, 1], line: [0.24, 0.24, 0.24, 1] };
+var FONT = "Ableton Sans Medium", FONT_BOLD = "Ableton Sans Bold";
+var THEME = [["bg", "live_lcd_bg"], ["ink", "live_lcd_title"], ["amber", "live_lcd_control_fg"],
+             ["alt", "live_lcd_control_fg_alt"], ["line", "live_lcd_frame"]];
+function mix(a, b, t) { return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t, 1]; }
+function derive()
+{
+    C.panel = mix(C.bg, C.ink, 0.07); C.raised = mix(C.bg, C.ink, 0.13);
+    C.amberDim = mix(C.bg, C.amber, 0.5); C.active = mix(C.bg, C.amber, 0.22); C.quiet = mix(C.bg, C.ink, 0.5);
+}
+derive();
+// The Decompression Tapes mark: a thin rounded chevron trailing a bold one.
+// dir: 0 right, 1 left, 2 up. Drawn in a size x size box centred on (cx, cy).
+function drawMark(cx, cy, size, dir, c, alpha)
+{
+    var g = mgraphics;
+    g.save();
+    g.translate(cx, cy);
+    g.rotate(dir === 1 ? Math.PI : dir === 2 ? -Math.PI / 2 : 0);
+    try { g.set_line_cap("round"); g.set_line_join("round"); } catch (e) {}
+    col(c, alpha);
+    var s = size;
+    g.set_line_width(Math.max(1, s * 0.17));
+    g.move_to(-0.08 * s, -0.42 * s); g.line_to(0.34 * s, 0); g.line_to(-0.08 * s, 0.42 * s);
+    g.stroke();
+    g.set_line_width(Math.max(0.8, s * 0.1));
+    g.move_to(-0.42 * s, -0.3 * s); g.line_to(-0.12 * s, 0); g.line_to(-0.42 * s, 0.3 * s);
+    g.stroke();
+    g.restore();
+}
+function refreshTheme()
+{
+    var changed = false;
+    for (var i = 0; i < THEME.length; i++)
+    {
+        try
+        {
+            var c = max.getcolor(THEME[i][1]);
+            if (c && c.length >= 3) { C[THEME[i][0]] = [c[0], c[1], c[2], 1]; changed = true; }
+        }
+        catch (e) { return; }
+    }
+    if (changed) derive();
+}
+function col(c, a) { mgraphics.set_source_rgba(c[0], c[1], c[2], a === undefined ? c[3] : a); }
 var condNames = ["", "F", "!F", "1st", "!1", "1:2", "2:2", "1:3", "2:3", "3:3", "1:4", "2:4", "3:4", "4:4"];
 var NAMEW = 58, ROWS = 8;
+// the expanded window is tall enough for all 16 lanes and wider lane names
+function fit() { var sz = mgraphics.size; ROWS = sz[1] >= 150 ? 16 : 8; NAMEW = sz[0] >= 700 ? 120 : 58; }
 
 var mode = 0, engine = 0;
 var seqLen = 16, seqSteps = [];          // [active, value, accent, slide, locked]
@@ -30,9 +74,8 @@ var drag = null;
 
 for (var i = 0; i < 16; i++) { lanes.push({ name: "", len: 16, mute: 0, steps: [] }); lanePos.push(-1); laneFlash.push(0); }
 
-function col(c, a) { mgraphics.set_source_rgba(c[0], c[1], c[2], a === undefined ? c[3] : a); }
 function size() { return mgraphics.size; }
-function page() { return selLane >= ROWS ? 1 : 0; }
+function page() { return ROWS >= 16 ? 0 : (selLane >= ROWS ? 1 : 0); }
 
 function anything()
 {
@@ -89,11 +132,14 @@ function anything()
 // ---- drawing -------------------------------------------------------------------------
 function paint()
 {
+    refreshTheme();
+    fit();
     var w = size()[0], h = size()[1];
     col(C.bg);
     mgraphics.rectangle_rounded(0, 0, w, h, 6, 6);
     mgraphics.fill();
     if (mode === 0) paintGenerative(w, h); else paintSteps(w, h);
+    if (w >= 700) drawMark(w - 22, h - 18, 18, 0, C.ink, 0.07);   // the expanded view: a quiet signature
 }
 
 function paintGenerative(w, h)
@@ -160,7 +206,7 @@ function paintSteps(w, h)
     for (var l = first; l < first + ROWS; l++) maxLen = Math.max(maxLen, lanes[l].len || 16);
     var gx = NAMEW + 2, gw = w - gx - 4, rh = (h - 4) / ROWS;
     var cw = gw / maxLen;
-    mgraphics.select_font_face("Arial");
+    mgraphics.select_font_face(FONT);
     mgraphics.set_font_size(8.5);
     for (var r = 0; r < ROWS; r++)
     {
@@ -180,7 +226,8 @@ function paintSteps(w, h)
         col(L.mute ? C.quiet : (lane === selLane ? C.amber : C.ink), L.mute ? 0.6 : 1);
         mgraphics.move_to(5, y + rh - 2.5);
         var nm = (lane + 1) + " " + L.name;
-        mgraphics.show_text(nm.length > 11 ? nm.substr(0, 11) : nm);
+        while (nm.length > 1 && mgraphics.text_measure(nm)[0] > NAMEW - 6) nm = nm.substr(0, nm.length - 1);
+        mgraphics.show_text(nm);
         // steps
         var pos = lanePos[lane] !== undefined ? lanePos[lane] : -1;
         for (var s = 0; s < maxLen; s++)
@@ -225,15 +272,12 @@ function paintSteps(w, h)
             }
         }
     }
-    // page marker
-    col(C.quiet);
-    mgraphics.set_font_size(7);
-    mgraphics.move_to(NAMEW - 18, h - 1);
 }
 
 // ---- mouse ------------------------------------------------------------------------------------
 function hitStep(x, y)
 {
+    fit();
     var w = size()[0], h = size()[1];
     if (mode === 0)
     {

@@ -9,22 +9,25 @@ const vm = require("vm");
 const path = require("path");
 const { createCanvas } = require(process.env.CANVAS_MODULE || "@napi-rs/canvas");
 
-const [patchFile, jsDir, uiJsFile, msgFile, outFile, pageArg] = process.argv.slice(2);
+const [patchFile, jsDir, uiJsFile, msgFile, outFile, pageArg, viewArg] = process.argv.slice(2);
+const bigView = viewArg === "big";
 const patch = JSON.parse(fs.readFileSync(patchFile, "utf8")).patcher;
 const SCALE = 2;
-const W = patch.devicewidth, H = 169;
+let W = patch.devicewidth, H = 169;
 const messages = fs.readFileSync(msgFile, "utf8").split("\n").filter(Boolean).map(l => JSON.parse(l));
 const page = Number(pageArg || 0);
 
 const rgba = (c, a) => `rgba(${Math.round(c[0] * 255)},${Math.round(c[1] * 255)},${Math.round(c[2] * 255)},${a === undefined ? (c[3] === undefined ? 1 : c[3]) : a})`;
-const AMBER = [1, 0.722, 0, 1], INK = [0.914, 0.902, 0.875, 1], QUIET = [0.545, 0.541, 0.525, 1];
-const PANEL = [0.145, 0.145, 0.145, 1], ACTIVE = [0.29, 0.224, 0.063, 1], RAISED = [0.18, 0.18, 0.18, 1];
+// Live's light theme for the native controls (the jsui displays draw themselves)
+const DEVICE = [0.76, 0.76, 0.76, 1], INK = [0.08, 0.08, 0.08, 1], QUIET = [0.33, 0.33, 0.33, 1];
+const AMBER = [1.0, 0.75, 0.0, 1], CYAN = [0.12, 0.76, 0.88, 1];
+const PANEL = [0.87, 0.87, 0.87, 1], ACTIVE = AMBER, RAISED = [0.36, 0.36, 0.36, 1];
 
 // ---- a stand-in for Max's mgraphics on a 2D canvas ------------------------------------------
 const MG_API = new Set(["init", "redraw", "size", "relative_coords", "autofill", "set_source_rgba", "rectangle",
     "rectangle_rounded", "arc", "move_to", "line_to", "set_line_width", "fill", "fill_preserve", "stroke",
     "stroke_preserve", "select_font_face", "set_font_size", "show_text", "text_measure", "save", "restore",
-    "translate", "rotate", "scale"]);
+    "translate", "rotate", "scale", "set_line_cap", "set_line_join"]);
 function makeMgraphics(w, h)
 {
     const canvas = createCanvas(Math.max(1, Math.round(w * SCALE)), Math.max(1, Math.round(h * SCALE)));
@@ -48,6 +51,7 @@ function makeMgraphics(w, h)
         move_to(x, y) { begin(); ctx.moveTo(x, y); cx = x; cy = y; },
         line_to(x, y) { begin(); ctx.lineTo(x, y); cx = x; cy = y; },
         set_line_width(lw) { ctx.lineWidth = lw; },
+        set_line_cap(c) { ctx.lineCap = c; }, set_line_join(j) { ctx.lineJoin = j; },
         fill() { ctx.fill(); open = false; },
         fill_preserve() { ctx.fill(); },
         stroke() { ctx.stroke(); open = false; },
@@ -90,9 +94,17 @@ function loadScript(file, w, h, args)
 }
 
 // ---- which objects are showing --------------------------------------------------------------------
-const boxes = patch.boxes.map(b => b.box);
+let boxes = patch.boxes.map(b => b.box);
+const mainBoxes = boxes;
+if (bigView)
+{
+    // the expanded window: the subpatcher EXPAND opens
+    const sub = boxes.find(b => b.patcher && b.text && b.text.startsWith("p ")).patcher;
+    boxes = sub.boxes.map(b => b.box);
+    W = sub.rect[2]; H = sub.rect[3];
+}
 const byName = {};
-boxes.forEach(b => { if (b.varname) byName[b.varname] = b; b.hidden = 0; });
+mainBoxes.forEach(b => { if (b.varname) byName[b.varname] = b; b.hidden = 0; });
 const ui = loadScript(path.relative(jsDir, uiJsFile), 1, 1);
 ui.context.this = undefined;
 // bash_ui.js uses this.patcher.getnamed(...)
@@ -103,7 +115,7 @@ vm.runInContext(uiSrc, ui.context);
 
 // parameter values: initial, then whatever bash~ said
 const values = {};
-boxes.forEach(b => { const v = b.saved_attribute_attributes && b.saved_attribute_attributes.valueof; if (v && b.varname) values[b.varname] = v.parameter_initial ? v.parameter_initial[0] : 0; });
+mainBoxes.forEach(b => { const v = b.saved_attribute_attributes && b.saved_attribute_attributes.valueof; if (v && b.varname) values[b.varname] = v.parameter_initial ? v.parameter_initial[0] : 0; });
 const menus = {};
 
 // ---- run the displays ---------------------------------------------------------------------------------
@@ -131,7 +143,7 @@ for (const { s } of scripts) s.paint();
 const canvas = createCanvas(W * SCALE, H * SCALE);
 const g = canvas.getContext("2d");
 g.scale(SCALE, SCALE);
-g.fillStyle = "#111"; g.fillRect(0, 0, W, H);
+g.fillStyle = rgba(DEVICE); g.fillRect(0, 0, W, H);
 const text = (t, x, y, size, color, align) => { g.font = `${size}px Arial`; g.fillStyle = rgba(color); g.textAlign = align || "left"; g.fillText(String(t), x, y); g.textAlign = "left"; };
 
 function valueText(b, v)
@@ -150,23 +162,28 @@ for (const b of boxes)
     const v = values[b.varname];
     switch (b.maxclass)
     {
-        case "panel": g.fillStyle = rgba(b.bgcolor); g.fillRect(x, y, w, h); break;
+        case "panel": g.fillStyle = rgba(b.bgcolor); g.beginPath(); g.roundRect(x, y, w, h, b.rounded || 0); g.fill(); break;
         case "comment": text(b.text, x + 2, y + 10, b.fontsize || 9, b.textcolor || QUIET); break;
         case "jsui": { const s = scripts.find(q => q.box === b).s; g.drawImage(s.canvas, x, y, w, h); break; }
         case "live.dial":
         {
             const p = b.saved_attribute_attributes.valueof;
             const norm = Math.max(0, Math.min(1, Math.pow(((v ?? 0) - p.parameter_mmin) / (p.parameter_mmax - p.parameter_mmin), 1 / (p.parameter_exponent || 1))));
-            text(p.parameter_shortname, x + w / 2, y + 9, 8, INK, "center");
+            // Live's knob: name above, a grey track with a cyan arc and a needle, the value below
+            text(p.parameter_shortname, x + w / 2, y + 9, 8.5, INK, "center");
             const cxx = x + w / 2, cyy = y + 25, r = 10;
-            g.lineWidth = 2.5; g.strokeStyle = rgba(RAISED); g.beginPath(); g.arc(cxx, cyy, r, Math.PI * 0.75, Math.PI * 2.25); g.stroke();
-            g.strokeStyle = rgba(AMBER); g.beginPath(); g.arc(cxx, cyy, r, Math.PI * 0.75, Math.PI * (0.75 + 1.5 * norm)); g.stroke();
-            text(valueText(b, v ?? 0), x + w / 2, y + h - 4, 8, INK, "center");
+            g.lineCap = "butt";
+            g.lineWidth = 2.6; g.strokeStyle = rgba(RAISED); g.beginPath(); g.arc(cxx, cyy, r, Math.PI * 0.75, Math.PI * 2.25); g.stroke();
+            g.strokeStyle = rgba(CYAN); g.beginPath(); g.arc(cxx, cyy, r, Math.PI * 0.75, Math.PI * (0.75 + 1.5 * norm)); g.stroke();
+            const a = Math.PI * (0.75 + 1.5 * norm);
+            g.strokeStyle = rgba(INK); g.lineWidth = 1.6; g.beginPath(); g.moveTo(cxx, cyy); g.lineTo(cxx + Math.cos(a) * (r - 1), cyy + Math.sin(a) * (r - 1)); g.stroke();
+            text(valueText(b, v ?? 0), x + w / 2, y + h - 4, 8.5, INK, "center");
             break;
         }
         case "live.menu": case "live.numbox": case "umenu":
         {
-            g.fillStyle = rgba(PANEL); g.beginPath(); g.roundRect(x, y, w, h, 2); g.fill();
+            g.fillStyle = rgba(PANEL); g.fillRect(x, y, w, h);
+            g.strokeStyle = rgba([0.55, 0.55, 0.55, 1]); g.lineWidth = 1; g.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
             let t = b.maxclass === "umenu" ? ((menus[b.varname] || [])[0] || (b.items || [""])[0]) : valueText(b, v ?? 0);
             if (b.maxclass === "umenu")
             {
@@ -186,24 +203,26 @@ for (const b of boxes)
             items.forEach((it, i) =>
             {
                 const on = Math.round(b.varname === "view" ? page : (v ?? 0)) === i;
-                g.fillStyle = rgba(on ? ACTIVE : PANEL); g.fillRect(x + i * sw + 0.5, y, sw - 1, h);
-                text(it.toUpperCase(), x + i * sw + sw / 2, y + h - 4.5, 8, on ? AMBER : INK, "center");
+                g.fillStyle = rgba(on ? ACTIVE : PANEL); g.fillRect(x + i * sw, y, sw, h);
+                g.strokeStyle = rgba([0.55, 0.55, 0.55, 1]); g.lineWidth = 1; g.strokeRect(x + i * sw + 0.5, y + 0.5, sw - 1, h - 1);
+                text(it, x + i * sw + sw / 2, y + h - 4.5, 8.5, INK, "center");
             });
             break;
         }
         case "live.text":
         {
             const on = (v ?? 0) > 0.5;
-            g.fillStyle = rgba(on ? ACTIVE : PANEL); g.beginPath(); g.roundRect(x, y, w, h, 2); g.fill();
-            text(b.text, x + w / 2, y + h - 4.5, 8, on ? AMBER : INK, "center");
+            g.fillStyle = rgba(on ? ACTIVE : PANEL); g.fillRect(x, y, w, h);
+            g.strokeStyle = rgba([0.55, 0.55, 0.55, 1]); g.lineWidth = 1; g.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
+            text(b.text, x + w / 2, y + h - 4.5, 8.5, INK, "center");
             break;
         }
         case "live.drop":
-            g.setLineDash([3, 3]); g.strokeStyle = rgba(b.bordercolor); g.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1); g.setLineDash([]);
+            g.setLineDash([3, 3]); g.strokeStyle = rgba(QUIET); g.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1); g.setLineDash([]);
             text(b.legend, x + w / 2, y + h / 2 + 3, 8, QUIET, "center");
             break;
         case "live.meter~":
-            for (let i = 0; i < 2; i++) { g.fillStyle = rgba(PANEL); g.fillRect(x + 6 + i * 12, y, 9, h); g.fillStyle = rgba(AMBER); g.fillRect(x + 6 + i * 12, y + h * 0.35, 9, h * 0.65); }
+            for (let i = 0; i < 2; i++) { g.fillStyle = rgba(PANEL); g.fillRect(x + 6 + i * 12, y, 9, h); g.fillStyle = rgba([0.35, 0.8, 0.3, 1]); g.fillRect(x + 6 + i * 12, y + h * 0.35, 9, h * 0.65); }
             break;
         default: break;
     }
