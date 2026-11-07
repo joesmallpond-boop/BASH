@@ -1797,6 +1797,29 @@ static void testExportAndSwitching()
     }
     fs::remove_all (dir);
 
+    // the badge: a new pattern, same sound; the dice: everything (undo brings it all back)
+    {
+        Instrument d; d.prepare (48000.0, 512);
+        const auto seed0 = d.engine().pattern().getSeed();
+        const float cut0 = d.param ("cutoff");
+        d.command ("newpattern", {});
+        CHECK (d.engine().pattern().getSeed() != seed0 && d.param ("cutoff") == cut0);
+        const auto seed1 = d.engine().pattern().getSeed();
+        int changedCount = 0;
+        const char* ids[] = { "cutoff", "reso", "machine", "decay", "lfo1rate", "type", "density", "adec", "timbre", "wave" };
+        std::vector<float> before; for (auto id : ids) before.push_back (d.param (id));
+        const float level0 = d.param ("level");
+        d.command ("param", { std::string ("engine"), 2.0 });
+        d.command ("dice", {});
+        for (size_t k = 0; k < before.size(); ++k) if (d.param (ids[k]) != before[k]) ++changedCount;
+        CHECK (changedCount >= 8);
+        CHECK (d.param ("level") == level0 && d.param ("engine") == 2.0f);
+        CHECK (d.engine().pattern().getSeed() != seed1);
+        d.command ("undo", {});
+        for (size_t k = 0; k < before.size(); ++k) CHECK (d.param (ids[k]) == before[k]);
+        CHECK (d.engine().pattern().getSeed() == seed1);
+    }
+
     // switching Synth -> Slicer cuts the synth dead (no ring-out)
     Instrument sw; sw.prepare (48000.0, 512);
     sw.command ("param", { std::string ("seqon"), 0.0 });

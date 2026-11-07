@@ -1,6 +1,7 @@
 // BASH! badge: the name, bouncing to the beat, flaring on every hit, glowing with the
 // output level. Underneath: Live's key (or a status message for a few seconds).
 // Messages in: frame ..., hits ..., keyname <text>, msg <text>, pv <id> <v>
+// Click it: a new pattern (same sound) -> "newpattern"
 inlets = 1;
 outlets = 1;
 mgraphics.init();
@@ -70,6 +71,7 @@ function anything()
             running = a[0]; beat = a[1]; peak = a[6];
             frameCount++;
             flare *= 0.82;
+            bump = bump > 0.02 ? bump * 0.8 : 0;
             for (var i = sparks.length - 1; i >= 0; i--)
             {
                 var s = sparks[i];
@@ -135,12 +137,23 @@ function paint()
             var p = (phase * letters.length + letters.length - i) % letters.length;
             hop = p < 1 ? Math.sin(p * Math.PI) * 5 : 0;
         }
+        hop += bump * Math.abs(Math.sin(bump * 6 + i * 1.3)) * 7;
         var wobble = flare * Math.sin(frameCount * 0.9 + i) * 1.5;
         col(i === 4 ? C.amber : C.ink, i === 4 ? 1 : 0.92);
         g.move_to(x + wobble, 30 - hop);
         g.show_text(letters[i]);
         var m = g.text_measure(letters[i]);
         x += m[0] + 1;
+    }
+
+    // the hint: click the badge for a new pattern
+    if (canGenerate)
+    {
+        g.select_font_face(FONT_BOLD);
+        g.set_font_size(6.5);
+        col(C.ink, 0.42 + 0.4 * flare);
+        g.move_to(9, 42);
+        g.show_text("CLICK TO GENERATE");
     }
 
     // sparks from hits
@@ -177,5 +190,22 @@ function paint()
         g.show_text(text);
     }
 }
+
+// click: a new pattern, with a burst
+var bump = 0;
+// BASH! Voice has no sequencer: no click, no hint
+var canGenerate = !(jsarguments.length > 1 && jsarguments[1] === "nogen");
+function onclick(x, y)
+{
+    if (!canGenerate) return;
+    outlet(0, "newpattern");
+    flare = 1;
+    bump = 1;
+    for (var n = 0; n < 14; n++)
+        sparks.push({ x: 10 + Math.random() * 80, y: 20 + Math.random() * 10, vx: (Math.random() - 0.5) * 4, vy: -1.5 - Math.random() * 3, life: 12 + Math.random() * 10 });
+    if (sparks.length > 60) sparks.splice(0, sparks.length - 60);
+    mgraphics.redraw();
+}
+onclick.local = 1;
 
 function onresize() { mgraphics.redraw(); }

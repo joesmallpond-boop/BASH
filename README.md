@@ -41,6 +41,7 @@ Build on a Mac: `./scripts/build-mac.sh` (add `--install` to install it for you)
 
 ## History
 
+- **1.2.2** - Click the BASH! badge ("CLICK TO GENERATE") for a new pattern with the same sound; DICE now randomises everything (pattern, sequencer, synth, slicer, kit, LFOs, mod slots), and UNDO brings all of it back.
 - **1.2.1** - Drums: each pad switches between SAMPLE and FM (FM picks a matching starting point: kick, snare, hats, toms, cymbals, clap, perc...), with its own FM controls (Pitch, Sweep, FM, Ratio, Noise, Tone, Body, Click, Drive); the pad knobs now show their names and values and work.
 - **1.2.0** - Follows Live's tempo and play / stop (via the Live API, with Max's transport as backup); LOOP OUT puts the loop in a MIDI clip or a WAV on a new audio track (files also in User Library > Kalabash > Captures); switching Synth / Slicer / Drums cuts the old voice dead; wider voice section; Expand opens reliably.
 - **1.1.1** - Installs as one Kalabash folder in the User Library (devices + bash~ + display scripts together), so the displays and page switching load; the DMG also has that folder to drag in by hand.

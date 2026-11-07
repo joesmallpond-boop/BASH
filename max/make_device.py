@@ -798,6 +798,9 @@ if VARIANT != "full":
     if VARIANT == "voice":
         W = 724
         for b in boxes:
+            if b["box"].get("filename") == "bash_badge.js":
+                b["box"]["jsarguments"] = ["nogen"]
+        for b in boxes:
             if b["box"].get("varname") in ("root", "scale"):
                 b["box"]["presentation_rect"][1] = 90
         for b in boxes:

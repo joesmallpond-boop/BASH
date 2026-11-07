@@ -131,6 +131,8 @@ namespace bash
         void laneCommand (const Atoms&);
         void applyGroove (int index);
         void rollDice();
+        void rollSteps();
+        void newPattern();
         void undoDice();
         void pushUndo();
         void keyFromLive (int root, int mask);
@@ -172,7 +174,12 @@ namespace bash
         std::string kitName;
         int selectedPad = 0, selectedLane = 0;
 
-        struct UndoSnap { std::vector<std::pair<int, float>> params; uint64_t seed; std::string steps; };
+        struct UndoSnap
+        {
+            std::vector<std::pair<int, float>> params; uint64_t seed = 0; std::string steps;
+            std::array<CellInfo, numCells> cells; std::array<DrumCell, numCells> engineCells; std::string kitName;
+            const SampleData* sliceSample = nullptr; std::vector<uint32_t> slices;
+        };
         std::vector<UndoSnap> undo;
         uint64_t rngState = 0x5EEDBA55ull;
         uint64_t nextRandom();

@@ -34,7 +34,7 @@
 //        | clear <l> | density <l> <0..1> | pulses <l> <n> | rotate <l> <n> | evolve <l> <0..1>
 //   groove <index>   steps clear
 //   regen   lock <i>   mute <i>   unlockall
-//   dice    undo
+//   dice    undo     newpattern (the badge: a new pattern, same sound)
 //   export midi <bars> | wav <bars>   the loop as a file (+ a clip, made by the device)   exportdir <path>
 //   restore <chunk> <ints...>        saved state coming back from the Live set
 //   refresh                          resend everything (the device just opened)
@@ -909,84 +909,202 @@ namespace bash
     // ---- dice -----------------------------------------------------------------------------------
     namespace
     {
-        const std::vector<std::string>& diceParams()
+        // the dice leave these alone: Live owns the clock and key, and the mix is yours
+        bool diceKeeps (const std::string& id)
         {
-            // rate and octave stay put: a roll to a 1-bar step or a sub-bass register sounds broken, not random
-            static const std::vector<std::string> ids { "type", "density", "steps", "offset", "direction", "accent", "gate",
-                                                        "slicemode", "winstart", "winsize", "swing", "jitter" };
-            return ids;
+            static const std::vector<std::string> keep { "seqon", "mode", "engine", "thru", "midislices", "play", "sync", "tempo",
+                                                         "keylock", "root", "scale", "level", "pan", "warp",
+                                                         "lfo1min", "lfo1max", "lfo2min", "lfo2max" };
+            return std::find (keep.begin(), keep.end(), id) != keep.end();
         }
     }
 
     void Instrument::pushUndo()
     {
         UndoSnap snap;
-        for (auto& id : diceParams()) { const int i = paramIndex (id); snap.params.push_back ({ i, values[(size_t) i].load() }); }
+        for (int i = 0; i < (int) values.size(); ++i)
+            if (! diceKeeps (paramSpecs()[(size_t) i].id)) snap.params.push_back ({ i, values[(size_t) i].load() });
         { std::lock_guard<SpinMutex> g (eng.pattern().mutex()); snap.seed = eng.pattern().getSeed(); }
         { std::lock_guard<SpinMutex> g (eng.stepMutex()); snap.steps = eng.stepPattern().serialise(); }
+        snap.cells = cells;
+        for (int i = 0; i < numCells; ++i) snap.engineCells[(size_t) i] = eng.cell (i);
+        snap.kitName = kitName;
+        snap.sliceSample = playing.get();
+        snap.slices = eng.slices();
         undo.push_back (std::move (snap));
         if (undo.size() > 32) undo.erase (undo.begin());
     }
 
+    void Instrument::rollSteps()
+    {
+        // step mode: re-roll every lane in use; an empty pattern gets a starter groove
+        const bool drums = engineType() == EngineType::Drums;
+        const auto roll = nextRandom();
+        editSteps ([&] (StepPattern& p)
+        {
+            const bool empty = p.activeLanes() == 0;
+            for (int l = 0; l < stepLanes; ++l)
+            {
+                auto& lane = p.lanes[(size_t) l];
+                bool used = false;
+                for (int i = 0; i < lane.length; ++i) used = used || lane.steps[(size_t) i].on;
+                if (empty) used = drums ? l < 5 : l == 0 || l == 2 || l == 4;
+                if (! used) continue;
+                if (empty && drums) lane.algo = l == 3 ? LaneAlgo::Rolls : LaneAlgo::Groove;
+                if (empty && ! drums) lane.algo = LaneAlgo::Random;
+                stepgen::rollLane (lane, laneRole (l), roll + (uint64_t) l * 7919u);
+            }
+        });
+    }
+
+    void Instrument::newPattern()
+    {
+        // the BASH! badge: a new pattern, same sound
+        pushUndo();
+        if (param ("mode") > 0.5f) rollSteps();
+        else
+        {
+            std::lock_guard<SpinMutex> g (eng.pattern().mutex());
+            eng.pattern().regenerate();   // locked steps stay
+        }
+        changed();
+        msg ("New pattern");
+    }
+
     void Instrument::rollDice()
     {
+        // everything: the pattern, the sequencer, the synth, slicer and drum kit, the LFOs and mod slots.
+        // (Synth / Slicer / Drums, Generative / Step, the clock, the key and Level / Pan stay as they are.)
         pushUndo();
-        if (param ("mode") > 0.5f)
+        auto u = [this] { return (float) (nextRandom() >> 11) * (1.0f / 9007199254740992.0f); };
+        auto chance = [&] (float p) { return u() < p; };
+        auto pick = [&] (int n) { return (float) std::min (n - 1, (int) (u() * (float) n)); };
+        auto skew = [&] (float lo, float hi, float e) { return lo + (hi - lo) * std::pow (u(), e); };
+        auto set = [this] (const char* id, float v) { setParamValue (paramIndex (id), v, false); };
+        auto choices = [] (const char* id) { return (int) paramSpecs()[(size_t) paramIndex (id)].choices.size(); };
+
+        // sequencer
+        set ("algo", pick (choices ("algo")));
+        set ("type", u());
+        set ("density", 0.3f + 0.65f * u());
+        set ("steps", (float) (std::vector<int> { 8, 12, 16, 16, 16, 24, 32, 32, 48, 64 })[(size_t) pick (10)]);
+        set ("offset", chance (0.5f) ? 0.0f : pick (16));
+        set ("direction", chance (0.7f) ? 0.0f : pick (choices ("direction")));
+        set ("rate", (float) (std::vector<int> { 0, 1, 1, 1, 1, 2, 3, 4 })[(size_t) pick (8)]);
+        set ("accent", u());
+        set ("gate", 0.15f + 0.9f * u());
+        set ("octave", 1.0f + pick (3));
+        set ("swing", chance (0.5f) ? 0.0f : 0.35f * u());
+        set ("jitter", chance (0.6f) ? 0.0f : 0.3f * u());
+        set ("scalelock", chance (0.85f) ? 1.0f : 0.0f);
+        set ("fill", 0.0f);
+        set ("autofill", chance (0.5f) ? 0.0f : 1.0f + pick (4));
+
+        // synth
+        set ("machine", pick (choices ("machine")));
+        set ("wave", u());
+        set ("timbre", u());
+        set ("ftype", chance (0.6f) ? 0.0f : pick (choices ("ftype")));
+        set ("cutoff", skew (60.0f, 8000.0f, 2.5f));
+        set ("reso", 0.85f * u());
+        set ("envmod", u());
+        set ("decay", skew (0.03f, 1.5f, 2.0f));
+        set ("drive", 0.7f * u());
+        set ("glide", skew (0.005f, 0.3f, 2.0f));
+        set ("aatk", chance (0.7f) ? skew (0.0005f, 0.03f, 2.0f) : skew (0.0005f, 0.8f, 2.0f));
+        set ("adec", skew (0.05f, 2.0f, 1.5f));
+        set ("asus", u());
+        set ("arel", skew (0.005f, 1.2f, 2.0f));
+
+        // slicer
+        set ("slicemode", pick (choices ("slicemode")));
+        set ("winsize", 1.0f + pick (16));
+        set ("winstart", 1.0f + pick (std::max (1, (int) eng.sliceCount() - 1)));
+        set ("pitchfollow", chance (0.3f) ? 1.0f : 0.0f);
+        set ("tune", chance (0.7f) ? 0.0f : (float) std::lround (u() * 24.0f - 12.0f));
+        set ("sattack", skew (0.0005f, 0.1f, 2.0f));
+        set ("srelease", skew (0.005f, 0.6f, 2.0f));
+        set ("reverse", chance (0.15f) ? 1.0f : 0.0f);
+        if (playing != nullptr)
         {
-            // step mode: re-roll every lane in use; an empty pattern gets a starter groove
-            const bool drums = engineType() == EngineType::Drums;
-            const auto roll = nextRandom();
-            editSteps ([&] (StepPattern& p)
-            {
-                const bool empty = p.activeLanes() == 0;
-                for (int l = 0; l < stepLanes; ++l)
-                {
-                    auto& lane = p.lanes[(size_t) l];
-                    bool used = false;
-                    for (int i = 0; i < lane.length; ++i) used = used || lane.steps[(size_t) i].on;
-                    if (empty) used = drums ? l < 5 : l == 0 || l == 2 || l == 4;
-                    if (! used) continue;
-                    if (empty && drums) lane.algo = l == 3 ? LaneAlgo::Rolls : LaneAlgo::Groove;
-                    if (empty && ! drums) lane.algo = LaneAlgo::Random;
-                    stepgen::rollLane (lane, laneRole (l), roll + (uint64_t) l * 7919u);
-                }
-            });
-            msg ("Rolled the step pattern");
-            return;
+            const int n = 4 + (int) pick (29);
+            const float how = u();
+            if (how < 0.4f)      setSlices (slicing::transients (*playing, 0.3f + 0.5f * u()));
+            else if (how < 0.7f) setSlices (slicing::grid (playing->numFrames(), (std::vector<int> { 4, 8, 8, 16, 16, 32 })[(size_t) pick (6)]));
+            else                 setSlices (slicing::random (playing->numFrames(), std::clamp (n, 2, maxSlices), nextRandom(), playing->sampleRate));
         }
-        auto unitRand = [this] { return (float) (nextRandom() >> 11) * (1.0f / 9007199254740992.0f); };
-        for (auto& id : diceParams())
+
+        // modulation
+        for (int k = 1; k <= 2; ++k)
         {
-            const int i = paramIndex (id);
-            const auto& s = paramSpecs()[(size_t) i];
-            float next = s.min + (s.max - s.min) * unitRand();
-            if (id == "steps")     next = (float) (std::vector<int> { 8, 12, 16, 16, 16, 24, 32, 32, 48, 64 })[(size_t) (unitRand() * 9.99f)];
-            if (id == "gate")      next = 0.15f + 0.9f * unitRand();
-            if (id == "swing")     next = unitRand() < 0.5f ? 0.0f : 0.35f * unitRand();
-            if (id == "jitter")    next = unitRand() < 0.6f ? 0.0f : 0.3f * unitRand();
-            if (id == "winsize")   next = (float) (1 + (int) (unitRand() * 15.99f));
-            if (id == "winstart")  next = (float) (1 + (int) (unitRand() * std::max (1.0f, (float) eng.sliceCount() - 1.0f)));
-            if (id == "offset")    next = unitRand() < 0.5f ? 0.0f : (float) (int) (unitRand() * 16.0f);
-            setParamValue (i, next, false);
+            const std::string n = "lfo" + std::to_string (k);
+            set ((n + "shape").c_str(), pick (choices ((n + "shape").c_str())));
+            set ((n + "rate").c_str(), skew (0.05f, 8.0f, 2.0f));
+            set ((n + "sync").c_str(), chance (0.5f) ? 1.0f : 0.0f);
+            set ((n + "div").c_str(), pick (choices ((n + "div").c_str())));
         }
+        set ("liferate", skew (0.01f, 1.0f, 2.0f));
+        for (int k = 1; k <= numModSlots; ++k)
+        {
+            const std::string n = "m" + std::to_string (k);
+            const bool on = chance (0.5f);
+            set ((n + "src").c_str(), on ? 1.0f + pick (choices ((n + "src").c_str()) - 1) : 0.0f);
+            set ((n + "dst").c_str(), pick (choices ((n + "dst").c_str())));
+            set ((n + "amt").c_str(), on ? (u() * 2.0f - 1.0f) * 0.6f : 0.0f);
+        }
+
+        // the patterns
         {
             std::lock_guard<SpinMutex> g (eng.pattern().mutex());
             eng.pattern().setSeed (nextRandom());   // locks are kept
         }
+        rollSteps();
+
+        // the drum kit: a library or FM kit, with some pads flipped to the other source
+        if (engineType() == EngineType::Drums)
+        {
+            const int libKits = (int) library::kits().size(), fmKits = (int) factoryKits().size();
+            if (libKits + fmKits > 0)
+            {
+                const int k = (int) pick (libKits + fmKits);
+                if (k < libKits) loadLibraryKit (k, false); else loadFmKit (k - libKits);
+                for (int i = 0; i < numCells; ++i)
+                    if (chance (0.25f) && eng.cell (i).kind != DrumCell::Kind::Empty)
+                        setPadKind (i, eng.cell (i).kind != DrumCell::Kind::Fm);
+                emitPads();
+                emitPad (selectedPad);
+            }
+        }
         changed();
-        msg ("Rolled the dice (undo brings it back)");
+        viewDirty = true;
+        msg ("Rolled everything (UNDO brings it back)");
     }
 
     void Instrument::undoDice()
     {
         if (undo.empty()) { msg ("Nothing to undo"); return; }
-        const auto snap = undo.back();
+        auto snap = undo.back();
         undo.pop_back();
         for (const auto& [i, v] : snap.params) setParamValue (i, v, false);
         StepPattern sp;
         if (sp.deserialise (snap.steps)) { std::lock_guard<SpinMutex> g (eng.stepMutex()); eng.stepPattern() = sp; }
         { std::lock_guard<SpinMutex> g (eng.pattern().mutex()); eng.pattern().setSeed (snap.seed); }
+        bool kitChanged = snap.kitName != kitName;
+        for (int i = 0; i < numCells; ++i)
+        {
+            auto& now = cells[(size_t) i];
+            const auto& was = snap.cells[(size_t) i];
+            if (now.sample == was.sample && now.name == was.name && now.fmPreset == was.fmPreset) continue;
+            if (now.sample != was.sample) retire (now.sample);
+            now = was;
+            eng.setCell (i, snap.engineCells[(size_t) i]);
+            kitChanged = true;
+        }
+        kitName = snap.kitName;
+        if (kitChanged) { emitPads(); emitPad (selectedPad); }
+        if (snap.sliceSample != nullptr && snap.sliceSample == playing.get()) setSlices (snap.slices);
         changed();
+        viewDirty = true;
         msg ("Undone");
     }
 
@@ -1167,6 +1285,7 @@ namespace bash
             changed();
             return;
         }
+        if (sel == "newpattern") { newPattern(); return; }   // the BASH! badge
         if (sel == "lock")
         {
             const auto i = (uint32_t) std::max (0.0, num (0));
