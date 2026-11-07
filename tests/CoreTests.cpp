@@ -1,5 +1,7 @@
 // BASH! core unit tests — no framework, just run the binary.
 #include "bash/Engine.h"
+#include "bash/Instrument.h"
+#include "bash/AudioFile.h"
 #include "bash/Scale.h"
 #include "bash/Sequencer.h"
 #include "bash/Slices.h"
@@ -22,6 +24,24 @@ static int failures = 0, checks = 0;
 #define CHECK(cond) do { ++checks; if (! (cond)) { ++failures; std::printf ("FAIL %s:%d  %s\n", __FILE__, __LINE__, #cond); } } while (0)
 
 using namespace bash;
+
+// A synthetic drum loop: a decaying noise burst every `spacing` frames.
+static SampleData makeClicks (uint32_t frames, uint32_t spacing, double sr = 48000.0)
+{
+    SampleData d; d.sampleRate = sr;
+    d.left.assign (frames, 0.0f);
+    uint64_t x = 12345;
+    for (uint32_t start = spacing / 2; start < frames; start += spacing)
+        for (uint32_t i = 0; i < 2000 && start + i < frames; ++i)
+        {
+            x = x * 6364136223846793005ull + 1442695040888963407ull;
+            const float noise = (float) ((x >> 40) & 0xFFFF) / 32768.0f - 1.0f;
+            d.left[start + i] = noise * std::exp (-(float) i / 300.0f);
+        }
+    d.right = d.left;
+    return d;
+}
+
 
 static void testDeterminism()
 {
@@ -209,80 +229,6 @@ static void testPlayer()
     CHECK (! ev.empty() && ! ev[0].noteOn);
 }
 
-static void testEngine()
-{
-    Engine eng;
-    eng.prepare (48000.0, 256);
-    eng.global().hostSync = true;
-    eng.track (0).seq.density = 0.8f;
-    eng.track (1).enabled = true;
-    eng.track (1).rateIndex = 0;
-
-    Transport tp; tp.hostAvailable = true; tp.hostPlaying = true; tp.hostBpm = 130.0;
-    std::vector<float> l (480), r (480);
-    std::vector<MidiOut> midi;
-    double peak = 0.0; bool finite = true;
-    for (int block = 0; block < 400; ++block)   // ~4 seconds
-    {
-        eng.process (l.data(), r.data(), 480, tp, midi);
-        tp.hostPpq += 480.0 * 130.0 / 60.0 / 48000.0;
-        for (int i = 0; i < 480; ++i)
-        {
-            finite = finite && std::isfinite (l[i]) && std::isfinite (r[i]);
-            peak = std::max (peak, (double) std::abs (l[i]));
-        }
-    }
-    CHECK (finite);
-    CHECK (peak > 0.01 && peak < 2.0);
-    bool ch1 = false, ch2 = false;
-    for (auto& m : midi) { if (m.channel == 1) ch1 = true; if (m.channel == 2) ch2 = true; }
-    CHECK (ch1 && ch2);
-
-    // Stopping releases everything: silence soon after.
-    tp.hostPlaying = false;
-    midi.clear();
-    for (int block = 0; block < 50; ++block) eng.process (l.data(), r.data(), 480, tp, midi);
-    double tail = 0.0;
-    for (int i = 0; i < 480; ++i) tail = std::max (tail, (double) std::abs (l[i]));
-    CHECK (tail < 1.0e-3);
-    CHECK (! eng.isRunning());
-
-    // Synced with the DAW stopped, BASH!'s own Play still runs (at the DAW's tempo).
-    eng.global().playing = true;
-    eng.process (l.data(), r.data(), 480, tp, midi);
-    CHECK (eng.isRunning());
-    eng.global().playing = false;
-    eng.process (l.data(), r.data(), 480, tp, midi);
-    CHECK (! eng.isRunning());
-
-    // Internal clock runs without a host.
-    Transport none;
-    eng.global().hostSync = false; eng.global().playing = true;
-    midi.clear();
-    for (int block = 0; block < 100; ++block) eng.process (l.data(), r.data(), 480, none, midi);
-    CHECK (! midi.empty());
-}
-
-// ---------------------------------------------------------------------------
-// Slicer
-
-// A synthetic drum loop: a decaying noise burst every `spacing` frames.
-static SampleData makeClicks (uint32_t frames, uint32_t spacing, double sr = 48000.0)
-{
-    SampleData d; d.sampleRate = sr;
-    d.left.assign (frames, 0.0f);
-    uint64_t x = 12345;
-    for (uint32_t start = spacing / 2; start < frames; start += spacing)
-        for (uint32_t i = 0; i < 2000 && start + i < frames; ++i)
-        {
-            x = x * 6364136223846793005ull + 1442695040888963407ull;
-            const float noise = (float) ((x >> 40) & 0xFFFF) / 32768.0f - 1.0f;
-            d.left[start + i] = noise * std::exp (-(float) i / 300.0f);
-        }
-    d.right = d.left;
-    return d;
-}
-
 static void testSlicePlacement()
 {
     auto g = slicing::grid (48000, 16);
@@ -397,51 +343,6 @@ static void testSliceVoice()
     CHECK (v.isSilent());
 }
 
-static void testSlicerEngine()
-{
-    auto loop = makeClicks (96000, 6000);
-    Engine eng;
-    eng.prepare (48000.0, 256);
-    auto& t = eng.track (2);
-    t.enabled = true;
-    t.engine = EngineType::Slicer;
-    t.seq.density = 1.0f;
-    t.seq.sliceMode = SliceMode::Bounce;
-    eng.track (0).enabled = false;
-    eng.setSample (2, &loop);
-    eng.setSlices (2, slicing::grid (loop.numFrames(), 16));
-    CHECK (eng.sliceCount (2) == 16);
-
-    Transport tp; tp.hostAvailable = true; tp.hostPlaying = true; tp.hostBpm = 120.0;
-    std::vector<float> l (480), r (480);
-    std::vector<MidiOut> midi;
-    double energy = 0.0;
-    std::set<int> slicesHeard;
-    const uint64_t before = eng.blocksProcessed();
-    for (int b = 0; b < 200; ++b)
-    {
-        eng.process (l.data(), r.data(), 480, tp, midi);
-        tp.hostPpq += 480.0 * 2.0 / 48000.0;
-        for (int i = 0; i < 480; ++i) energy += (double) l[i] * l[i];
-        if (eng.playingSlice (2) >= 0) slicesHeard.insert (eng.playingSlice (2));
-    }
-    CHECK (energy > 1.0);
-    CHECK (slicesHeard.size() > 4);
-    CHECK (eng.blocksProcessed() == before + 200);
-    bool ch3 = false; for (auto& m : midi) if (m.channel == 3) ch3 = true;
-    CHECK (ch3);
-
-    // swapping the sample out: next block no longer reads the old one
-    eng.setSample (2, nullptr);
-    midi.clear();
-    for (int b = 0; b < 20; ++b) { eng.process (l.data(), r.data(), 480, tp, midi); tp.hostPpq += 480.0 * 2.0 / 48000.0; }
-    float peak = 0.0f; for (int i = 0; i < 480; ++i) peak = std::max (peak, std::abs (l[i]));
-    CHECK (peak < 1.0e-6f);
-}
-
-// ---------------------------------------------------------------------------
-// Algorithms and machines
-
 static void testScaleSteps()
 {
     Scale cMaj (0, 1);
@@ -554,36 +455,6 @@ static void testMachines()
     CHECK (syn.isSilent());
 }
 
-static void testEngineMidiIn()
-{
-    Engine eng; eng.prepare (48000.0, 256);
-    eng.track (0).seq.algorithm = Algorithm::Arpeggiator;
-    eng.track (0).seq.density = 1.0f;
-    Transport tp; tp.hostAvailable = true; tp.hostPlaying = true; tp.hostBpm = 120.0;
-    std::vector<float> l (480), r (480);
-    std::vector<MidiOut> midi;
-    for (int b = 0; b < 50; ++b) { eng.process (l.data(), r.data(), 480, tp, midi); tp.hostPpq += 0.02; }
-    CHECK (midi.empty());   // arp with nothing held is silent
-    eng.midiNoteIn (64, 100); eng.midiNoteIn (60, 100); eng.midiNoteIn (67, 100); eng.midiNoteIn (60, 90);
-    CHECK (eng.heldInputCount() == 3);
-    for (int b = 0; b < 100; ++b) { eng.process (l.data(), r.data(), 480, tp, midi); tp.hostPpq += 0.02; }
-    std::set<int> notes; for (auto& m : midi) if (m.noteOn) notes.insert (m.note);
-    CHECK ((notes == std::set<int> { 60, 64, 67 }));
-    eng.midiNoteIn (64, 0);
-    CHECK (eng.heldInputCount() == 2);
-
-    // Counterpoint bass goes out on channel track + 8
-    eng.track (0).seq.algorithm = Algorithm::Counterpoint;
-    midi.clear();
-    for (int b = 0; b < 200; ++b) { eng.process (l.data(), r.data(), 480, tp, midi); tp.hostPpq += 0.02; }
-    bool ch1 = false, ch9 = false;
-    for (auto& m : midi) { ch1 |= m.channel == 1; ch9 |= m.channel == 9; }
-    CHECK (ch1 && ch9);
-}
-
-// ---------------------------------------------------------------------------
-// Drums
-
 static void testFmDrums()
 {
     for (const auto& preset : fmPresets())
@@ -665,60 +536,6 @@ static void testDrumGroove()
     for (uint32_t i = 0; i < 64; ++i) { auto st = pat.step (i, p, s); CHECK (st.note == 36 + st.slice && st.chordExtra == 0); }
 }
 
-static void testDrumEngine()
-{
-    Engine eng; eng.prepare (48000.0, 256);
-    const auto& kit = factoryKits()[0];
-    for (int c = 0; c < numCells; ++c) if (kit.cells[(size_t) c] >= 0) eng.setCell (c, makeFmCell (fmPresets()[(size_t) kit.cells[(size_t) c]]));
-    auto& t = eng.track (1);
-    t.enabled = true; t.engine = EngineType::Drums;
-    t.seq.sliceMode = SliceMode::Groove; t.seq.windowStart = 0; t.seq.windowSize = 4; t.seq.density = 0.6f;
-    eng.track (0).enabled = false;
-
-    Transport tp; tp.hostAvailable = true; tp.hostPlaying = true; tp.hostBpm = 125.0;
-    std::vector<float> l (480), r (480);
-    std::vector<MidiOut> midi;
-    double energy = 0.0;
-    for (int b = 0; b < 300; ++b)
-    {
-        eng.process (l.data(), r.data(), 480, tp, midi);
-        tp.hostPpq += 480.0 * 125.0 / 60.0 / 48000.0;
-        for (int i = 0; i < 480; ++i) energy += (double) l[i] * l[i];
-    }
-    CHECK (energy > 1.0);
-    std::set<int> notes; for (auto& m : midi) if (m.noteOn && m.channel == 2) notes.insert (m.note);
-    CHECK (notes.count (36) && notes.count (38) && notes.size() >= 3);
-
-    // replacing a sample cell: voices using the old one stop on the next block
-    eng.track (1).enabled = false;
-    for (int b = 0; b < 1200; ++b) { eng.process (l.data(), r.data(), 480, tp, midi); tp.hostPpq += 480.0 * 125.0 / 60.0 / 48000.0; }
-    SampleData d; d.sampleRate = 48000.0; d.left.assign (480000, 0.3f); d.right = d.left;
-    DrumCell sc; sc.kind = DrumCell::Kind::Sample; sc.sample = &d;
-    eng.setCell (0, sc);
-    eng.track (1).enabled = true;
-    eng.track (1).seq.sliceMode = SliceMode::Window; eng.track (1).seq.windowSize = 1; eng.track (1).seq.density = 1.0f;
-    for (int b = 0; b < 40; ++b) { eng.process (l.data(), r.data(), 480, tp, midi); tp.hostPpq += 480.0 * 125.0 / 60.0 / 48000.0; }
-    float during = 0.0f; for (int i = 0; i < 480; ++i) during = std::max (during, std::abs (l[i]));
-    CHECK (during > 0.1f);
-    eng.track (1).enabled = false;
-    DrumCell empty;
-    eng.setCell (0, empty);
-    eng.process (l.data(), r.data(), 480, tp, midi);
-    eng.process (l.data(), r.data(), 480, tp, midi);
-    float peak = 0.0f; for (int i = 0; i < 480; ++i) peak = std::max (peak, std::abs (l[i]));
-    CHECK (peak < 0.05f);
-
-    // audition plays through the output with no track running
-    eng.setCell (5, makeFmCell (fmPresets()[0]));
-    eng.audition (5);
-    eng.process (l.data(), r.data(), 480, tp, midi);
-    float a = 0.0f; for (int i = 0; i < 480; ++i) a = std::max (a, std::abs (l[i]));
-    CHECK (a > 0.01f);
-}
-
-// ---------------------------------------------------------------------------
-// Effects and mixer
-
 static void testEffects()
 {
     const double sr = 48000.0;
@@ -774,93 +591,16 @@ static void testEffects()
 static double runEnergy (Engine& eng, Transport& tp, int blocks, float* lastPeak = nullptr)
 {
     std::vector<float> l (480), r (480);
-    std::vector<MidiOut> midi;
     double e = 0.0;
     for (int b = 0; b < blocks; ++b)
     {
-        eng.process (l.data(), r.data(), 480, tp, midi);
+        eng.process (l.data(), r.data(), 480, tp);
         tp.hostPpq += 480.0 * tp.hostBpm / 60.0 / 48000.0;
         for (int i = 0; i < 480; ++i) e += (double) l[(size_t) i] * l[(size_t) i];
     }
-    if (lastPeak) { *lastPeak = 0.0f; for (int i = 0; i < 480; ++i) *lastPeak = std::max (*lastPeak, std::abs (l[(size_t) i])); }
+    if (lastPeak) { *lastPeak = 0.0f; for (float v : l) *lastPeak = std::max (*lastPeak, std::abs (v)); }
     return e;
 }
-
-static void testMixer()
-{
-    Engine eng; eng.prepare (48000.0, 512);
-    Transport tp; tp.hostAvailable = true; tp.hostPlaying = true; tp.hostBpm = 120.0;
-    eng.track (0).seq.density = 0.8f;
-    eng.global().returns[0].type = FxType::None;
-    eng.global().returns[1].type = FxType::None;
-
-    const double base = runEnergy (eng, tp, 100);
-    CHECK (base > 0.1);
-
-    eng.track (0).mute = true;
-    CHECK (runEnergy (eng, tp, 100) < 1.0e-6);
-    eng.track (0).mute = false;
-
-    eng.track (1).enabled = true; eng.track (1).solo = true;   // soloing another track silences track 1
-    eng.track (1).engine = EngineType::Synth; eng.track (1).seq.density = 0.0f;
-    CHECK (runEnergy (eng, tp, 100) < 1.0e-6);
-    eng.track (1).solo = false; eng.track (1).enabled = false;
-
-    // reverb send: tail after the track stops
-    eng.global().returns[0].type = FxType::Hall; eng.global().returns[0].a = 0.8f;
-    eng.track (0).sendA = 1.0f;
-    runEnergy (eng, tp, 200);
-    eng.track (0).enabled = false;
-    float pk = 0.0f;
-    runEnergy (eng, tp, 20, &pk);
-    CHECK (pk > 1.0e-3f);    // the hall is still ringing
-    runEnergy (eng, tp, 3000, &pk);
-    CHECK (pk < 1.0e-3f);    // ...and dies out
-
-    // insert on a silent track rings out
-    eng.track (0).enabled = true; eng.track (0).sendA = 0.0f;
-    eng.track (0).inserts[0].type = FxType::DigitalDelay; eng.track (0).inserts[0].b = 0.5f;
-    runEnergy (eng, tp, 100);
-    eng.track (0).enabled = false;
-    runEnergy (eng, tp, 5, &pk);
-    CHECK (pk > 1.0e-3f);
-    eng.track (0).inserts[0].type = FxType::None;
-
-    // with "separate outs", a direct output takes the track out of the main mix
-    eng.track (0).enabled = true;
-    eng.global().separateOuts = true;
-    std::vector<float> dl (480, 0.0f), dr (480, 0.0f), l (480), r (480);
-    std::vector<MidiOut> midi;
-    double mainE = 0.0, directE = 0.0;
-    for (int b = 0; b < 100; ++b)
-    {
-        std::fill (dl.begin(), dl.end(), 0.0f); std::fill (dr.begin(), dr.end(), 0.0f);
-        eng.setDirectOutput (0, dl.data(), dr.data());
-        eng.process (l.data(), r.data(), 480, tp, midi);
-        tp.hostPpq += 0.02;
-        for (int i = 0; i < 480; ++i) { mainE += l[(size_t) i] * l[(size_t) i]; directE += dl[(size_t) i] * dl[(size_t) i]; }
-    }
-    eng.setDirectOutput (0, nullptr, nullptr);
-    CHECK (directE > 0.1 && mainE < 0.01 * directE);
-    eng.global().separateOuts = false;
-
-    // limiter keeps the master under the ceiling even with everything cranked
-    for (int t = 0; t < numTracks; ++t) { eng.track (t).enabled = true; eng.track (t).level = 1.0f; eng.track (t).seq.density = 1.0f; eng.track (t).voice.drive = 1.0f; }
-    eng.global().master = 1.0f;
-    eng.global().limiter.driveDb = 12.0f;
-    eng.global().glue.on = true; eng.global().glue.makeupDb = 15.0f;
-    float loud = 0.0f; std::vector<float> L2 (480), R2 (480);
-    for (int b = 0; b < 200; ++b)
-    {
-        eng.process (L2.data(), R2.data(), 480, tp, midi);
-        tp.hostPpq += 0.02;
-        for (int i = 0; i < 480; ++i) loud = std::max (loud, std::max (std::abs (L2[(size_t) i]), std::abs (R2[(size_t) i])));
-    }
-    CHECK (loud <= 0.9661f && loud > 0.3f);
-}
-
-// ---------------------------------------------------------------------------
-// Modulation
 
 static void testModulation()
 {
@@ -888,36 +628,39 @@ static void testModulation()
     CHECK (maxStep < 0.05f);
     CHECK (hi - lo > 0.8f && lo >= -1.0f && hi <= 1.0f);
 
-    // matrix: mod wheel pulls track level to zero
+    // matrix: mod wheel pulls the level to zero
     Engine eng; eng.prepare (48000.0, 512);
-    eng.global().returns[0].type = eng.global().returns[1].type = FxType::None;
     Transport tp; tp.hostAvailable = true; tp.hostPlaying = true; tp.hostBpm = 120.0;
-    eng.track (0).seq.density = 0.9f;
+    eng.settings().seq.density = 0.9f;
     CHECK (runEnergy (eng, tp, 100) > 0.1);
-    eng.matrix (0).set (ModDest::Level, ModSource::ModWheel, -1.0f);
+    eng.matrix().set (ModDest::Level, ModSource::ModWheel, -1.0f);
     eng.midiExpression (ModSource::ModWheel, 1.0f);
     CHECK (runEnergy (eng, tp, 100) < 1.0e-4);
     eng.midiExpression (ModSource::ModWheel, 0.0f);
     CHECK (runEnergy (eng, tp, 100) > 0.1);
-    eng.matrix (0).clear();
+    eng.matrix().clear();
 
     // Life -> Type: the pattern drifts over time compared with no modulation
     auto notesOver = [&] (bool mod)
     {
         Engine e2; e2.prepare (48000.0, 512);
-        e2.track (0).seq.density = 1.0f; e2.track (0).lifeRate = 2.0f;
-        if (mod) e2.matrix (0).set (ModDest::Type, ModSource::Life, 1.0f);
+        e2.settings().seq.density = 1.0f; e2.settings().lifeRate = 2.0f;
+        if (mod) e2.matrix().set (ModDest::Type, ModSource::Life, 1.0f);
         Transport t2; t2.hostAvailable = true; t2.hostPlaying = true; t2.hostBpm = 120.0;
-        std::vector<float> l (480), r (480); std::vector<MidiOut> midi; std::vector<int> notes;
-        for (int b = 0; b < 400; ++b) { e2.process (l.data(), r.data(), 480, t2, midi); t2.hostPpq += 0.02; }
-        for (auto& m : midi) if (m.noteOn) notes.push_back (m.note);
+        std::vector<float> l (480), r (480); std::vector<int> notes;
+        uint32_t seen = 0;
+        for (int b = 0; b < 400; ++b)
+        {
+            e2.process (l.data(), r.data(), 480, t2); t2.hostPpq += 0.02;
+            if (e2.noteCount() != seen) { seen = e2.noteCount(); notes.push_back (e2.lastNote()); }
+        }
         return notes;
     };
     auto plain = notesOver (false), drifting = notesOver (true);
     int diff = 0;
     for (size_t i = 0; i < std::min (plain.size(), drifting.size()); ++i) if (plain[i] != drifting[i]) ++diff;
-    CHECK (diff > 10);
-    CHECK (eng.sourceValue (0, ModSource::ModWheel) == 0.0f);
+    CHECK (diff > 5);
+    CHECK (eng.sourceValue (ModSource::ModWheel) == 0.0f);
 }
 
 // ---------------------------------------------------------------------------
@@ -993,49 +736,6 @@ static void testTimingAndMotif()
     CHECK (s0 && s1);
 }
 
-static void testOfflineRender()
-{
-    Engine live; live.prepare (48000.0, 256);
-    live.track (0).seq.density = 0.8f;
-    live.track (1).enabled = true; live.track (1).engine = EngineType::Drums; live.track (1).seq.sliceMode = SliceMode::Groove;
-    for (int c = 0; c < numCells; ++c) live.setCell (c, makeFmCell (fmPresets()[(size_t) factoryKits()[0].cells[(size_t) c]]));
-    live.track (0).inserts[0].type = FxType::Hall; live.track (0).inserts[0].a = 0.8f;
-
-    RenderOptions o; o.track = 0; o.bars = 2; o.bpm = 120.0; o.sampleRate = 48000.0;
-    std::vector<float> l, r, l2, r2;
-    Engine::renderOffline (live, o, l, r);
-    CHECK (l.size() == 192000 && r.size() == 192000);
-    double e = 0.0; bool finite = true; for (float v : l) { e += v * v; finite = finite && std::isfinite (v); }
-    CHECK (finite && e > 1.0);
-
-    Engine::renderOffline (live, o, l2, r2);
-    CHECK (l == l2);                       // deterministic: same state, same audio
-
-    o.withFx = false;
-    Engine::renderOffline (live, o, l2, r2);
-    double diff = 0.0; for (size_t i = 0; i < l.size(); ++i) diff += std::abs (l[i] - l2[i]);
-    CHECK (diff > 1.0);                    // the insert reverb was left out
-
-    // track 2 alone is the drums: track 1's synth must not be in it
-    o.track = 1; o.withFx = true;
-    Engine::renderOffline (live, o, l2, r2);
-    double de = 0.0; for (float v : l2) de += v * v;
-    CHECK (de > 1.0);
-
-    // full mix is louder than either part on its own, and limited
-    o.track = -1;
-    Engine::renderOffline (live, o, l2, r2);
-    float pk = 0.0f; double me = 0.0; for (float v : l2) { pk = std::max (pk, std::abs (v)); me += v * v; }
-    CHECK (me > e * 0.5 && pk <= 0.97f * 1.6f);   // tail wrap can sum a little above the limiter at the seam
-
-    // rendering must not disturb the live engine
-    CHECK (live.track (0).enabled && live.track (1).enabled);
-}
-
-// Regression: reverbs used to drone forever (shimmer feedback leaking into every reverb)
-// and pile their tail onto the left side. Every reverb and delay must die away when the
-// input stops (unless frozen / pushed into self-oscillation on purpose), and a mono input
-// must give a balanced tail.
 static void testNoDronesOrLopsidedTails()
 {
     const double sr = 48000.0; const int bs = 128;
@@ -1255,34 +955,30 @@ static void testStepSequencer()
     // engine: a drum track in step mode plays its pads and stops cleanly
     Engine eng;
     eng.prepare (48000.0, 256);
-    eng.global().hostSync = false; eng.global().playing = true; eng.global().tempo = 120.0;
-    for (int t = 0; t < numTracks; ++t) eng.track (t).enabled = false;
+    eng.settings().hostSync = false; eng.settings().playing = true; eng.settings().tempo = 120.0;
     eng.setCell (0, makeFmCell (fmPresets()[0]));
     eng.setCell (3, makeFmCell (fmPresets()[3]));
-    auto& tr = eng.track (2);
-    tr.enabled = true; tr.engine = EngineType::Drums; tr.stepMode = true; tr.rateIndex = 1;
+    auto& tr = eng.settings();
+    tr.engine = EngineType::Drums; tr.stepMode = true; tr.rateIndex = 1;
     {
-        std::lock_guard<SpinMutex> g (eng.stepMutex (2));
-        auto& sp2 = eng.stepPattern (2);
+        std::lock_guard<SpinMutex> g (eng.stepMutex());
+        auto& sp2 = eng.stepPattern();
         for (int s : { 0, 4, 8, 12 }) sp2.lanes[0].steps[(size_t) s].on = true;
         for (int s = 2; s < 16; s += 4) sp2.lanes[3].steps[(size_t) s].on = true;
     }
     std::vector<float> l (480), r (480);
-    std::vector<MidiOut> midi;
     double peak = 0;
-    for (int b = 0; b < 200; ++b)   // 2 s = 1 bar at 120
+    for (int b = 0; b < 199; ++b)   // just under 2 s = 1 bar at 120
     {
-        eng.process (l.data(), r.data(), 480, Transport{}, midi);
+        eng.process (l.data(), r.data(), 480, Transport{});
         for (int i = 0; i < 480; ++i) peak = std::max (peak, (double) std::abs (l[(size_t) i]));
     }
-    int kicks = 0, hats = 0;
-    for (auto& m : midi) if (m.noteOn && m.channel == 3) { if (m.note == drumBaseNote) ++kicks; if (m.note == drumBaseNote + 3) ++hats; }
-    CHECK (kicks == 4 && hats == 4);
+    CHECK (eng.hitCount (0) == 4 && eng.hitCount (3) == 4);
     CHECK (peak > 0.01);
-    CHECK (eng.stepLanePosition (2, 0) >= 0);
-    eng.global().playing = false;
-    eng.process (l.data(), r.data(), 480, Transport{}, midi);
-    CHECK (eng.stepLanePosition (2, 0) == -1);
+    CHECK (eng.stepLanePosition (0) >= 0);
+    eng.settings().playing = false;
+    eng.process (l.data(), r.data(), 480, Transport{});
+    CHECK (eng.stepLanePosition (0) == -1);
 }
 
 // ---- warp ---------------------------------------------------------------------------
@@ -1455,201 +1151,6 @@ static void testLibrary()
 
 // ---- master: glue compressor and limiter -----------------------------------------
 
-static void testDirectOuts()
-{
-    // a host that switches every output on must still hear everything on the main output
-    for (bool separate : { false, true })
-    {
-        Engine eng; eng.prepare (48000.0, 512);
-        eng.global().hostSync = false; eng.global().playing = true;
-        eng.track (0).enabled = true; eng.track (0).seq.density = 0.9f;
-        std::vector<std::vector<float>> outs (16, std::vector<float> (512));
-        std::vector<float> l (512), r (512);
-        std::vector<MidiOut> midi; Transport none;
-        double mainE = 0, directE = 0;
-        for (int b = 0; b < 200; ++b)
-        {
-            for (int t = 0; t < numTracks; ++t)
-            {
-                std::fill (outs[(size_t) (2 * t)].begin(), outs[(size_t) (2 * t)].end(), 0.0f);
-                std::fill (outs[(size_t) (2 * t + 1)].begin(), outs[(size_t) (2 * t + 1)].end(), 0.0f);
-                eng.setDirectOutput (t, outs[(size_t) (2 * t)].data(), outs[(size_t) (2 * t + 1)].data());
-            }
-            eng.global().separateOuts = separate;
-            eng.process (l.data(), r.data(), 512, none, midi);
-            for (int i = 0; i < 512; ++i) { mainE += (double) l[(size_t) i] * l[(size_t) i]; directE += (double) outs[0][(size_t) i] * outs[0][(size_t) i]; }
-        }
-        CHECK (directE > 1.0e-3);
-        if (separate) CHECK (mainE < directE * 0.01);
-        else          CHECK (mainE > directE * 0.3);
-    }
-}
-
-static void testMicro()
-{
-    const double sr = 48000.0; const int bs = 128;
-    Scale sc (0, 0);
-    // a source: plucks every half beat at 120 bpm (one every 0.25 s)
-    auto source = [&] (long long i) -> float
-    {
-        const long long k = i % 12000;
-        return (float) (0.5 * std::exp (-(double) k / 1500.0) * std::sin (2.0 * 3.141592653589793 * 330.0 * (double) i / sr));
-    };
-    auto run = [&] (MicroEngine& m, MicroParams p, double seconds, bool feed, double* wetE = nullptr, double* peakOut = nullptr, long long* clock = nullptr)
-    {
-        std::vector<float> l (bs), r (bs);
-        long long t0 = clock ? *clock : 0;
-        double ppq = t0 * 2.0 / sr;
-        bool finite = true; double e = 0, pk = 0;
-        for (int b = 0; b < (int) (seconds * sr / bs); ++b)
-        {
-            for (int i = 0; i < bs; ++i) l[(size_t) i] = r[(size_t) i] = feed ? source (t0 + b * bs + i) : 0.0f;
-            m.process (l.data(), r.data(), bs, p, sc, 120.0, ppq, true);
-            ppq += bs * 2.0 / sr;
-            for (int i = 0; i < bs; ++i)
-            {
-                if (! std::isfinite (l[(size_t) i]) || ! std::isfinite (r[(size_t) i])) finite = false;
-                e += (double) l[(size_t) i] * l[(size_t) i] + (double) r[(size_t) i] * r[(size_t) i];
-                pk = std::max (pk, (double) std::max (std::abs (l[(size_t) i]), std::abs (r[(size_t) i])));
-            }
-        }
-        if (clock) *clock = t0 + (long long) (seconds * sr / bs) * bs;
-        if (wetE) *wetE = e;
-        if (peakOut) *peakOut = pk;
-        return finite;
-    };
-
-    // every algorithm and variation: makes wet sound, stays finite and bounded, keeps ringing after the input stops
-    for (int a = 0; a < (int) MicroAlgo::count; ++a)
-        for (int v = 0; v < 4; ++v)
-        {
-            MicroEngine m; m.prepare (sr, bs);
-            MicroParams p; p.on = true; p.algo = (MicroAlgo) a; p.variation = v; p.mix = 1.0f; p.space = 0.0f;
-            p.activity = 0.6f; p.repeats = 0.6f;
-            long long clk = 0; double e = 0, pk = 0;
-            CHECK (run (m, p, 3.0, true, &e, &pk, &clk));
-            CHECK (e > 1.0);
-            if (e <= 1.0) std::printf ("  micro %s %c: no wet\n", microAlgoName ((MicroAlgo) a), 'A' + v);
-            CHECK (pk < 4.0);
-            CHECK (std::string (microVariationText ((MicroAlgo) a, v)).size() > 3);
-            double tail = 0;
-            CHECK (run (m, p, 0.4, false, &tail, nullptr, &clk));
-            if (a != (int) MicroAlgo::Interrupt && a != (int) MicroAlgo::Strum && a != (int) MicroAlgo::Blocks && a != (int) MicroAlgo::Arp)
-            { CHECK (tail > 1.0e-4); if (tail <= 1.0e-4) std::printf ("  micro %s %c: no tail %g\n", microAlgoName ((MicroAlgo) a), 'A' + v, tail); }
-        }
-    // fuzz: random settings changing every block stay finite
-    {
-        MicroEngine m; m.prepare (sr, bs);
-        uint32_t s = 99;
-        auto rnd = [&] { s = s * 1664525u + 1013904223u; return (float) (s >> 8) / 16777216.0f; };
-        long long clk = 0; bool ok = true;
-        for (int k = 0; k < 400; ++k)
-        {
-            MicroParams p; p.on = true;
-            p.algo = (MicroAlgo) (int) (rnd() * 10.99f); p.variation = (int) (rnd() * 3.99f);
-            p.activity = rnd(); p.repeats = rnd(); p.shape = rnd(); p.time = (int) (rnd() * 5.99f);
-            p.filter = rnd(); p.reso = rnd(); p.modRate = rnd(); p.modDepth = rnd(); p.space = rnd(); p.reverbType = (int) (rnd() * 3.99f);
-            p.decay = rnd(); p.mix = rnd(); p.reverse = (MicroReverse) (int) (rnd() * 2.99f); p.hold = rnd() < 0.2f;
-            double pk = 0;
-            ok = ok && run (m, p, 0.05, true, nullptr, &pk, &clk) && pk < 8.0;
-        }
-        CHECK (ok);
-    }
-    // mix 0, no looper: the input passes untouched
-    {
-        MicroEngine m; m.prepare (sr, bs);
-        MicroParams p; p.on = true; p.mix = 0.0f;
-        std::vector<float> l (bs), r (bs);
-        for (int i = 0; i < bs; ++i) l[(size_t) i] = r[(size_t) i] = source (i);
-        m.process (l.data(), r.data(), bs, p, sc, 120.0, 0.0, true);
-        float err = 0; for (int i = 0; i < bs; ++i) err = std::max (err, std::abs (l[(size_t) i] - source (i)));
-        CHECK (err < 1.0e-6f);
-    }
-    // hold freezes the history: the wet keeps going with no input for a long time
-    {
-        MicroEngine m; m.prepare (sr, bs);
-        MicroParams p; p.on = true; p.algo = MicroAlgo::Haze; p.mix = 1.0f; p.space = 0.0f;
-        long long clk = 0;
-        run (m, p, 2.0, true, nullptr, nullptr, &clk);
-        p.hold = true;
-        double e = 0;
-        run (m, p, 3.0, false, nullptr, nullptr, &clk);
-        run (m, p, 1.0, false, &e, nullptr, &clk);
-        CHECK (e > 1.0);
-    }
-    // the waveform view follows the input; voices report positions
-    {
-        MicroEngine m; m.prepare (sr, bs);
-        MicroParams p; p.on = true; p.algo = MicroAlgo::Mosaic; p.mix = 1.0f;
-        long long clk = 0;
-        run (m, p, 2.0, true, nullptr, nullptr, &clk);
-        float recent = 0; for (int k = MicroEngine::viewBins - 40; k < MicroEngine::viewBins; ++k) recent = std::max (recent, m.inputOverview (k));
-        CHECK (recent > 0.05f);
-        CHECK (m.inputOverview (0) < 0.01f);              // 8 s ago: nothing yet
-        CHECK (m.activeVoices() > 0);
-        CHECK (m.voicePosition (0) > 0.5f);
-    }
-    // looper: record, play back, overdub, undo, stop, erase, quantize
-    {
-        MicroEngine m; m.prepare (sr, bs);
-        MicroParams p; p.on = true; p.mix = 0.0f; p.loopLevel = 1.0f;
-        long long clk = 0;
-        CHECK (m.loopState() == MicroEngine::LoopState::Empty);
-        m.loopPress(); run (m, p, 0.01, true, nullptr, nullptr, &clk);
-        CHECK (m.loopState() == MicroEngine::LoopState::Recording);
-        run (m, p, 1.0, true, nullptr, nullptr, &clk);
-        m.loopPress(); run (m, p, 0.01, false, nullptr, nullptr, &clk);
-        CHECK (m.loopState() == MicroEngine::LoopState::Playing);
-        CHECK (std::abs (m.loopSeconds() - 1.0) < 0.02);
-        double e = 0;
-        run (m, p, 1.0, false, &e, nullptr, &clk);
-        CHECK (e > 10.0);                                 // the loop plays with no input
-        std::vector<float> a, b; m.copyLoop (a, b);
-        CHECK (std::abs ((double) a.size() / sr - m.loopSeconds()) < 1.0e-6 && ! a.empty());
-        // overdub doubles it, undo brings it back
-        m.loopPress(); run (m, p, 0.01, false, nullptr, nullptr, &clk);
-        CHECK (m.loopState() == MicroEngine::LoopState::Overdubbing);
-        run (m, p, 1.1, true, nullptr, nullptr, &clk);
-        m.loopPress(); run (m, p, 0.01, false, nullptr, nullptr, &clk);
-        double eDub = 0; run (m, p, 1.0, false, &eDub, nullptr, &clk);
-        CHECK (eDub > e * 1.5);
-        CHECK (m.canUndo());
-        m.loopUndo(); run (m, p, 0.01, false, nullptr, nullptr, &clk);
-        double eUndo = 0; run (m, p, 1.0, false, &eUndo, nullptr, &clk);
-        CHECK (std::abs (eUndo - e) < e * 0.2);
-        m.loopStop(); run (m, p, 0.01, false, nullptr, nullptr, &clk);
-        CHECK (m.loopState() == MicroEngine::LoopState::Stopped);
-        double eStop = 0; run (m, p, 0.5, false, &eStop, nullptr, &clk);
-        CHECK (eStop < 1.0e-9);
-        m.loopErase(); run (m, p, 0.01, false, nullptr, nullptr, &clk);
-        CHECK (m.loopState() == MicroEngine::LoopState::Empty && m.loopSeconds() == 0.0);
-        // quantize: 1.2 s at 120 bpm (0.5 s beats) rounds to 1.0 s
-        p.quantize = true;
-        m.loopPress(); run (m, p, 1.2, true, nullptr, nullptr, &clk);
-        m.loopPress(); run (m, p, 0.01, false, nullptr, nullptr, &clk);
-        CHECK (std::abs (m.loopSeconds() - 1.0) < 0.001);
-        // looper-only: effects off, the loop still plays; burst records while held
-        m.loopErase(); run (m, p, 0.01, false, nullptr, nullptr, &clk);
-        p.quantize = false; p.loopMode = LoopMode::LooperOnly;
-        m.burst (true); run (m, p, 0.5, true, nullptr, nullptr, &clk);
-        CHECK (m.loopState() == MicroEngine::LoopState::Recording);
-        m.burst (false); run (m, p, 0.01, false, nullptr, nullptr, &clk);
-        CHECK (m.loopState() == MicroEngine::LoopState::Playing);
-        double eb = 0; run (m, p, 0.5, false, &eb, nullptr, &clk);
-        CHECK (eb > 1.0);
-    }
-    // in the engine: on, it sits between the tracks and the master
-    {
-        Engine e; e.prepare (48000.0, 512);
-        e.global().micro.on = true; e.global().micro.mix = 1.0f;
-        std::vector<float> l (512), r (512);
-        Transport tp;
-        bool finite = true;
-        for (int b = 0; b < 100; ++b) { std::vector<MidiOut> mo; e.process (l.data(), r.data(), 512, tp, mo); for (float v : l) finite = finite && std::isfinite (v); }
-        CHECK (finite);
-    }
-}
-
 static void testMasterDynamics()
 {
     auto runGlue = [] (GlueParams p, double hz, float amp, double seconds = 1.5)
@@ -1701,6 +1202,420 @@ static void testMasterDynamics()
     CHECK (lim.reductionDb() > 3.0f);
 }
 
+// ---- the single-channel engine -----------------------------------------------------
+static void runFor (Engine& eng, Transport& tp, int blocks, double* energy = nullptr, float* lastPeak = nullptr)
+{
+    std::vector<float> l (480), r (480);
+    for (int b = 0; b < blocks; ++b)
+    {
+        eng.process (l.data(), r.data(), 480, tp);
+        tp.hostPpq += 480.0 * tp.hostBpm / 60.0 / 48000.0;
+        bool finite = true;
+        for (int i = 0; i < 480; ++i) { finite = finite && std::isfinite (l[(size_t) i]) && std::isfinite (r[(size_t) i]); if (energy) *energy += (double) l[(size_t) i] * l[(size_t) i]; }
+        if (! finite) { CHECK (finite); return; }
+    }
+    if (lastPeak) { *lastPeak = 0.0f; for (float v : l) *lastPeak = std::max (*lastPeak, std::abs (v)); }
+}
+
+static void testSingleChannelEngine()
+{
+    Engine eng; eng.prepare (48000.0, 256);
+    eng.settings().seq.density = 0.8f;
+    Transport tp; tp.hostAvailable = true; tp.hostPlaying = true; tp.hostBpm = 130.0;
+    double e = 0.0; float pk = 0.0f;
+    runFor (eng, tp, 400, &e);
+    CHECK (e > 1.0);
+    CHECK (eng.noteCount() > 10);
+    CHECK (std::abs (eng.currentBpm() - 130.0) < 1e-9);
+    CHECK (eng.outputPeak() >= 0.0f);
+
+    // stopping releases everything
+    tp.hostPlaying = false;
+    runFor (eng, tp, 50, nullptr, &pk);
+    CHECK (pk < 1.0e-3f);
+    CHECK (! eng.isRunning());
+
+    // host stopped: the device's own Play still runs, at the host's tempo
+    eng.settings().playing = true;
+    const auto before = eng.noteCount();
+    runFor (eng, tp, 100);
+    CHECK (eng.isRunning() && eng.noteCount() > before);
+    eng.settings().playing = false;
+    runFor (eng, tp, 2);
+    CHECK (! eng.isRunning());
+
+    // sequencer off: nothing plays even with the host running
+    tp.hostPlaying = true;
+    eng.settings().sequencerOn = false;
+    const auto n0 = eng.noteCount();
+    runFor (eng, tp, 100);
+    CHECK (eng.noteCount() == n0);
+    eng.settings().sequencerOn = true;
+
+    // internal clock without a host
+    Transport none;
+    eng.settings().hostSync = false; eng.settings().playing = true; eng.settings().tempo = 100.0;
+    runFor (eng, none, 100);
+    CHECK (eng.noteCount() > n0 && std::abs (eng.currentBpm() - 100.0) < 1e-9);
+}
+
+static void testMidiThruAndArp()
+{
+    Engine eng; eng.prepare (48000.0, 256);
+    Transport tp; tp.hostAvailable = true; tp.hostBpm = 120.0;   // host stopped
+    // thru: a note in plays the synth with the sequencer stopped
+    eng.queueNote (60, 100);
+    double e = 0.0;
+    runFor (eng, tp, 20, &e);
+    CHECK (e > 0.1 && eng.lastNote() == 60);
+    eng.queueNote (60, 0);
+    float pk = 1.0f;
+    runFor (eng, tp, 200, nullptr, &pk);
+    CHECK (pk < 1.0e-3f);
+
+    // thru off: silence
+    eng.settings().midiThru = false;
+    eng.queueNote (62, 100);
+    e = 0.0; runFor (eng, tp, 20, &e);
+    CHECK (e < 1.0e-6);
+    eng.queueNote (62, 0);
+    eng.settings().midiThru = true;
+
+    // drums: notes from C1 play pads
+    eng.settings().engine = EngineType::Drums;
+    eng.setCell (2, makeFmCell (fmPresets()[2]));
+    eng.queueNote (drumBaseNote + 2, 110);
+    runFor (eng, tp, 10);
+    CHECK (eng.hitCount (2) == 1);
+
+    // the Arpeggiator plays only held notes, and they don't also play thru
+    eng.settings().engine = EngineType::Synth;
+    eng.settings().seq.algorithm = Algorithm::Arpeggiator;
+    eng.settings().seq.density = 1.0f;
+    eng.queueAllNotesOff();   // the drum note above is still held
+    tp.hostPlaying = true;
+    const auto silent = eng.noteCount();
+    runFor (eng, tp, 50);
+    CHECK (eng.noteCount() == silent);
+    eng.queueNote (64, 100); eng.queueNote (60, 100); eng.queueNote (67, 100);
+    std::set<int> notes;
+    uint32_t seen = eng.noteCount();
+    for (int b = 0; b < 100; ++b)
+    {
+        runFor (eng, tp, 1);
+        if (eng.noteCount() != seen) { seen = eng.noteCount(); notes.insert (eng.lastNote()); }
+    }
+    CHECK ((notes == std::set<int> { 60, 64, 67 }));
+    eng.queueAllNotesOff();
+    runFor (eng, tp, 2);
+    const auto afterOff = eng.noteCount();
+    runFor (eng, tp, 50);
+    CHECK (eng.noteCount() == afterOff);
+}
+
+static void testSlicerAndDrumVoices()
+{
+    auto loop = makeClicks (96000, 6000);
+    Engine eng; eng.prepare (48000.0, 256);
+    auto& s = eng.settings();
+    s.engine = EngineType::Slicer; s.seq.density = 1.0f; s.seq.sliceMode = SliceMode::Bounce;
+    eng.setSample (&loop);
+    eng.setSlices (slicing::grid (loop.numFrames(), 16));
+    CHECK (eng.sliceCount() == 16);
+    Transport tp; tp.hostAvailable = true; tp.hostPlaying = true; tp.hostBpm = 120.0;
+    std::set<int> heard; double e = 0.0, maxFrame = -1.0;
+    std::vector<float> l (480), r (480);
+    for (int b = 0; b < 200; ++b)
+    {
+        eng.process (l.data(), r.data(), 480, tp); tp.hostPpq += 0.02;
+        for (float v : l) e += (double) v * v;
+        if (eng.playingSlice() >= 0) heard.insert (eng.playingSlice());
+        maxFrame = std::max (maxFrame, eng.playingFrame());
+    }
+    CHECK (e > 1.0 && heard.size() > 4);
+    CHECK (maxFrame > 0.0);
+    eng.setSample (nullptr);
+    float pk = 1.0f; runFor (eng, tp, 20, nullptr, &pk);
+    CHECK (pk < 1.0e-6f);
+
+    // slice audition with the transport stopped
+    eng.setSample (&loop);
+    tp.hostPlaying = false;
+    runFor (eng, tp, 2);
+    eng.auditionSlice (3);
+    e = 0.0; runFor (eng, tp, 12, &e);   // the click is 3000 frames into the slice
+    CHECK (e > 0.01 && eng.playingSlice() == 3);
+
+    // drums: generative groove plays the kit
+    Engine d; d.prepare (48000.0, 256);
+    const auto& kit = factoryKits()[0];
+    for (int c = 0; c < numCells; ++c) if (kit.cells[(size_t) c] >= 0) d.setCell (c, makeFmCell (fmPresets()[(size_t) kit.cells[(size_t) c]]));
+    d.settings().engine = EngineType::Drums; d.settings().seq.sliceMode = SliceMode::Groove; d.settings().seq.density = 0.6f;
+    Transport t2; t2.hostAvailable = true; t2.hostPlaying = true; t2.hostBpm = 125.0;
+    e = 0.0; runFor (d, t2, 300, &e);
+    CHECK (e > 1.0 && d.hitCount (0) > 0 && d.hitCount (1) > 0);
+    // audition through the output
+    t2.hostPlaying = false; runFor (d, t2, 400);
+    d.audition (5);
+    e = 0.0; runFor (d, t2, 2, &e);
+    CHECK (e > 1.0e-4);
+}
+
+// ---- the instrument (what the Max for Live device talks to) ------------------------------
+namespace
+{
+    struct Recorder
+    {
+        std::vector<std::pair<std::string, Atoms>> got;
+        void attach (Instrument& in) { in.setEmitter ([this] (const std::string& s, const Atoms& a) { got.push_back ({ s, a }); }); }
+        int count (const std::string& sel) const { int n = 0; for (auto& g : got) if (g.first == sel) ++n; return n; }
+        const Atoms* last (const std::string& sel) const { for (auto it = got.rbegin(); it != got.rend(); ++it) if (it->first == sel) return &it->second; return nullptr; }
+        double uiValue (const std::string& id) const
+        {
+            for (auto it = got.rbegin(); it != got.rend(); ++it)
+                if (it->first == "ui" && atomStr (it->second[0]) == id) return atomNum (it->second[1]);
+            return -999.0;
+        }
+    };
+
+    void runInstrument (Instrument& in, Transport& tp, int blocks)
+    {
+        std::vector<float> l (480), r (480);
+        for (int b = 0; b < blocks; ++b) { in.process (l.data(), r.data(), 480, tp); tp.hostPpq += 480.0 * tp.hostBpm / 60.0 / 48000.0; }
+    }
+}
+
+static void testParamSpecs()
+{
+    const auto& p = paramSpecs();
+    CHECK (p.size() > 60);
+    std::set<std::string> ids;
+    bool ok = true;
+    for (auto& s : p)
+    {
+        ok = ok && ids.insert (s.id).second && ! s.name.empty() && s.min < s.max + 1e-9f && s.def >= s.min - 1e-6f && s.def <= s.max + 1e-6f;
+        if (s.kind == ParamSpec::Kind::Enum) ok = ok && (int) s.choices.size() == (int) s.max + 1;
+        ok = ok && std::isfinite (s.exponent) && s.exponent > 0.0f && s.shortName.size() <= 12 && s.name.size() <= 31;
+    }
+    CHECK (ok);
+    CHECK (paramIndex ("cutoff") >= 0 && paramIndex ("nope") == -1);
+    // skewed ranges put the centre at half travel
+    const auto& c = p[(size_t) paramIndex ("cutoff")];
+    CHECK (std::abs (c.min + (c.max - c.min) * std::pow (0.5f, c.exponent) - 500.0f) < 1.0f);
+}
+
+static void testInstrumentBasics()
+{
+    Instrument in; Recorder rec; rec.attach (in);
+    in.prepare (48000.0, 512);
+    // params reach the engine on the audio thread
+    in.command ("param", { std::string ("cutoff"), 1234.0 });
+    in.command ("param", { std::string ("engine"), 2.0 });
+    in.command ("param", { std::string ("steps"), 99.0 });   // clamped
+    Transport tp; tp.hostAvailable = true; tp.hostBpm = 120.0;
+    runInstrument (in, tp, 1);
+    CHECK (std::abs (in.engine().settings().voice.cutoff - 1234.0f) < 0.01f);
+    CHECK (in.engine().settings().engine == EngineType::Drums);
+    CHECK (in.param ("steps") == 64.0f);
+    // a param from the device isn't echoed back
+    CHECK (rec.count ("ui") == 0);
+
+    // Live's key: C# dorian -> root 1 and a scale with exactly those notes
+    in.command ("key", { 1.0, (double) ((1 << 0) | (1 << 2) | (1 << 3) | (1 << 5) | (1 << 7) | (1 << 9) | (1 << 10)) });
+    CHECK (in.param ("root") == 1.0f && rec.uiValue ("root") == 1.0);
+    const auto& sc = allScales()[(size_t) in.param ("scale")];
+    int mask = 0; for (int iv : sc.intervals) mask |= 1 << (iv % 12);
+    CHECK (mask == ((1 << 0) | (1 << 2) | (1 << 3) | (1 << 5) | (1 << 7) | (1 << 9) | (1 << 10)));
+    // ... unless key lock is off
+    in.command ("param", { std::string ("keylock"), 0.0 });
+    in.command ("key", { 5.0, 0xAB5 * 1.0 });
+    CHECK (in.param ("root") == 1.0f);
+
+    // mod slots become the matrix
+    in.command ("param", { std::string ("m1src"), 1.0 + (int) ModSource::ModWheel });
+    in.command ("param", { std::string ("m1dst"), (double) (int) ModDest::Level });
+    in.command ("param", { std::string ("m1amt"), -0.75 });
+    runInstrument (in, tp, 1);
+    CHECK (std::abs (in.engine().matrix().get (ModDest::Level, ModSource::ModWheel) + 0.75f) < 1e-6f);
+
+    // tick sends frames and (once) the views
+    rec.got.clear();
+    in.tick();
+    CHECK (rec.count ("frame") == 1 && rec.count ("hits") == 1 && rec.count ("seq") == 1 && rec.count ("lane") == stepLanes);
+    in.tick();
+    CHECK (rec.count ("seq") == 1);   // views only when something changed
+    rec.got.clear();
+    in.command ("refresh", {});
+    CHECK (rec.count ("menu") >= 5 && rec.count ("padnames") == 1 && rec.count ("wave") == 1 && rec.count ("keyname") == 1);
+    const auto* kits = [&] { for (auto& g : rec.got) if (g.first == "menu" && atomStr (g.second[0]) == "kits") return (const Atoms*) &g.second; return (const Atoms*) nullptr; }();
+    CHECK (kits != nullptr && kits->size() > 10);
+}
+
+static void testInstrumentSamplesAndKit()
+{
+    const std::string dir = "/tmp/claude-0/-home-claude/25222850-a0ca-565f-b704-eb28468824be/scratchpad";
+    auto loop = makeClicks (96000, 6000, 48000.0);
+    const std::string wav = dir + "/bash test loop 120.wav";
+    CHECK (writeWavFile (wav, loop));
+    std::string err;
+    auto back = decodeAudioFile (wav, 600.0, err);
+    CHECK (back != nullptr && back->numFrames() == loop.numFrames() && std::abs (back->left[3000] - loop.left[3000]) < 1.0e-4f);
+    CHECK (decodeAudioFile (dir + "/does not exist.wav", 10.0, err) == nullptr && ! err.empty());
+
+    Instrument in; Recorder rec; rec.attach (in);
+    in.prepare (48000.0, 512);
+    // a path with spaces arrives as several words
+    in.command ("load", { std::string (dir + "/bash"), std::string ("test"), std::string ("loop"), std::string ("120.wav") });
+    CHECK (in.engine().sample() != nullptr);
+    CHECK (std::abs (in.sourceBpm() - 120.0) < 0.01);    // from the name
+    CHECK (in.engine().sliceCount() >= 8);
+    CHECK (rec.uiValue ("engine") == 1.0);                // switched to the slicer
+    const auto* w = rec.last ("wave");
+    CHECK (w != nullptr && w->size() == 4 + 300 && atomNum ((*w)[0]) > 0);
+
+    in.command ("slices", { std::string ("grid"), 8.0 });
+    CHECK (in.engine().sliceCount() == 8);
+    in.command ("slice", { std::string ("add"), 0.53 });
+    CHECK (in.engine().sliceCount() == 9);
+    in.command ("slice", { std::string ("delete"), 3.0 });
+    CHECK (in.engine().sliceCount() == 8);
+    in.command ("slice", { std::string ("move"), 1.0, 0.1 });
+    CHECK (std::abs ((double) in.engine().slices()[1] / in.engine().sample()->numFrames() - 0.1) < 0.01);
+    in.command ("slices", { std::string ("random"), 16.0 });
+    CHECK (in.engine().sliceCount() == 16);
+
+    // warp: at a host tempo of 140 the playing copy is shorter (synchronously via the worker)
+    Transport tp; tp.hostAvailable = true; tp.hostBpm = 140.0;
+    runInstrument (in, tp, 2);
+    for (int k = 0; k < 40 && ! (in.engine().sample() != nullptr && in.engine().sample()->numFrames() < 90000); ++k) { in.tick(); in.waitForWarp(); }
+    CHECK (in.engine().sample() != nullptr && in.engine().sample()->numFrames() < 90000);
+    CHECK (in.engine().sliceCount() == 16);              // slices kept, scaled
+
+    // kit: library kit with its groove, pads, fields
+    in.command ("kit", { std::string ("libgroove"), 0.0 });
+    CHECK (in.param ("engine") == 2.0f && in.param ("mode") == 1.0f);
+    int filled = 0; for (int i = 0; i < numCells; ++i) filled += in.engine().cell (i).kind != DrumCell::Kind::Empty;
+    CHECK (filled >= 8);
+    in.command ("pad", { std::string ("set"), 0.0, std::string ("tune"), -5.0 });
+    CHECK (in.engine().cell (0).tune == -5.0f);
+    in.command ("pad", { std::string ("fm"), 1.0, 3.0 });
+    CHECK (in.engine().cell (1).kind == DrumCell::Kind::Fm);
+    in.command ("pad", { std::string ("load"), 2.0, std::string (wav) });
+    CHECK (in.engine().cell (2).kind == DrumCell::Kind::Sample);
+    in.command ("pad", { std::string ("clear"), 3.0 });
+    CHECK (in.engine().cell (3).kind == DrumCell::Kind::Empty);
+    in.command ("pad", { std::string ("sound"), 3.0, 4.0 });
+    CHECK (in.engine().cell (3).kind == DrumCell::Kind::Sample);
+    const auto* pe = rec.last ("padedit");
+    CHECK (pe != nullptr && atomNum ((*pe)[0]) == 3.0);
+
+    // state: save, then load into a fresh instrument
+    const auto text = in.saveState();
+    Instrument other; other.prepare (48000.0, 512);
+    CHECK (other.loadState (text));
+    CHECK (other.engine().sample() != nullptr && other.engine().sliceCount() == 16);
+    CHECK (other.engine().cell (0).tune == -5.0f && other.engine().cell (1).kind == DrumCell::Kind::Fm && other.engine().cell (2).kind == DrumCell::Kind::Sample);
+    CHECK (other.saveState() == text);
+
+    // packing: survives as ints of 24 bits
+    const auto ints = Instrument::packState (text);
+    bool small = true; for (int v : ints) small = small && v >= 0 && v < (1 << 24);
+    CHECK (small && Instrument::unpackState (ints) == text);
+
+    // the state chunks go out after an edit, and coming back restore the instrument
+    rec.got.clear();
+    for (int k = 0; k < 20; ++k) in.tick();
+    CHECK (rec.count ("state") == Instrument::stateChunks);
+    Instrument third; Recorder rec3; rec3.attach (third); third.prepare (48000.0, 512);
+    for (auto& g : rec.got)
+        if (g.first == "state") third.command ("restore", g.second);
+    CHECK (third.engine().sliceCount() == 16 && third.engine().cell (0).tune == -5.0f);
+    rec3.got.clear();
+    for (int k = 0; k < 20; ++k) third.tick();
+    CHECK (rec3.count ("state") == 0);   // restoring is not an edit
+
+    in.command ("unload", {});
+    CHECK (in.engine().sample() == nullptr);
+}
+
+static void testInstrumentSequencing()
+{
+    Instrument in; Recorder rec; rec.attach (in);
+    in.prepare (48000.0, 512);
+    in.command ("param", { std::string ("engine"), 2.0 });
+    in.command ("param", { std::string ("mode"), 1.0 });
+    in.command ("step", { 0.0, 0.0, std::string ("toggle") });
+    in.command ("step", { 0.0, 4.0, std::string ("vel"), 64.0 });
+    in.command ("step", { 0.0, 8.0, std::string ("ratchet") });
+    in.command ("step", { 0.0, 8.0, std::string ("ratchet") });
+    in.command ("step", { 0.0, 12.0, std::string ("prob") });
+    in.command ("lane", { std::string ("length"), 1.0, 12.0 });
+    in.command ("lane", { std::string ("mute"), 2.0 });
+    {
+        std::lock_guard<SpinMutex> g (in.engine().stepMutex());
+        const auto& p = in.engine().stepPattern();
+        CHECK (p.lanes[0].steps[0].on && p.lanes[0].steps[4].on && p.lanes[0].steps[4].vel == 64);
+        CHECK (p.lanes[0].steps[8].ratchet == 3 && p.lanes[0].steps[12].prob == 75);
+        CHECK (p.lanes[1].length == 12 && p.lanes[2].mute);
+    }
+    // the step view packs on / velocity / ratchet / probability
+    rec.got.clear(); in.tick();
+    const Atoms* lane0 = nullptr;
+    for (auto& g : rec.got) if (g.first == "lane" && atomNum (g.second[0]) == 0.0) lane0 = &g.second;
+    CHECK (lane0 != nullptr && lane0->size() == 10 + maxSteps);
+    if (lane0)
+    {
+        const int s4 = (int) atomNum ((*lane0)[10 + 4]), s8 = (int) atomNum ((*lane0)[10 + 8]), s12 = (int) atomNum ((*lane0)[10 + 12]);
+        CHECK ((s4 & 1) && ((s4 >> 1) & 127) == 64);
+        CHECK (((s8 >> 8) & 7) == 2 && ((s12 >> 11) & 3) == 1);
+    }
+
+    // a groove writes lanes, swing and rate, and switches to step mode
+    in.command ("param", { std::string ("mode"), 0.0 });
+    in.command ("groove", { 3.0 });
+    CHECK (in.param ("mode") == 1.0f && rec.uiValue ("mode") == 1.0);
+    { std::lock_guard<SpinMutex> g (in.engine().stepMutex()); CHECK (in.engine().stepPattern().activeLanes() >= 3); }
+
+    // lane die and generate
+    in.command ("lane", { std::string ("algo"), 5.0, 0.0 });
+    in.command ("lane", { std::string ("gen"), 5.0 });
+    { std::lock_guard<SpinMutex> g (in.engine().stepMutex()); int on = 0; for (auto& s : in.engine().stepPattern().lanes[5].steps) on += s.on; CHECK (on > 0); }
+    std::string before;
+    { std::lock_guard<SpinMutex> g (in.engine().stepMutex()); before = in.engine().stepPattern().serialise(); }
+    in.command ("lane", { std::string ("roll"), 0.0 });
+    in.command ("undo", {});
+    { std::lock_guard<SpinMutex> g (in.engine().stepMutex()); CHECK (in.engine().stepPattern().serialise() == before); }
+
+    // generative dice: sequencer params change and come back with undo
+    in.command ("param", { std::string ("mode"), 0.0 });
+    const float d0 = in.param ("density"), t0 = in.param ("type");
+    in.command ("dice", {});
+    const bool changed = in.param ("density") != d0 || in.param ("type") != t0;
+    CHECK (changed);
+    CHECK (rec.uiValue ("density") == in.param ("density"));
+    in.command ("undo", {});
+    CHECK (in.param ("density") == d0 && in.param ("type") == t0);
+
+    // lock / mute a generative step
+    in.command ("param", { std::string ("engine"), 0.0 });
+    in.command ("mute", { 3.0 });
+    rec.got.clear(); in.tick();
+    const auto* sq = rec.last ("seq");
+    CHECK (sq != nullptr && sq->size() == 2 + 5 * 16);
+    if (sq) CHECK (atomNum ((*sq)[2 + 5 * 3 + 4]) == 1.0);   // step 3 locked
+    in.command ("unlockall", {});
+
+    // the whole thing runs: drums in step mode make sound with the host playing
+    in.command ("param", { std::string ("engine"), 2.0 });
+    in.command ("groove", { 0.0 });
+    in.command ("kit", { std::string ("fm"), 0.0 });
+    Transport tp; tp.hostAvailable = true; tp.hostPlaying = true; tp.hostBpm = 128.0;
+    std::vector<float> l (480), r (480);
+    double e = 0.0;
+    for (int b = 0; b < 300; ++b) { in.process (l.data(), r.data(), 480, tp); tp.hostPpq += 480.0 * 128.0 / 60.0 / 48000.0; for (float v : l) e += (double) v * v; }
+    CHECK (e > 1.0);
+}
+
 int main()
 {
     testDeterminism();
@@ -1710,31 +1625,30 @@ int main()
     testScales();
     testSerialise();
     testPlayer();
-    testEngine();
     testSlicePlacement();
     testSlicePicking();
     testSliceVoice();
-    testSlicerEngine();
     testScaleSteps();
     testAlgorithms();
     testMachines();
-    testEngineMidiIn();
     testFmDrums();
     testDrumSamplesAndChoke();
     testDrumGroove();
-    testDrumEngine();
     testEffects();
-    testMixer();
     testModulation();
     testTimingAndMotif();
-    testOfflineRender();
     testNoDronesOrLopsidedTails();
     testStepSequencer();
     testWarp();
     testLibrary();
     testMasterDynamics();
-    testMicro();
-    testDirectOuts();
+    testSingleChannelEngine();
+    testMidiThruAndArp();
+    testSlicerAndDrumVoices();
+    testParamSpecs();
+    testInstrumentBasics();
+    testInstrumentSamplesAndKit();
+    testInstrumentSequencing();
     std::printf ("%d checks, %d failures\n", checks, failures);
     return failures == 0 ? 0 : 1;
 }

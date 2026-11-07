@@ -42,10 +42,6 @@ namespace bash
             case ModDest::WindowStart: return "Window";
             case ModDest::Level:       return "Level";
             case ModDest::Pan:         return "Pan";
-            case ModDest::SendA:       return "Send A";
-            case ModDest::SendB:       return "Send B";
-            case ModDest::Fx1Gnarl:    return "FX1 Gnarl";
-            case ModDest::Fx2Gnarl:    return "FX2 Gnarl";
             default:                   return "?";
         }
     }

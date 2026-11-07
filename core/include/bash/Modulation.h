@@ -1,6 +1,6 @@
 #pragma once
-// BASH! core — modulation: two global LFOs, a per-track "Life" drift generator,
-// MIDI expression sources, and a per-track matrix of destinations x sources.
+// BASH! core — modulation: two LFOs, a "Life" drift generator, MIDI expression
+// sources, and a matrix of destinations x sources.
 
 #include <array>
 #include <atomic>
@@ -17,7 +17,7 @@ namespace bash
     {
         Type = 0, Density, Steps, Offset, Accent, Gate,
         Cutoff, Resonance, Character, Timbre, EnvMod, Decay, Drive, Tune,
-        WindowStart, Level, Pan, SendA, SendB, Fx1Gnarl, Fx2Gnarl,
+        WindowStart, Level, Pan,
         count
     };
     constexpr int numModDests = (int) ModDest::count;

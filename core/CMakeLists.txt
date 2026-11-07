@@ -4,8 +4,9 @@ add_library(bash_core STATIC
     src/MachineSynth.cpp
     src/Modulation.cpp
     src/Engine.cpp
+    src/AudioFile.cpp
+    src/Instrument.cpp
     src/Fx.cpp
-    src/Micro.cpp
     src/Scale.cpp
     src/Sequencer.cpp
     src/Slices.cpp
