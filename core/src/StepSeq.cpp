@@ -538,7 +538,7 @@ namespace bash
         forEachHit (p, c, 0.0, (double) numSteps, [&] (double t, int lane, const Step& s, int r, double length)
         {
             const double len = c.oneShot ? std::min (0.25, length) : length;
-            notes.push_back ({ t, std::min ((double) numSteps, t + len), c.laneNote[(size_t) lane], ratchetVel (s, r), 0 });
+            notes.push_back ({ t, std::min ((double) numSteps, t + len), c.laneNote[(size_t) lane], ratchetVel (s, r), 0, c.laneSlice[(size_t) lane] });
         });
         std::sort (notes.begin(), notes.end(), [] (const ExportNote& a, const ExportNote& b) { return a.start < b.start; });
         return notes;

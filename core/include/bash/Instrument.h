@@ -77,6 +77,11 @@ namespace bash
         bool  isMapped (int k);
         /** The BASH! Sequencer device: notes made since the last call (velocity 0 = off). */
         int   takeMidi (Engine::MidiNote* dest, int maxCount) { return eng.takeMidi (dest, maxCount); }
+        /** The loop as a file (bars long, at the current tempo) in the export folder; "" on failure.
+            Also emits "clip <beats> <pitch start dur vel>..." (MIDI) / "exported wav <path>" for the device. */
+        std::string exportMidi (int bars);
+        std::string exportWav (int bars);
+        void setExportFolder (const std::string& f) { exportDir = f; }
         bool warpBusy() const                  { return warpThreadBusy.load(); }
         void waitForWarp();
         double sourceBpm() const               { return srcBpm; }
@@ -86,6 +91,10 @@ namespace bash
 
         void setParamValue (int index, float v, bool fromUi);
         void pull();                             // audio thread: params -> engine settings
+        void pullInto (Settings&, ModMatrix&);
+        std::string exportFolder();
+        std::string exportName (const char* ext, int bars);
+        std::string exportDir;
         void emit (const std::string& s, const Atoms& a) { if (emitFn) emitFn (s, a); }
         void emitParam (const std::string& id, float v);
         void msg (const std::string& text)     { emit ("msg", { text }); }

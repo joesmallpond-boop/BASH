@@ -177,11 +177,11 @@ namespace bash
                 auditionPlayer.stopVoicesUsing (old);
             }
 
-        // Sync: always the host's tempo. While the host plays, follow its position; while it
-        // is stopped, the device's own Play still runs (at the host's tempo).
+        // Sync: the host's tempo, position and play / stop. Sync off: the device's own tempo and Play.
         const bool hostTempo = set.hostSync && tp.hostAvailable;
         const bool useHost   = hostTempo && tp.hostPlaying && tp.hostPpqValid;
-        const bool run       = useHost || set.playing;
+        // synced to Live: Live's play / stop starts and stops the sequencer (Play is for when Sync is off)
+        const bool run       = hostTempo ? tp.hostPlaying : set.playing;
         const double bpm     = std::max (1.0, hostTempo ? tp.hostBpm : set.tempo);
         double ppq           = useHost ? tp.hostPpq : internalPpq;
 
@@ -404,7 +404,17 @@ namespace bash
 
         const bool isSlicer = ts.engine == EngineType::Slicer;
 
-        // engine switched: silence the one no longer used
+        // engine switched: cut the one no longer used dead, so nothing rings over the new one
+        if ((int) ts.engine != lastEngine)
+        {
+            if (lastEngine >= 0)
+            {
+                if (ts.engine != EngineType::Synth) synth.reset();
+                if (! isSlicer) { slicer.reset(); sliceAuditioner.reset(); slicerNote = -1; }
+                if (ts.engine != EngineType::Drums) { drums.stopAll(); auditionPlayer.stopAll(); }
+            }
+            lastEngine = (int) ts.engine;
+        }
         if (ts.engine != EngineType::Synth && ! synth.isSilent()) synth.allNotesOff();
         if (! isSlicer && ! slicer.isSilent()) slicer.release();
 

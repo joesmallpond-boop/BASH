@@ -40,6 +40,14 @@ namespace
         double ppq;
         bool   wasPlaying;
         std::atomic<bool>* alive;
+        // Live's transport from the Live API (live.observer on live_set): tempo, is_playing,
+        // current_song_time. Used whenever it has arrived; Max's ITM is the fallback.
+        struct Api
+        {
+            std::atomic<double>  tempo { 0.0 }, beats { 0.0 };
+            std::atomic<int>     playing { -1 };
+            std::atomic<int64_t> beatsAt { 0 }, samples { 0 };
+        }* api;
     };
 
     // ---- messages out -------------------------------------------------------------------
@@ -109,6 +117,16 @@ namespace
         }
         std::string sel = s->s_name;
 
+        // Live's transport (from live.observer in the device)
+        if (sel == "hosttempo" && ac > 0)   { x->api->tempo.store (atom_getfloat (av)); return; }
+        if (sel == "hostplaying" && ac > 0) { x->api->playing.store (atom_getlong (av) != 0 ? 1 : 0); return; }
+        if (sel == "hostbeats" && ac > 0)
+        {
+            x->api->beats.store (atom_getfloat (av));
+            x->api->beatsAt.store (x->api->samples.load());
+            return;
+        }
+
         // file paths from live.drop / opendialog arrive in Max's style: make them native
         auto joinFrom = [&] (size_t from)
         {
@@ -136,28 +154,58 @@ namespace
         if (numouts < 4) return;
         if ((long) x->bufL->size() < n) { for (int o = 0; o < 4; ++o) for (long i = 0; i < n; ++i) outs[o][i] = 0.0; return; }
 
-        // Live's transport (Max's global ITM follows Live inside Max for Live)
+        // Live's transport: the Live API's tempo / play state / song position when the device has
+        // sent them, with Max's ITM (sample-accurate when it follows Live) for the position
         bash::Transport tp;
+        bool   itmOk = false, itmPlaying = false;
+        double itmTempo = 0.0, itmPpq = 0.0;
         if (void* itmPtr = itm_getglobal())
         {
             auto* itm = (t_itm*) itmPtr;
-            const double tempo = itm_gettempo (itm);
-            const bool playing = itm_getstate (itm) != 0;
-            const double hostPpq = itm_getticks (itm) / 480.0;
-            if (tempo > 0.0)
+            itmTempo = itm_gettempo (itm);
+            itmPlaying = itm_getstate (itm) != 0;
+            itmPpq = itm_getticks (itm) / 480.0;
+            itmOk = itmTempo > 0.0;
+        }
+        const int apiPlaying = x->api->playing.load();
+        const double apiTempo = x->api->tempo.load();
+        double tempo = 0.0, target = 0.0, slack = 0.1;
+        bool playing = false, have = false;
+        if (apiPlaying >= 0 && apiTempo > 0.0)
+        {
+            have = true;
+            tempo = apiTempo;
+            playing = apiPlaying == 1;
+            if (itmOk && itmPlaying == playing && std::abs (itmTempo - tempo) < 0.5)
+                target = itmPpq;
+            else
             {
-                tp.hostAvailable = true;
-                tp.hostBpm = tempo;
-                tp.hostPlaying = playing;
-                // ticks move in scheduler steps, not per sample: keep a smooth position and only
-                // jump when the transport really moved (start, loop, locate)
-                if (! playing) x->ppq = hostPpq;
-                else if (! x->wasPlaying || std::abs (hostPpq - x->ppq) > 0.1) x->ppq = hostPpq;
-                tp.hostPpq = x->ppq;
-                if (playing) x->ppq += (double) n * tempo / 60.0 / x->sr;
-                x->wasPlaying = playing;
+                // the song position as last reported, moved on by the time since
+                const double since = (double) (x->api->samples.load() - x->api->beatsAt.load()) / x->sr;
+                target = x->api->beats.load() + (playing ? since * tempo / 60.0 : 0.0);
+                slack = 0.25;   // reports arrive on the main thread: allow some jitter
             }
         }
+        else if (itmOk)
+        {
+            have = true;
+            tempo = itmTempo;
+            playing = itmPlaying;
+            target = itmPpq;
+        }
+        if (have)
+        {
+            tp.hostAvailable = true;
+            tp.hostBpm = tempo;
+            tp.hostPlaying = playing;
+            // keep a smooth position; only jump when the transport really moved (start, loop, locate)
+            if (! playing) x->ppq = target;
+            else if (! x->wasPlaying || std::abs (target - x->ppq) > slack) x->ppq = target;
+            tp.hostPpq = x->ppq;
+            if (playing) x->ppq += (double) n * tempo / 60.0 / x->sr;
+            x->wasPlaying = playing;
+        }
+        x->api->samples.fetch_add (n);
 
         float* l = x->bufL->data();
         float* r = x->bufR->data();
@@ -203,6 +251,7 @@ namespace
         x->ppq = 0.0;
         x->wasPlaying = false;
         x->alive = new std::atomic<bool> (true);
+        x->api = new Bash::Api();
         x->inst->setEmitter ([x] (const std::string& sel, const bash::Atoms& args) { emitTo (x, sel, args); });
         x->qelem = qelem_new (x, (method) tickMain);
         x->clock = clock_new (x, (method) clockFired);
@@ -225,6 +274,7 @@ namespace
         delete x->bufL;
         delete x->bufR;
         delete x->alive;
+        delete x->api;
     }
 }
 

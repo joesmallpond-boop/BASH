@@ -7,6 +7,10 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
+#include <ctime>
+#include <filesystem>
+#include <fstream>
 #include <sstream>
 
 // ---------------------------------------------------------------------------------------
@@ -28,6 +32,7 @@
 //   groove <index>   steps clear
 //   regen   lock <i>   mute <i>   unlockall
 //   dice    undo
+//   export midi <bars> | wav <bars>   the loop as a file (+ a clip, made by the device)   exportdir <path>
 //   restore <chunk> <ints...>        saved state coming back from the Live set
 //   refresh                          resend everything (the device just opened)
 // Messages it sends back (emit):
@@ -256,10 +261,11 @@ namespace bash
     }
 
     // ---- audio thread -----------------------------------------------------------------------
-    void Instrument::pull()
+    void Instrument::pull() { pullInto (eng.settings(), eng.matrix()); }
+
+    void Instrument::pullInto (Settings& s, ModMatrix& mx)
     {
         auto v = [this] (const char* id) { return values[(size_t) paramIndex (id)].load (std::memory_order_relaxed); };
-        auto& s = eng.settings();
         s.sequencerOn = v ("seqon") > 0.5f;
         s.stepMode    = v ("mode") > 0.5f;
         auto& q = s.seq;
@@ -339,7 +345,7 @@ namespace bash
         }
         for (int d = 0; d < numModDests; ++d)
             for (int sIdx = 0; sIdx < numModSources; ++sIdx)
-                eng.matrix().set ((ModDest) d, (ModSource) sIdx, std::clamp (m[d][sIdx], -1.0f, 1.0f));
+                mx.set ((ModDest) d, (ModSource) sIdx, std::clamp (m[d][sIdx], -1.0f, 1.0f));
     }
 
     void Instrument::process (float* left, float* right, int n, const Transport& tp)
@@ -1119,6 +1125,15 @@ namespace bash
         if (sel.rfind ("map", 0) == 0) { mapCommand (sel, a); return; }
         if (sel == "scalemode") { liveScaleOn.store (num (0, 1.0) > 0.5); viewDirty = true; emitKey(); return; }   // Live's Scale switch
         if (sel == "midiout") { eng.setMidiOut (num (0) > 0.5); return; }   // BASH! Sequencer: notes out as MIDI
+        if (sel == "export")
+        {
+            const int bars = std::clamp ((int) num (1, 4.0), 1, 64);
+            if (str (0) == "midi") exportMidi (bars);
+            else if (str (0) == "wav") exportWav (bars);
+            return;
+        }
+        if (sel == "say") { msg (restOfLine (0)); return; }   // a note from the device's scripts
+        if (sel == "exportdir") { setExportFolder (restOfLine (0)); return; }
         if (sel == "dice")      { rollDice(); return; }
         if (sel == "undo")      { undoDice(); return; }
 
@@ -1589,4 +1604,186 @@ namespace bash
             emitStateChunks();
         }
     }
+
+    // ---- the loop out: MIDI and WAV files (and a clip in Live, made by the device) -------------
+    std::string Instrument::exportFolder()
+    {
+        namespace fs = std::filesystem;
+        std::error_code ec;
+        std::vector<fs::path> tries;
+        if (! exportDir.empty()) tries.push_back (exportDir);
+        if (const char* home = std::getenv ("HOME"))
+            tries.push_back (fs::path (home) / "Music" / "Ableton" / "User Library" / "Kalabash" / "Captures");
+        tries.push_back (fs::temp_directory_path (ec) / "Kalabash Captures");
+        for (auto& t : tries)
+        {
+            fs::create_directories (t, ec);
+            if (fs::is_directory (t, ec)) return t.string();
+        }
+        return ".";
+    }
+
+    std::string Instrument::exportName (const char* ext, int bars)
+    {
+        static const char* engines[] = { "synth", "slicer", "drums" };
+        std::time_t now = std::time (nullptr);
+        char stamp[32] = "0";
+        if (std::tm* t = std::localtime (&now)) std::strftime (stamp, sizeof (stamp), "%H%M%S", t);
+        char name[160];
+        std::snprintf (name, sizeof (name), "BASH! %s %d bpm %d bar%s %s%s", engines[(int) engineType()],
+                       (int) std::lround (std::max (1.0, eng.currentBpm())), bars, bars == 1 ? "" : "s", stamp, ext);
+        return (std::filesystem::path (exportFolder()) / name).string();
+    }
+
+    namespace
+    {
+        void putVlq (std::vector<uint8_t>& o, uint32_t v)
+        {
+            uint8_t buf[5]; int n = 0;
+            buf[n++] = (uint8_t) (v & 0x7f);
+            while ((v >>= 7) != 0) buf[n++] = (uint8_t) (0x80 | (v & 0x7f));
+            while (n > 0) o.push_back (buf[--n]);
+        }
+
+        bool writeMidiFile (const std::string& path, const std::vector<ExportNote>& notes, double spq, double bpm, int64_t steps)
+        {
+            constexpr int tpq = 960;
+            struct Ev { uint32_t tick; int on; int note, vel; };
+            std::vector<Ev> ev;
+            auto tick = [&] (double st) { return (uint32_t) std::llround (st / spq * tpq); };
+            for (const auto& n : notes)
+            {
+                const int note = std::clamp (n.note, 0, 127);
+                const uint32_t a = tick (n.start), b = std::max (a + 1, tick (n.end));
+                ev.push_back ({ a, 1, note, std::clamp (n.velocity, 1, 127) });
+                ev.push_back ({ b, 0, note, 0 });
+            }
+            std::stable_sort (ev.begin(), ev.end(), [] (const Ev& x, const Ev& y) { return x.tick != y.tick ? x.tick < y.tick : x.on < y.on; });
+            std::vector<uint8_t> t;
+            const uint32_t us = (uint32_t) std::lround (60000000.0 / std::max (1.0, bpm));
+            t.insert (t.end(), { 0x00, 0xFF, 0x51, 0x03, (uint8_t) (us >> 16), (uint8_t) (us >> 8), (uint8_t) us });
+            t.insert (t.end(), { 0x00, 0xFF, 0x58, 0x04, 0x04, 0x02, 0x18, 0x08 });
+            uint32_t last = 0;
+            for (const auto& e : ev)
+            {
+                putVlq (t, e.tick - last);
+                last = e.tick;
+                t.push_back ((uint8_t) (e.on ? 0x90 : 0x80));
+                t.push_back ((uint8_t) e.note);
+                t.push_back ((uint8_t) (e.on ? e.vel : 64));
+            }
+            const uint32_t end = std::max (last, tick ((double) steps));
+            putVlq (t, end - last);
+            t.insert (t.end(), { 0xFF, 0x2F, 0x00 });
+
+            std::ofstream f (path, std::ios::binary);
+            if (! f) return false;
+            const uint8_t head[] = { 'M', 'T', 'h', 'd', 0, 0, 0, 6, 0, 0, 0, 1, (uint8_t) (tpq >> 8), (uint8_t) (tpq & 0xff),
+                                     'M', 'T', 'r', 'k', (uint8_t) (t.size() >> 24), (uint8_t) (t.size() >> 16), (uint8_t) (t.size() >> 8), (uint8_t) t.size() };
+            f.write ((const char*) head, sizeof (head));
+            f.write ((const char*) t.data(), (std::streamsize) t.size());
+            return (bool) f;
+        }
+    }
+
+    std::string Instrument::exportMidi (int bars)
+    {
+        std::lock_guard<std::recursive_mutex> g (lock);
+        const auto& rates = allRates();
+        const double spq = rates[(size_t) std::clamp ((int) param ("rate"), 0, (int) rates.size() - 1)].stepsPerQuarter;
+        const int64_t steps = (int64_t) std::llround (spq * 4.0 * bars);
+        const auto e = engineType();
+        std::vector<ExportNote> notes;
+        if (param ("mode") > 0.5f)
+        {
+            static constexpr int fillBars[] = { 0, 2, 4, 8, 16 };
+            auto ctx = stepContextFor (e, uiSeqParams(), scaleNow(), spq, param ("fill") > 0.5f,
+                                       fillBars[std::clamp ((int) param ("autofill"), 0, 4)]);
+            std::lock_guard<SpinMutex> g2 (eng.stepMutex());
+            notes = renderStepNotes (eng.stepPattern(), ctx, steps);
+        }
+        else
+        {
+            const auto q = uiSeqParams();
+            const auto sc = scaleNow();
+            std::lock_guard<SpinMutex> g2 (eng.pattern().mutex());
+            notes = renderNotes (eng.pattern(), q, sc, steps);
+        }
+        // slices as C1 + slice (like BASH! Sequencer's MIDI out and a Drum Rack / Simpler slicing)
+        if (e == EngineType::Slicer)
+            for (auto& n : notes) n.note = std::clamp (drumBaseNote + n.slice, 0, 127);
+
+        const double bpm = std::max (1.0, eng.currentBpm());
+        const std::string path = exportName (".mid", bars);
+        if (! writeMidiFile (path, notes, spq, bpm, steps)) { msg ("Couldn't write the MIDI file"); return {}; }
+
+        Atoms clip { (double) bars * 4.0 };
+        for (const auto& n : notes)
+        {
+            clip.push_back ((double) std::clamp (n.note, 0, 127));
+            clip.push_back (std::round (n.start / spq * 10000.0) / 10000.0);
+            clip.push_back (std::round (std::max (0.01, (n.end - n.start) / spq) * 10000.0) / 10000.0);
+            clip.push_back ((double) std::clamp (n.velocity, 1, 127));
+        }
+        emit ("clip", clip);
+        emit ("exported", { std::string ("midi"), path });
+        msg ("MIDI loop: " + std::filesystem::path (path).filename().string());
+        return path;
+    }
+
+    std::string Instrument::exportWav (int bars)
+    {
+        std::lock_guard<std::recursive_mutex> g (lock);
+        const double bpm = std::max (1.0, eng.currentBpm());
+        const double rate = sr > 0.0 ? sr : 44100.0;
+        constexpr int block = 512;
+
+        // a second engine with the same sound, pattern, samples and kit, rendered offline
+        auto off = std::make_unique<Engine>();
+        off->prepare (rate, block);
+        pullInto (off->settings(), off->matrix());
+        auto& s = off->settings();
+        s.hostSync = true;
+        s.playing = false;
+        {
+            std::lock_guard<SpinMutex> g2 (eng.pattern().mutex());
+            off->pattern().deserialise (eng.pattern().serialise());
+            off->pattern().setMotif (eng.pattern().getMotif());
+        }
+        {
+            std::lock_guard<SpinMutex> g2 (eng.stepMutex());
+            off->stepPattern() = eng.stepPattern();
+        }
+        for (int i = 0; i < numCells; ++i) off->setCell (i, eng.cell (i));
+        off->setSample (eng.sample());       // kept alive: we hold the lock, so nothing is swapped meanwhile
+        off->setSlices (eng.slices());
+
+        const int64_t len = (int64_t) std::llround (bars * 4.0 * 60.0 / bpm * rate);
+        SampleData out;
+        out.sampleRate = rate;
+        out.left.assign ((size_t) len, 0.0f);
+        out.right.assign ((size_t) len, 0.0f);
+        std::vector<float> l (block), r (block);
+        Transport tp;
+        tp.hostAvailable = true;
+        tp.hostPlaying = true;
+        tp.hostBpm = bpm;
+        // twice round: the second pass carries the first one's tails, so the loop joins up
+        for (int pass = 0; pass < 2; ++pass)
+            for (int64_t pos = 0; pos < len; pos += block)
+            {
+                const int n = (int) std::min<int64_t> (block, len - pos);
+                tp.hostPpq = (double) pos * bpm / 60.0 / rate;
+                off->process (l.data(), r.data(), n, tp);
+                if (pass == 1)
+                    for (int i = 0; i < n; ++i) { out.left[(size_t) (pos + i)] = l[(size_t) i]; out.right[(size_t) (pos + i)] = r[(size_t) i]; }
+            }
+
+        const std::string path = exportName (".wav", bars);
+        if (! writeWavFile (path, out)) { msg ("Couldn't write the WAV file"); return {}; }
+        emit ("exported", { std::string ("wav"), path });
+        msg ("WAV loop: " + std::filesystem::path (path).filename().string());
+        return path;
+    }
 }
+

@@ -24,7 +24,7 @@ NAMES = {"full": "BASH!", "voice": "BASH! Voice", "seq": "BASH! Sequencer"}
 CUR = ["core"]      # which part of the layout boxes belong to (the variants drop parts)
 P = {p["id"]: p for p in PARAMS}
 
-W, H = 1114, 169
+W, H = 1198, 169
 AMBER = [1.0, 0.722, 0.0, 1.0]
 AMBER_DIM = [0.541, 0.396, 0.031, 1.0]
 ACTIVE = [0.29, 0.224, 0.063, 1.0]
@@ -36,7 +36,7 @@ QUIET = [0.545, 0.541, 0.525, 1.0]
 
 boxes, lines = [], []
 _n = [0]
-groups = {"gen": [], "step": [], "synth": [], "slice": [], "drum": [], "mod": []}
+groups = {"gen": [], "step": [], "synth": [], "slice": [], "drum": [], "mod": [], "free": [], "synced": []}
 param_objects = []        # (box id, param id) for every live.* parameter
 
 def new_id():
@@ -183,9 +183,9 @@ wire(bash, 1, plugout, 1)
 
 # sections, like Live's own devices: a faint shade over Live's device colour (works in any theme)
 SECTION = [0.0, 0.0, 0.0, 0.07]
-FRAMES = {"full": [[1, 1, 110, 167], [115, 1, 472, 167], [590, 1, 472, 167], [1065, 1, 48, 167]],
-          "voice": [[1, 1, 110, 167], [115, 1, 472, 167], [590, 1, 48, 167]],
-          "seq": [[1, 1, 110, 167], [115, 1, 472, 167], [590, 1, 472, 167]]}
+FRAMES = {"full": [[1, 1, 110, 167], [115, 1, 472, 167], [590, 1, 512, 167], [1105, 1, 92, 167]],
+          "voice": [[1, 1, 110, 167], [115, 1, 512, 167], [630, 1, 92, 167]],
+          "seq": [[1, 1, 110, 167], [115, 1, 472, 167], [590, 1, 512, 167]]}
 for rect in FRAMES[VARIANT]:
     panel(rect, SECTION, rounded=4)
 
@@ -195,10 +195,11 @@ def button(label, rect, message, group=None):
          "parameter_enable": 0, "mode": 0, "text": label, "texton": label, "varname": "btn_%s_%d" % (label.lower().replace(" ", "_"), _n[0] + 1)}
     pres(b, rect)
     oid = add(b, group)
-    sel = obj("sel 1", 2, 2, ["bang", ""])
+    sel = obj("route bang 1", 1, 3)
     m = msg(message)
     wire(oid, 0, sel, 0)
     wire(sel, 0, m, 0)
+    wire(sel, 1, m, 0)
     return oid, m
 
 jsuis = []   # every display gets everything bash~ sends
@@ -213,7 +214,14 @@ live_param("live.menu", "scale", [42, 110, 66, 16])
 CUR[0] = "clock"
 toggle("sync", "Sync", [58, 70, 50, 16])
 toggle("play", "Play", [4, 90, 50, 16])
-live_param("live.numbox", "tempo", [58, 90, 50, 16])
+live_param("live.numbox", "tempo", [58, 90, 50, 16], "free")
+live_tempo = {"id": new_id(), "maxclass": "live.numbox", "numinlets": 1, "numoutlets": 2, "outlettype": ["", "float"],
+              "parameter_enable": 0, "varname": "livetempo", "ignoreclick": 1,
+              "saved_attribute_attributes": {"valueof": {"parameter_longname": "Live tempo", "parameter_shortname": "Live tempo",
+                                                         "parameter_type": 0, "parameter_mmin": 20.0, "parameter_mmax": 999.0,
+                                                         "parameter_initial": [120.0], "parameter_unitstyle": 1}}}
+pres(live_tempo, [58, 90, 50, 16])
+live_tempo_id = add(live_tempo, "synced")
 dice = jsui("bash_btns.js", [4, 130, 104, 18], args=["DICE|dice", "UNDO|undo"])
 jsuis.append(dice)
 toggle("thru", "Thru", [4, 151, 50, 15])
@@ -264,33 +272,33 @@ CUR[0] = "voice"
 
 # synth
 live_param("live.menu", "machine", [838, 4, 110, 16], "synth")
-live_param("live.menu", "ftype", [952, 4, 108, 16], "synth")
+live_param("live.menu", "ftype", [992, 4, 108, 16], "synth")
 for i, pid in enumerate(["wave", "timbre", "cutoff", "reso", "envmod", "decay", "drive", "glide"]):
     live_param("live.dial", pid, [592 + i * 46, 26, 44, 50], "synth")
 for i, pid in enumerate(["aatk", "adec", "asus", "arel"]):
     live_param("live.dial", pid, [592 + i * 46, 86, 44, 50], "synth")
-jsuis.append(jsui("bash_keys.js", [778, 82, 282, 84], "synth"))
+jsuis.append(jsui("bash_keys.js", [778, 82, 322, 84], "synth"))
 comment("AMP", [592, 140, 60, 14], group="synth")
 
 # slicer
-loop_menu = umenu([838, 4, 222, 16], "slice")
-wave = jsui("bash_wave.js", [592, 24, 300, 90], "slice")
+loop_menu = umenu([838, 4, 262, 16], "slice")
+wave = jsui("bash_wave.js", [592, 24, 340, 90], "slice")
 jsuis.append(wave)
-jsuis.append(jsui("bash_tempo.js", [896, 24, 82, 44], "slice"))
-slice_drop = drop([982, 24, 78, 44], "DROP SAMPLE", "slice")
-toggle("warp", "WARP", [896, 72, 52, 16], "slice")
-toggle("reverse", "REVERSE", [952, 72, 52, 16], "slice")
-toggle("pitchfollow", "PITCH", [1008, 72, 52, 16], "slice")
-live_param("live.menu", "slicemode", [896, 96, 100, 16], "slice")
+jsuis.append(jsui("bash_tempo.js", [936, 24, 82, 44], "slice"))
+slice_drop = drop([1022, 24, 78, 44], "DROP SAMPLE", "slice")
+toggle("warp", "WARP", [936, 72, 52, 16], "slice")
+toggle("reverse", "REVERSE", [992, 72, 52, 16], "slice")
+toggle("pitchfollow", "PITCH", [1048, 72, 52, 16], "slice")
+live_param("live.menu", "slicemode", [936, 96, 100, 16], "slice")
 for i, pid in enumerate(["winstart", "winsize", "tune", "sattack", "srelease"]):
     live_param("live.dial", pid, [592 + i * 46, 116, 44, 50], "slice")
-comment("Slice mode: how the sequencer moves through the slices", [830, 118, 228, 30], 7.5, group="slice")
+comment("Slice mode: how the sequencer moves through the slices", [830, 118, 268, 30], 7.5, group="slice")
 
 # drums
-kit_menu = umenu([838, 4, 222, 16], "drum")
+kit_menu = umenu([838, 4, 262, 16], "drum")
 jsuis.append(jsui("bash_pads.js", [592, 24, 142, 142], "drum"))
 sound_menu = umenu([738, 24, 170, 16], "drum")
-pad_drop = drop([912, 24, 148, 40], "DROP ON PAD", "drum")
+pad_drop = drop([912, 24, 188, 40], "DROP ON PAD", "drum")
 comment("SOUND FOR THE SELECTED PAD", [738, 42, 172, 14], 7.5, group="drum")
 pad_fields = [("tune", "TUNE", -24, 24, 0, 1.0), ("gain", "GAIN", 0, 2, 1, 1.0), ("pan", "PAN", -1, 1, 0, 1.0),
               ("decay", "DECAY", 0.01, 4, 0.4, 2.0), ("start", "START", 0, 1, 0, 1.0), ("end", "END", 0, 1, 1, 1.0),
@@ -304,7 +312,7 @@ pad_rev = {"id": new_id(), "maxclass": "live.text", "numinlets": 1, "numoutlets"
            "parameter_enable": 0, "mode": 1, "text": "REVERSE", "texton": "REVERSE", "varname": "pad_reverse"}
 pres(pad_rev, [912, 122, 70, 18])
 pad_rev_id = add(pad_rev, "drum")
-comment("Click a pad to play it, shift-click to select, alt-click to clear.", [738, 144, 322, 22], 8.0, group="drum")
+comment("Click a pad to play it, shift-click to select, alt-click to clear.", [738, 144, 362, 22], 8.0, group="drum")
 
 CUR[0] = "mod"
 # mod page: two LFOs (each can MAP to any parameter in Live, like Live's LFO), Life, six slots
@@ -328,31 +336,61 @@ for k, y in ((1, 24), (2, 82)):
 jsuis.append(jsui("bash_lfo.js", [592, 140, 80, 26], "mod", args=[3]))
 comment("Life", [674, 142, 30, 14], group="mod")
 live_param("live.numbox", "liferate", [702, 142, 88, 16], "mod")
-comment("Source", [868, 24, 62, 14], group="mod")
-comment("Destination", [932, 24, 80, 14], group="mod")
-comment("Amount", [1014, 24, 46, 14], group="mod")
+comment("Source", [868, 24, 82, 14], group="mod")
+comment("Destination", [952, 24, 100, 14], group="mod")
+comment("Amount", [1054, 24, 46, 14], group="mod")
 for k in range(1, 7):
     y = 40 + (k - 1) * 21
-    live_param("live.menu", "m%dsrc" % k, [868, y, 62, 16], "mod")
-    live_param("live.menu", "m%ddst" % k, [932, y, 80, 16], "mod")
-    live_param("live.numbox", "m%damt" % k, [1014, y, 46, 16], "mod")
+    live_param("live.menu", "m%dsrc" % k, [868, y, 82, 16], "mod")
+    live_param("live.menu", "m%ddst" % k, [952, y, 100, 16], "mod")
+    live_param("live.numbox", "m%damt" % k, [1054, y, 46, 16], "mod")
 
 # ---- column D: level, pan, meter -------------------------------------------------------------
 CUR[0] = "out"
-live_param("live.dial", "level", [1068, 22, 44, 50])
-live_param("live.dial", "pan", [1068, 80, 44, 50])
+live_param("live.dial", "level", [1108, 22, 44, 50])
+live_param("live.dial", "pan", [1152, 22, 44, 50])
 meter = {"id": new_id(), "maxclass": "live.meter~", "numinlets": 1, "numoutlets": 1, "outlettype": ["list"],
          "orientation": 1}
-pres(meter, [1072, 136, 36, 28])
+pres(meter, [1110, 76, 84, 8])
 meter_id = add(meter)
 wire(bash, 0, meter_id, 0)
 
 for _, m in actions:
     wire(m, 0, bash, 0)
+
+# ---- LOOP OUT: the loop as a MIDI clip / a WAV on a new audio track (+ files in User Library > Kalabash > Captures) --
+CUR[0] = "export"
+comment("LOOP OUT", [1108, 88, 88, 12], 8.0)
+bars_menu = umenu([1108, 102, 88, 16])
+boxes[-1]["box"]["items"] = ["1 bar", ",", "2 bars", ",", "4 bars", ",", "8 bars", ",", "16 bars"]
+bars_calc = obj("expr 1 << $i1", 1, 1)
+wire(bars_menu, 0, bars_calc, 0)
+midi_btn, midi_msg = button("MIDI", [1108, 122, 42, 18], "bang")
+midi_bars = obj("i 4", 2, 1, ["int"])
+wire(bars_calc, 0, midi_bars, 1)
+wire(midi_msg, 0, midi_bars, 0)
+midi_p = obj("prepend export midi", 2, 1)
+wire(midi_bars, 0, midi_p, 0)
+wire(midi_p, 0, bash, 0)
+CUR[0] = "exportwav"
+wav_btn, wav_msg = button("WAV", [1152, 122, 44, 18], "bang")
+wav_bars = obj("i 4", 2, 1, ["int"])
+wire(bars_calc, 0, wav_bars, 1)
+wire(wav_msg, 0, wav_bars, 0)
+wav_p = obj("prepend export wav", 2, 1)
+wire(wav_bars, 0, wav_p, 0)
+wire(wav_p, 0, bash, 0)
+comment("into a clip + Captures", [1108, 144, 88, 20], 7.0)
+CUR[0] = "export"
+export_js = obj("js bash_export.js", 1, 1)
+wire(bash, MSG, export_js, 0)
+wire(export_js, 0, bash, 0)
 CUR[0] = "expand"
 
 # ---- the expanded window (like EQ Eight's): EXPAND opens a big view in its own window ------------
-expand_btn, expand_msg = button("Expand", [1067, 4, 44, 16], "open")
+expand_btn, expand_msg = button("Expand", [1108, 4, 88, 16], "open")
+expand_front = msg("vis, front")
+wire(expand_msg, 0, expand_front, 0)
 pctl = obj("pcontrol", 1, 1)
 wire(expand_msg, 0, pctl, 0)
 BIG_W, BIG_H = 1200, 660
@@ -370,6 +408,9 @@ def big_jsui(filename, rect, args=None):
     if args: b["jsarguments"] = args
     return big_add(b)
 big_in = big_add({"maxclass": "inlet", "numinlets": 0, "numoutlets": 1, "outlettype": [""], "patching_rect": [20, 10, 30, 30], "comment": ""})
+big_tp = big_add({"maxclass": "newobj", "text": "thispatcher", "numinlets": 1, "numoutlets": 2, "outlettype": ["", ""],
+                  "patching_rect": [20, 40, 80, 22]})
+big_lines.append({"patchline": {"source": [big_in, 0], "destination": [big_tp, 0]}})
 big_r = big_add({"maxclass": "newobj", "text": "r ---bashview", "numinlets": 0, "numoutlets": 1, "outlettype": [""], "patching_rect": [80, 10, 100, 22]})
 big_s = big_add({"maxclass": "newobj", "text": "s ---bashcmd", "numinlets": 1, "numoutlets": 0, "patching_rect": [200, 10, 100, 22]})
 big_bg = big_add({"maxclass": "panel", "numinlets": 1, "numoutlets": 0, "bgcolor": [0.0, 0.0, 0.0, 0.07], "rounded": 0,
@@ -397,6 +438,7 @@ big_patcher = {"fileversion": 1, "appversion": {"major": 8, "minor": 6, "revisio
 big = add({"id": new_id(), "maxclass": "newobj", "text": "p BASH_view", "numinlets": 1, "numoutlets": 0,
            "patching_rect": ppos(80), "patcher": big_patcher, "saved_object_attributes": {"globalpatchername": ""}})
 wire(pctl, 0, big, 0)
+wire(expand_front, 0, big, 0)
 view_send = obj("s ---bashview", 1, 0)
 wire(bash, MSG, view_send, 0)
 view_cmd = obj("r ---bashcmd", 0, 1)
@@ -557,6 +599,19 @@ wire(bits, 0, total, 0)
 wire(total, 0, keypak, 1)
 wire(keypak, 0, keyp, 0)
 wire(keyp, 0, bash, 0)
+# Live's transport: tempo, play / stop and song position (BASH! follows them while Sync is on)
+for prop, sel in (("tempo", "hosttempo"), ("is_playing", "hostplaying"), ("current_song_time", "hostbeats")):
+    o = obj("live.observer " + prop, 2, 2)
+    pp = obj("prepend " + sel, 2, 1)
+    wire(lpath, 0, o, 1)
+    wire(o, 0, pp, 0)
+    wire(pp, 0, bash, 0)
+    if prop == "tempo":
+        CUR[0] = "clock"
+        tset = msg("set $1")
+        wire(o, 0, tset, 0)
+        wire(tset, 0, live_tempo_id, 0)
+        CUR[0] = "core"
 # Live's Scale switch on / off (scale awareness): with Scale off, BASH! stops quantising to it
 modeobs = obj("live.observer scale_mode", 2, 2)
 modep = obj("prepend scalemode", 2, 1)
@@ -651,6 +706,10 @@ for oid, _ in param_objects:
 for pid in pattrs:
     wire(start, 2, pid, 0)
 wire(start, 2, page, 0)
+if VARIANT != "voice":
+    bars_init = msg("set 2")
+    wire(start, 2, bars_init, 0)
+    wire(bars_init, 0, bars_menu, 0)
 
 # =====================================================================================
 # the variants
@@ -672,7 +731,7 @@ if VARIANT == "voice":
     wire(start, 2, init, 0); wire(init, 0, bash, 0)
 
 if VARIANT != "full":
-    drop = {"voice": {"clock", "seq"}, "seq": {"voice", "page", "out"}}[VARIANT]
+    drop = {"voice": {"clock", "seq", "export", "exportwav"}, "seq": {"voice", "page", "out", "exportwav"}}[VARIANT]
     removed = {b["box"]["id"] for b in boxes if b["box"]["_sec"] in drop}
     if VARIANT == "seq":
         removed.add(plugout)
@@ -683,7 +742,7 @@ if VARIANT != "full":
         groups[g] = [v for v in groups[g] if v in keep]
     param_objects[:] = [(o, p) for o, p in param_objects if o not in removed]
     if VARIANT == "voice":
-        W = 640
+        W = 724
         for b in boxes:
             if b["box"].get("varname") in ("root", "scale"):
                 b["box"]["presentation_rect"][1] = 90
@@ -692,11 +751,15 @@ if VARIANT != "full":
             if bx["_sec"] in ("engine", "voice", "page", "mod", "out", "expand") and bx.get("presentation"):
                 bx["presentation_rect"][0] -= 474
     if VARIANT == "seq":
-        W = 1064
+        W = 1104
         for b in boxes:
             bx = b["box"]
             if bx["_sec"] == "expand" and bx.get("presentation"):
-                bx["presentation_rect"] = [1016, 4, 44, 16]
+                bx["presentation_rect"] = [1056, 4, 44, 16]
+            if bx["_sec"] == "export" and bx.get("presentation"):
+                if bx["maxclass"] == "comment": bx["presentation_rect"] = [896, 5, 60, 14]
+                elif bx["maxclass"] == "umenu": bx["presentation_rect"] = [946, 4, 52, 16]
+                else: bx["presentation_rect"] = [1002, 4, 50, 16]
 for b in boxes:
     b["box"].pop("_sec", None)
 
@@ -707,14 +770,14 @@ ui_js_text = """// BASH! view switcher (generated by make_device.py): shows the 
 inlets = 1;
 outlets = 1;
 var groups = %s;
-var mode = 0, engine = 0, page = %d;
+var mode = 0, engine = 0, sync = 1, page = %d;
 
 function apply()
 {
     var show = {
         gen: mode === 0, step: mode === 1,
         synth: page === 0 && engine === 0, slice: page === 0 && engine === 1, drum: page === 0 && engine === 2,
-        mod: page === 1
+        mod: page === 1, free: sync === 0, synced: sync === 1
     };
     for (var g in groups)
     {
@@ -734,6 +797,7 @@ function anything()
     {
         if (a[0] === "mode") { mode = a[1]; apply(); }
         else if (a[0] === "engine") { engine = a[1]; apply(); }
+        else if (a[0] === "sync") { sync = a[1] > 0.5 ? 1 : 0; apply(); }
     }
     else if (messagename === "page") { page = a[0]; apply(); }
 }

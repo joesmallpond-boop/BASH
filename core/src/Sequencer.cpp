@@ -624,7 +624,7 @@ namespace bash
         {
             if (e.noteOn)
             {
-                out.push_back ({ pos, pos, e.note, e.velocity, e.stream });
+                out.push_back ({ pos, pos, e.note, e.velocity, e.stream, e.slice });
                 open.push_back ({ out.size() - 1, e.stream });
             }
             else

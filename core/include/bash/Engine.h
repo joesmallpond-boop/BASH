@@ -179,6 +179,7 @@ namespace bash
         const SampleData* lastSample = nullptr;
         struct SliceStore { SpinMutex m; std::vector<uint32_t> points; } sliceStore;
         int slicerNote = -1;
+        int lastEngine = -1;
 
         std::atomic<uint32_t> playIdx { 0 };
         std::atomic<int>      sliceNow { -1 };

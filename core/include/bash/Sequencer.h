@@ -203,7 +203,7 @@ namespace bash
     };
 
     /** Offline render of a track's notes for export: positions in steps from the start. */
-    struct ExportNote { double start, end; int note, velocity, stream; };
+    struct ExportNote { double start, end; int note, velocity, stream; int slice = 0; };
     std::vector<ExportNote> renderNotes (const Pattern&, const SequencerParams&, const Scale&, int64_t numSteps);
 
     const char* algorithmName (Algorithm);

@@ -1,4 +1,5 @@
 // BASH! core unit tests — no framework, just run the binary.
+#include <fstream>
 #include "bash/Engine.h"
 #include "bash/Instrument.h"
 #include "bash/AudioFile.h"
@@ -1237,11 +1238,16 @@ static void testSingleChannelEngine()
     CHECK (pk < 1.0e-3f);
     CHECK (! eng.isRunning());
 
-    // host stopped: the device's own Play still runs, at the host's tempo
+    // synced and the host stopped: Play doesn't run it (Live's transport starts and stops it)
     eng.settings().playing = true;
     const auto before = eng.noteCount();
     runFor (eng, tp, 100);
+    CHECK (! eng.isRunning() && eng.noteCount() == before);
+    // Sync off: Play runs it on the device's own tempo
+    eng.settings().hostSync = false;
+    runFor (eng, tp, 100);
     CHECK (eng.isRunning() && eng.noteCount() > before);
+    eng.settings().hostSync = true;
     eng.settings().playing = false;
     runFor (eng, tp, 2);
     CHECK (! eng.isRunning());
@@ -1743,6 +1749,71 @@ static void testScaleAwareness()
     CHECK (! notes.empty() && *notes.begin() >= drumBaseNote && *notes.rbegin() < drumBaseNote + 4);
 }
 
+
+static void testExportAndSwitching()
+{
+    namespace fs = std::filesystem;
+    const auto dir = fs::temp_directory_path() / "bash_export_test";
+    fs::remove_all (dir);
+    Instrument in; in.prepare (48000.0, 512);
+    in.command ("exportdir", { dir.string() });
+    in.command ("param", { std::string ("density"), 0.9 });
+    std::string clipSel; size_t clipLen = 0; std::string wavPath;
+    in.setEmitter ([&] (const std::string& sel, const Atoms& a)
+    {
+        if (sel == "clip") { clipSel = sel; clipLen = a.size(); }
+        if (sel == "exported" && a.size() == 2 && atomStr (a[0]) == "wav") wavPath = atomStr (a[1]);
+    });
+    const std::string mid = in.exportMidi (2);
+    CHECK (! mid.empty() && fs::exists (mid));
+    {
+        std::ifstream f (mid, std::ios::binary); char h[4] = {}; f.read (h, 4);
+        CHECK (std::string (h, 4) == "MThd");
+    }
+    CHECK (clipSel == "clip" && clipLen > 5 && (clipLen - 1) % 4 == 0);
+    const std::string wav = in.exportWav (1);
+    CHECK (! wav.empty() && wav == wavPath);
+    std::string err;
+    auto data = decodeAudioFile (wav, 30.0, err);
+    CHECK (data != nullptr);
+    if (data)
+    {
+        // 1 bar at 120 bpm = 2 s
+        CHECK (std::abs ((double) data->numFrames() / data->sampleRate - 2.0) < 0.01);
+        double e = 0.0; for (float v : data->left) e += (double) v * v;
+        CHECK (e > 1.0e-3);
+    }
+    fs::remove_all (dir);
+
+    // switching Synth -> Slicer cuts the synth dead (no ring-out)
+    Instrument sw; sw.prepare (48000.0, 512);
+    sw.command ("param", { std::string ("seqon"), 0.0 });
+    sw.command ("param", { std::string ("thru"), 1.0 });
+    sw.command ("param", { std::string ("arel"), 4.0 });
+    std::vector<float> l (512), r (512);
+    Transport tp;
+    sw.command ("note", { 48.0, 110.0 });
+    for (int b = 0; b < 20; ++b) sw.process (l.data(), r.data(), 512, tp);
+    double before = 0.0; for (float v : l) before += (double) v * v;
+    CHECK (before > 1.0e-4);
+    sw.command ("param", { std::string ("engine"), 1.0 });
+    sw.process (l.data(), r.data(), 512, tp);
+    sw.process (l.data(), r.data(), 512, tp);
+    double after = 0.0; for (float v : l) after += (double) v * v;
+    CHECK (after < 1.0e-9);
+
+    // synced to Live: Live's stop stops the sequencer even with Play on
+    Instrument tr; tr.prepare (48000.0, 512);
+    tr.command ("param", { std::string ("play"), 1.0 });
+    tr.command ("param", { std::string ("density"), 1.0 });
+    Transport stopped; stopped.hostAvailable = true; stopped.hostPlaying = false; stopped.hostBpm = 120.0;
+    for (int b = 0; b < 50; ++b) tr.process (l.data(), r.data(), 512, stopped);
+    CHECK (! tr.engine().isRunning());
+    Transport rolling = stopped; rolling.hostPlaying = true;
+    tr.process (l.data(), r.data(), 512, rolling);
+    CHECK (tr.engine().isRunning());
+}
+
 int main()
 {
     testDeterminism();
@@ -1779,6 +1850,7 @@ int main()
     testLfoMapping();
     testMidiOut();
     testScaleAwareness();
+    testExportAndSwitching();
     std::printf ("%d checks, %d failures\n", checks, failures);
     return failures == 0 ? 0 : 1;
 }
