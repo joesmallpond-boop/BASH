@@ -14,6 +14,7 @@
 #include "bash/Library.h"
 
 #include <cmath>
+#include <filesystem>
 #include <mutex>
 #include <cstdio>
 #include <set>
@@ -21,6 +22,7 @@
 #include <vector>
 
 static int failures = 0, checks = 0;
+static const int unbuffered = [] { std::setvbuf (stdout, nullptr, _IONBF, 0); return 0; }();
 #define CHECK(cond) do { ++checks; if (! (cond)) { ++failures; std::printf ("FAIL %s:%d  %s\n", __FILE__, __LINE__, #cond); } } while (0)
 
 using namespace bash;
@@ -1453,7 +1455,7 @@ static void testInstrumentBasics()
 
 static void testInstrumentSamplesAndKit()
 {
-    const std::string dir = "/tmp/claude-0/-home-claude/25222850-a0ca-565f-b704-eb28468824be/scratchpad";
+    const std::string dir = std::filesystem::temp_directory_path().string();
     auto loop = makeClicks (96000, 6000, 48000.0);
     const std::string wav = dir + "/bash test loop 120.wav";
     CHECK (writeWavFile (wav, loop));
@@ -1467,6 +1469,7 @@ static void testInstrumentSamplesAndKit()
     // a path with spaces arrives as several words
     in.command ("load", { std::string (dir + "/bash"), std::string ("test"), std::string ("loop"), std::string ("120.wav") });
     CHECK (in.engine().sample() != nullptr);
+    if (in.engine().sample() == nullptr) return;
     CHECK (std::abs (in.sourceBpm() - 120.0) < 0.01);    // from the name
     CHECK (in.engine().sliceCount() >= 8);
     CHECK (rec.uiValue ("engine") == 1.0);                // switched to the slicer
