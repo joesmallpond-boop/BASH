@@ -1657,6 +1657,56 @@ static void testLfoMapping()
     CHECK (! in.isMapped (0));
 }
 
+static void testMidiOut()
+{
+    // the BASH! Sequencer device: the sequencer's notes come out as MIDI and nothing sounds
+    auto run = [] (Instrument& in, int blocks, std::vector<Engine::MidiNote>& got, double& energy)
+    {
+        Transport tp; tp.hostAvailable = true; tp.hostPlaying = true; tp.hostBpm = 120.0;
+        std::vector<float> l (480), r (480);
+        Engine::MidiNote buf[256];
+        for (int b = 0; b < blocks; ++b)
+        {
+            in.process (l.data(), r.data(), 480, tp); tp.hostPpq += 0.02;
+            for (float v : l) energy += (double) v * v;
+            const int n = in.takeMidi (buf, 256);
+            got.insert (got.end(), buf, buf + n);
+        }
+    };
+    for (int target = 0; target < 3; ++target)
+    {
+        Instrument in; in.prepare (48000.0, 512);
+        in.command ("midiout", { 1.0 });
+        in.command ("param", { std::string ("engine"), (double) target });
+        in.command ("param", { std::string ("density"), 0.9 });
+        if (target == 2) { in.command ("param", { std::string ("slicemode"), 3.0 }); }
+        std::vector<Engine::MidiNote> got; double energy = 0.0;
+        run (in, 300, got, energy);
+        int ons = 0, offs = 0, lo = 127, hi = 0;
+        for (auto& m : got) { if (m.velocity > 0) { ++ons; lo = std::min (lo, m.note); hi = std::max (hi, m.note); } else ++offs; }
+        CHECK (energy < 1.0e-9);                 // nothing plays inside
+        CHECK (ons > 8 && offs >= ons - 2);      // every note ends (drum hits after 80 ms)
+        if (target == 2) CHECK (lo >= drumBaseNote && hi < drumBaseNote + numCells);   // Drum Rack pads from C1
+    }
+    // slices as notes from C1 (Simpler / Sampler slicing)
+    {
+        Instrument in; in.prepare (48000.0, 512);
+        in.command ("midiout", { 1.0 });
+        in.command ("param", { std::string ("engine"), 1.0 });
+        auto loop = makeClicks (96000, 6000);
+        in.engine().setSample (&loop);
+        in.engine().setSlices (slicing::grid (loop.numFrames(), 8));
+        in.command ("param", { std::string ("density"), 1.0 });
+        std::vector<Engine::MidiNote> got; double energy = 0.0;
+        run (in, 200, got, energy);
+        bool inRange = ! got.empty();
+        for (auto& m : got) inRange = inRange && m.note >= drumBaseNote && m.note < drumBaseNote + 8;
+        CHECK (inRange && energy < 1.0e-9);
+        in.engine().setSample (nullptr);
+        Engine::MidiNote buf[64]; in.takeMidi (buf, 64);
+    }
+}
+
 int main()
 {
     testDeterminism();
@@ -1691,6 +1741,7 @@ int main()
     testInstrumentSamplesAndKit();
     testInstrumentSequencing();
     testLfoMapping();
+    testMidiOut();
     std::printf ("%d checks, %d failures\n", checks, failures);
     return failures == 0 ? 0 : 1;
 }

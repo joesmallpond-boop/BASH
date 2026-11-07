@@ -75,6 +75,8 @@ namespace bash
             units), updated every block. Feeds live.remote~ in the device. */
         float mapOutput (int k) const          { return mapOut[(size_t) k].load(); }
         bool  isMapped (int k);
+        /** The BASH! Sequencer device: notes made since the last call (velocity 0 = off). */
+        int   takeMidi (Engine::MidiNote* dest, int maxCount) { return eng.takeMidi (dest, maxCount); }
         bool warpBusy() const                  { return warpThreadBusy.load(); }
         void waitForWarp();
         double sourceBpm() const               { return srcBpm; }

@@ -139,6 +139,14 @@ namespace bash
         uint32_t noteCount() const           { return noteCounter.load(); }
         float  outputPeak() const            { return peak.load(); }
 
+        // ---- MIDI out (the BASH! Sequencer device) ----
+        /** When on, the sequencer's notes go out as MIDI instead of playing the voice:
+            melodic notes as they are, slices as C1 + slice, drum pads as C1 + pad. */
+        void setMidiOut (bool on)            { midiOutOn.store (on); }
+        struct MidiNote { int note, velocity; };   // velocity 0 = note off
+        /** Notes made since the last call (any thread; the device sends them on). */
+        int  takeMidi (MidiNote* dest, int maxCount);
+
     private:
         void refreshScale();
         void renderChunk (float* l, float* r, int n, bool run, double ppq, double bpm);
@@ -207,5 +215,15 @@ namespace bash
         std::atomic<int> lastNoteUi { -1 };
         std::atomic<uint32_t> noteCounter { 0 };
         std::atomic<float> peak { 0.0f };
+
+        std::atomic<bool> midiOutOn { false };
+        SpinMutex midiMutex;
+        std::array<MidiNote, 512> midiQueue {};
+        int midiCount = 0;
+        struct PendingOff { int note; double samplesLeft; };
+        std::array<PendingOff, 64> pendingOffs {};
+        int pendingCount = 0;
+        int lastSliceOut = -1;
+        void sendMidi (int note, int velocity);
     };
 }

@@ -211,9 +211,48 @@ namespace bash
         blockCount.fetch_add (1);
     }
 
+    void Engine::sendMidi (int note, int velocity)
+    {
+        std::lock_guard<SpinMutex> g (midiMutex);
+        if (midiCount < (int) midiQueue.size()) midiQueue[(size_t) midiCount++] = { std::clamp (note, 0, 127), std::clamp (velocity, 0, 127) };
+    }
+
+    int Engine::takeMidi (MidiNote* dest, int maxCount)
+    {
+        std::lock_guard<SpinMutex> g (midiMutex);
+        const int n = std::min (maxCount, midiCount);
+        for (int i = 0; i < n; ++i) dest[i] = midiQueue[(size_t) i];
+        for (int i = n; i < midiCount; ++i) midiQueue[(size_t) (i - n)] = midiQueue[(size_t) i];
+        midiCount -= n;
+        return n;
+    }
+
     void Engine::handleEvent (const NoteEvent& e)
     {
         auto& ts = live;
+        if (midiOutOn.load (std::memory_order_relaxed))
+        {
+            // the sequencer as a MIDI device: send the note on instead of playing it
+            int note = e.note;
+            if (ts.engine == EngineType::Slicer)
+            {
+                if (e.noteOn) { note = drumBaseNote + std::max (0, e.slice); lastSliceOut = note; }
+                else          { note = lastSliceOut; lastSliceOut = -1; if (note < 0) return; }
+            }
+            if (e.noteOn)
+            {
+                sendMidi (note, std::max (1, e.velocity));
+                lastNoteUi.store (note);
+                noteCounter.fetch_add (1);
+                hits[(size_t) ((ts.engine == EngineType::Synth ? note : note - drumBaseNote + 1600) % numCells)].fetch_add (1);
+                if (ts.engine == EngineType::Drums && pendingCount < (int) pendingOffs.size())
+                    pendingOffs[(size_t) pendingCount++] = { note, sr * 0.08 };   // drum hits get a short note
+                if (ts.engine == EngineType::Slicer) sliceNow.store (e.slice);
+            }
+            else if (ts.engine != EngineType::Drums)
+                sendMidi (note, 0);
+            return;
+        }
         switch (ts.engine)
         {
             case EngineType::Slicer:
@@ -393,6 +432,23 @@ namespace bash
                 sliceNow.store ((int) i);
                 hits[i % numCells].fetch_add (1);
             }
+        }
+
+        if (midiOutOn.load (std::memory_order_relaxed))
+        {
+            // MIDI out: notes go out in time order; nothing plays here; drum hits end after 80 ms
+            for (const auto& e : events) handleEvent (e);
+            for (int i = 0; i < pendingCount;)
+            {
+                pendingOffs[(size_t) i].samplesLeft -= n;
+                if (pendingOffs[(size_t) i].samplesLeft <= 0.0)
+                {
+                    sendMidi (pendingOffs[(size_t) i].note, 0);
+                    pendingOffs[(size_t) i] = pendingOffs[(size_t) --pendingCount];
+                }
+                else ++i;
+            }
+            return;
         }
 
         const bool idle = events.empty() && synth.isSilent() && slicer.isSilent() && drums.isSilent()

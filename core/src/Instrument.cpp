@@ -1115,6 +1115,7 @@ namespace bash
         }
         if (sel == "unlockall") { std::lock_guard<SpinMutex> g2 (eng.pattern().mutex()); eng.pattern().clearLocks(); changed(); return; }
         if (sel.rfind ("map", 0) == 0) { mapCommand (sel, a); return; }
+        if (sel == "midiout") { eng.setMidiOut (num (0) > 0.5); return; }   // BASH! Sequencer: notes out as MIDI
         if (sel == "dice")      { rollDice(); return; }
         if (sel == "undo")      { undoDice(); return; }
 
