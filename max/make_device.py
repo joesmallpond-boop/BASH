@@ -780,8 +780,8 @@ if VARIANT != "voice":
     wire(bars_init, 0, bars_menu, 0)
 
 # a device just dropped in starts from this patch (a saved device keeps whatever it had)
-fresh = {"full": "freshdefaults seqon 1 sync 1 thru 1 pitchfollow 0 reverse 0",
-         "voice": "freshdefaults pitchfollow 0 reverse 0",
+fresh = {"full": "freshdefaults seqon 1 sync 1 thru 1 warp 1 pitchfollow 0 reverse 0",
+         "voice": "freshdefaults warp 1 pitchfollow 0 reverse 0",
          "seq": "freshdefaults seqon 1 sync 1"}[VARIANT]
 fresh_msg = msg(fresh)
 wire(start, 2, fresh_msg, 0)

@@ -41,6 +41,7 @@ Build on a Mac: `./scripts/build-mac.sh` (add `--install` to install it for you)
 
 ## History
 
+- **1.2.5** - Warp on in the starting patch too.
 - **1.2.4** - A freshly added device always starts with Sync and Seq On on, and the slicer's Pitch and Reverse off.
 - **1.2.3** - Sessions reopen as they were saved: the saved state is kept in shorter chunks, nothing is saved until the set's own state has loaded, and every device also keeps a backup copy (by a hidden State ID) that brings it back if Live doesn't. Live's tempo shows in the Tempo box while synced.
 - **1.2.2** - Click the BASH! badge ("CLICK TO GENERATE") for a new pattern with the same sound; DICE now randomises everything (pattern, sequencer, synth, slicer, kit, LFOs, mod slots), and UNDO brings all of it back.
