@@ -12,6 +12,7 @@
 #include <ctime>
 #include <filesystem>
 #include <fstream>
+#include <mutex>
 #include <sstream>
 
 // ---------------------------------------------------------------------------------------
@@ -239,9 +240,94 @@ namespace bash
         pull();
     }
 
+    namespace
+    {
+        // State IDs in use by the BASH! devices loaded in this Live set (they share one Max)
+        std::mutex idMutex;
+        std::vector<int>& liveIds() { static std::vector<int> ids; return ids; }
+    }
+
     Instrument::~Instrument()
     {
         if (warpThread.joinable()) warpThread.join();
+        std::lock_guard<std::mutex> g (idMutex);
+        auto& ids = liveIds();
+        ids.erase (std::remove (ids.begin(), ids.end(), stateId), ids.end());
+    }
+
+    std::string Instrument::stateFile (int id)
+    {
+        namespace fs = std::filesystem;
+        std::error_code ec;
+        fs::path dir = stateDir;
+        if (dir.empty())
+            if (const char* env = std::getenv ("BASH_STATE_DIR")) dir = env;
+        if (dir.empty())
+        {
+            if (const char* home = std::getenv ("HOME")) dir = fs::path (home) / "Library" / "Application Support" / "Kalabash" / "BASH" / "State";
+            else dir = fs::temp_directory_path (ec) / "Kalabash BASH State";
+        }
+        fs::create_directories (dir, ec);
+        return (dir / ("device-" + std::to_string (id) + ".bashstate")).string();
+    }
+
+    void Instrument::claimStateId (int id)
+    {
+        // a State ID arrives from the set. If another BASH! already has it, this one is a copy
+        // (duplicated track / device): it loads the same state, then takes an ID of its own.
+        std::lock_guard<std::mutex> g (idMutex);
+        auto& ids = liveIds();
+        ids.erase (std::remove (ids.begin(), ids.end(), stateId), ids.end());
+        needNewId = std::find (ids.begin(), ids.end(), id) != ids.end();
+        stateId = id;
+        if (! needNewId) ids.push_back (id);
+    }
+
+    void Instrument::newStateId()
+    {
+        {
+            std::lock_guard<std::mutex> g (idMutex);
+            auto& ids = liveIds();
+            int id = 0;
+            while (id == 0 || std::find (ids.begin(), ids.end(), id) != ids.end())
+                id = 1 + (int) (nextRandom() % 16000000ull);
+            stateId = id;
+            ids.push_back (id);
+        }
+        needNewId = false;
+        emit ("stateid", { (double) stateId });   // the device keeps it in a hidden, saved parameter
+        dirty = true; dirtyAt = tickCount; lastSaved.clear();
+    }
+
+    void Instrument::writeStateFile (const std::string& text)
+    {
+        if (stateId <= 0) return;
+        const auto path = stateFile (stateId);
+        const auto tmp = path + ".tmp";
+        {
+            std::ofstream f (tmp, std::ios::binary);
+            if (! f) return;
+            f << text;
+            if (! f) return;
+        }
+        std::error_code ec;
+        std::filesystem::rename (tmp, path, ec);
+    }
+
+    bool Instrument::readStateFile()
+    {
+        if (stateId <= 0) return false;
+        std::ifstream f (stateFile (stateId), std::ios::binary);
+        if (! f) return false;
+        std::stringstream ss;
+        ss << f.rdbuf();
+        const auto text = ss.str();
+        if (text.empty()) return false;
+        restoring = true;
+        const bool ok = loadState (text);
+        restoring = false;
+        if (ok) emitAll();
+        return ok;
     }
 
     uint64_t Instrument::nextRandom()
@@ -1351,10 +1437,13 @@ namespace bash
                 lastSaved = text;
                 emitAll();
             }
+            if (! text.empty()) restoredOk = true;
             restoreChunks.assign ((size_t) stateChunks, {});
             return;
         }
-        if (sel == "refresh") { emitAll(); return; }
+        if (sel == "refresh") { if (! loadPhaseDone) loadStartTick = tickCount; emitAll(); return; }   // the device has loaded
+        if (sel == "stateid")  { const int id = (int) num (0); if (id > 0 && id != stateId) claimStateId (id); return; }
+        if (sel == "statedir") { setStateFolder (restOfLine (0)); return; }
     }
 
     // ---- state --------------------------------------------------------------------------------------
@@ -1548,6 +1637,7 @@ namespace bash
         const auto text = saveState();
         if (text == lastSaved) return;
         lastSaved = text;
+        writeStateFile (text);
         auto ints = packState (text);
         const int capacity = stateChunkSize * stateChunks - 2;
         if ((int) ints.size() > capacity) { msg ("Too much to save: simplify the pattern"); return; }
@@ -1785,8 +1875,18 @@ namespace bash
         }
         emitFrame();
 
-        // save into the Live set half a second after the last edit
-        if (dirty && tickCount - dirtyAt > 12)
+        // loading: the set's saved state comes in first. If it didn't (or couldn't), the backup file
+        // for this device's State ID brings it back. Nothing is saved before this, so a fresh, empty
+        // device can never overwrite what the set had.
+        if (! loadPhaseDone && tickCount > loadStartTick + (uint64_t) loadSettleTicks)
+        {
+            loadPhaseDone = true;
+            if (! restoredOk && readStateFile()) { dirty = true; dirtyAt = tickCount; lastSaved.clear(); }   // and back into the set
+            if (needNewId || stateId <= 0) newStateId();
+        }
+
+        // save into the Live set (and the backup file) half a second after the last edit
+        if (loadPhaseDone && dirty && tickCount - dirtyAt > 12)
         {
             dirty = false;
             emitStateChunks();

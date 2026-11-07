@@ -69,8 +69,13 @@ namespace bash
         /** Ints of 24 bits each (3 bytes), so the state survives as numbers in a Live set. */
         static std::vector<int> packState (const std::string&);
         static std::string unpackState (const std::vector<int>&);
-        static constexpr int stateChunkSize = 1024;   // ints per pattr chunk
-        static constexpr int stateChunks = 48;
+        static constexpr int stateChunkSize = 250;    // ints per pattr chunk (kept short: Max lists / Live blobs)
+        static constexpr int stateChunks = 64;
+        /** Ticks after loading before BASH! saves anything (the set's saved state arrives first). */
+        static constexpr int loadSettleTicks = 40;
+        /** Where the backup copy of each device's state is kept (one file per device, by its State ID). */
+        void setStateFolder (const std::string& f) { stateDir = f; }
+        int  stateIdNow() const                { return stateId; }
         /** LFO k (0, 1) as a value for the parameter it's mapped to (in that parameter's own
             units), updated every block. Feeds live.remote~ in the device. */
         float mapOutput (int k) const          { return mapOut[(size_t) k].load(); }
@@ -95,6 +100,17 @@ namespace bash
         std::string exportFolder();
         std::string exportName (const char* ext, int bars);
         std::string exportDir;
+
+        // the backup save: a file per device, named by a State ID that Live keeps in the set
+        std::string stateDir;
+        int  stateId = 0;
+        bool needNewId = false, restoredOk = false, loadPhaseDone = false;
+        uint64_t loadStartTick = 0;
+        std::string stateFile (int id);
+        void newStateId();
+        void writeStateFile (const std::string& text);
+        bool readStateFile();
+        void claimStateId (int id);
         void emit (const std::string& s, const Atoms& a) { if (emitFn) emitFn (s, a); }
         void emitParam (const std::string& id, float v);
         void msg (const std::string& text)     { emit ("msg", { text }); }

@@ -216,10 +216,10 @@ toggle("sync", "Sync", [58, 70, 50, 16])
 toggle("play", "Play", [4, 90, 50, 16])
 live_param("live.numbox", "tempo", [58, 90, 50, 16], "free")
 live_tempo = {"id": new_id(), "maxclass": "live.numbox", "numinlets": 1, "numoutlets": 2, "outlettype": ["", "float"],
-              "parameter_enable": 0, "varname": "livetempo", "ignoreclick": 1,
-              "saved_attribute_attributes": {"valueof": {"parameter_longname": "Live tempo", "parameter_shortname": "Live tempo",
+              "parameter_enable": 1, "varname": "livetempo", "ignoreclick": 1,
+              "saved_attribute_attributes": {"valueof": {"parameter_longname": "Live Tempo Display", "parameter_shortname": "Live tempo",
                                                          "parameter_type": 0, "parameter_mmin": 20.0, "parameter_mmax": 999.0,
-                                                         "parameter_initial": [120.0], "parameter_unitstyle": 1}}}
+                                                         "parameter_initial": [120.0], "parameter_unitstyle": 1, "parameter_invisible": 2}}}
 pres(live_tempo, [58, 90, 50, 16])
 live_tempo_id = add(live_tempo, "synced")
 dice = jsui("bash_btns.js", [4, 130, 104, 18], args=["DICE|dice", "UNDO|undo"])
@@ -502,7 +502,7 @@ for j in jsuis:
         continue
     wire(j, 0, bash, 0)
 
-router = obj("route ui menu state padedit", 1, 5)
+router = obj("route ui menu state padedit stateid", 1, 6)
 wire(bash, MSG, router, 0)
 
 # ui <id> <value> -> the parameter's object (it then reports back as "param", which bash~ ignores)
@@ -533,8 +533,21 @@ for k, (menu, action) in enumerate([(loop_menu, "loop"), (kit_menu, "kit pick"),
     wire(menu, 0, out, 0)
     wire(out, 0, bash, 0)
 
-# saved state: 48 pattr blobs in the Live set
-CHUNKS = 48
+# this device's State ID: a hidden, saved parameter naming its backup state file (see Instrument)
+sid = {"id": new_id(), "maxclass": "live.numbox", "numinlets": 1, "numoutlets": 2, "outlettype": ["", "float"],
+       "parameter_enable": 1, "varname": "stateid", "patching_rect": ppos(60, 15),
+       "saved_attribute_attributes": {"valueof": {"parameter_longname": "BASH State ID", "parameter_shortname": "StateID",
+                                                  "parameter_type": 1, "parameter_mmin": 0, "parameter_mmax": 16777215,
+                                                  "parameter_initial": [0], "parameter_initial_enable": 1,
+                                                  "parameter_invisible": 1, "parameter_unitstyle": 0}}}
+sid_id = add(sid)
+sidp = obj("prepend stateid", 2, 1)
+wire(sid_id, 0, sidp, 0)
+wire(sidp, 0, bash, 0)
+wire(router, 4, sid_id, 0)
+
+# saved state: pattr blobs in the Live set
+CHUNKS = 64   # = Instrument::stateChunks (250 ints each)
 sroute = obj("route " + " ".join(str(k) for k in range(CHUNKS)), 1, CHUNKS + 1)
 wire(router, 2, sroute, 0)
 pattrs = []
@@ -759,6 +772,7 @@ for oid, _ in param_objects:
     wire(start, 2, oid, 0)
 for pid in pattrs:
     wire(start, 2, pid, 0)
+wire(start, 2, sid_id, 0)
 wire(start, 2, page, 0)
 if VARIANT != "voice":
     bars_init = msg("set 2")

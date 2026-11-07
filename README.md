@@ -41,6 +41,7 @@ Build on a Mac: `./scripts/build-mac.sh` (add `--install` to install it for you)
 
 ## History
 
+- **1.2.3** - Sessions reopen as they were saved: the saved state is kept in shorter chunks, nothing is saved until the set's own state has loaded, and every device also keeps a backup copy (by a hidden State ID) that brings it back if Live doesn't. Live's tempo shows in the Tempo box while synced.
 - **1.2.2** - Click the BASH! badge ("CLICK TO GENERATE") for a new pattern with the same sound; DICE now randomises everything (pattern, sequencer, synth, slicer, kit, LFOs, mod slots), and UNDO brings all of it back.
 - **1.2.1** - Drums: each pad switches between SAMPLE and FM (FM picks a matching starting point: kick, snare, hats, toms, cymbals, clap, perc...), with its own FM controls (Pitch, Sweep, FM, Ratio, Noise, Tone, Body, Click, Drive); the pad knobs now show their names and values and work.
 - **1.2.0** - Follows Live's tempo and play / stop (via the Live API, with Max's transport as backup); LOOP OUT puts the loop in a MIDI clip or a WAV on a new audio track (files also in User Library > Kalabash > Captures); switching Synth / Slicer / Drums cuts the old voice dead; wider voice section; Expand opens reliably.

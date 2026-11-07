@@ -1,4 +1,6 @@
 // BASH! core unit tests — no framework, just run the binary.
+#include <map>
+#include <cstdlib>
 #include <fstream>
 #include "bash/Engine.h"
 #include "bash/Instrument.h"
@@ -1545,7 +1547,7 @@ static void testInstrumentSamplesAndKit()
 
     // the state chunks go out after an edit, and coming back restore the instrument
     rec.got.clear();
-    for (int k = 0; k < 20; ++k) in.tick();
+    for (int k = 0; k < Instrument::loadSettleTicks + 20; ++k) in.tick();
     CHECK (rec.count ("state") == Instrument::stateChunks);
     Instrument third; Recorder rec3; rec3.attach (third); third.prepare (48000.0, 512);
     for (auto& g : rec.got)
@@ -1849,8 +1851,70 @@ static void testExportAndSwitching()
     CHECK (tr.engine().isRunning());
 }
 
+static void testSessionRecall()
+{
+    // a set is saved and reopened: everything comes back, through Live (the pattr chunks, which Live
+    // keeps as floats and plays back in any order) or, failing that, the backup file by State ID
+    std::vector<float> l (512), r (512); Transport tp;
+    auto run = [&] (Instrument& in, int ticks) { for (int t = 0; t < ticks; ++t) { in.process (l.data(), r.data(), 512, tp); in.tick(); } };
+
+    Instrument a; a.prepare (48000.0, 512);
+    std::map<int, Atoms> chunks; int id = 0; int earlyStates = 0;
+    a.setEmitter ([&] (const std::string& sel, const Atoms& v)
+    {
+        if (sel == "state") chunks[(int) atomNum (v[0])] = v;
+        if (sel == "stateid") id = (int) atomNum (v[0]);
+    });
+    run (a, 5);
+    earlyStates = (int) chunks.size();
+    CHECK (earlyStates == 0);                      // nothing is saved while loading
+    a.command ("param", { std::string ("engine"), 1.0 });
+    a.command ("loop", { 5.0 });
+    a.waitForWarp();
+    a.command ("param", { std::string ("mode"), 1.0 });
+    a.command ("dice", {});
+    run (a, Instrument::loadSettleTicks + 30);
+    CHECK (id > 0 && (int) chunks.size() == Instrument::stateChunks);
+    const auto text = a.saveState();
+    for (auto& [k, v] : chunks) CHECK (v.size() <= (size_t) Instrument::stateChunkSize + 1);
+
+    // 1) through Live: floats, shuffled, before the device is even prepared
+    {
+        Instrument b;
+        std::vector<int> order; for (auto& kv : chunks) order.push_back (kv.first);
+        std::reverse (order.begin(), order.end());
+        std::swap (order[0], order[order.size() / 2]);
+        for (int k : order)
+        {
+            Atoms args; for (auto& x : chunks[k]) args.push_back ((double) (float) atomNum (x));
+            b.command ("restore", args);
+        }
+        b.command ("stateid", { (double) id + 1.0 });
+        b.prepare (48000.0, 512);
+        run (b, Instrument::loadSettleTicks + 30);
+        b.waitForWarp();
+        CHECK (b.saveState() == text);
+    }
+    // 2) Live gave nothing back: the backup file for the device's State ID
+    {
+        Instrument c; c.prepare (48000.0, 512);
+        int cid = 0;
+        c.setEmitter ([&] (const std::string& sel, const Atoms& v) { if (sel == "stateid") cid = (int) atomNum (v[0]); });
+        c.command ("stateid", { (double) id });   // a's id is still taken (a is alive): c is a copy
+        run (c, Instrument::loadSettleTicks + 30);
+        c.waitForWarp();
+        CHECK (c.saveState() == text);
+        CHECK (cid > 0 && cid != id);               // the copy took an ID of its own
+    }
+}
+
 int main()
 {
+    {
+        const auto d = std::filesystem::temp_directory_path() / "bash_test_state";
+        std::filesystem::create_directories (d);
+        setenv ("BASH_STATE_DIR", d.string().c_str(), 1);
+    }
     testDeterminism();
     testDensityOnlyAdds();
     testLocksSurviveRegenerate();
@@ -1886,6 +1950,7 @@ int main()
     testMidiOut();
     testScaleAwareness();
     testExportAndSwitching();
+    testSessionRecall();
     std::printf ("%d checks, %d failures\n", checks, failures);
     return failures == 0 ? 0 : 1;
 }
