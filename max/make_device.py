@@ -156,9 +156,14 @@ def umenu(rect, group=None):
     pres(b, rect)
     return add(b, group)
 
+DROP_N = [0]
 def drop(rect, label, group=None):
+    # a Live parameter (live.drop is built to be one) that's Hidden: BASH! saves the sample itself
+    DROP_N[0] += 1
     b = {"id": new_id(), "maxclass": "live.drop", "numinlets": 1, "numoutlets": 2, "outlettype": ["", ""],
-         "parameter_enable": 0, "legend": label}
+         "parameter_enable": 1, "legend": label, "varname": "drop%d" % DROP_N[0],
+         "saved_attribute_attributes": {"valueof": {"parameter_longname": "Drop %d" % DROP_N[0], "parameter_shortname": "Drop",
+                                                    "parameter_invisible": 2}}}
     pres(b, rect)
     return add(b, group)
 
@@ -285,7 +290,9 @@ loop_menu = umenu([838, 4, 262, 16], "slice")
 wave = jsui("bash_wave.js", [592, 24, 340, 90], "slice")
 jsuis.append(wave)
 jsuis.append(jsui("bash_tempo.js", [936, 24, 82, 44], "slice"))
-slice_drop = drop([1022, 24, 78, 44], "DROP SAMPLE", "slice")
+slice_drop = drop([1022, 24, 78, 28], "DROP SAMPLE", "slice")
+# a clip made in Live: select it (click it), then GRAB CLIP (Live can't drag clips into a device)
+slice_grab, slice_grab_msg = button("GRAB CLIP", [1022, 54, 78, 14], "grab slice", "slice")
 toggle("warp", "WARP", [936, 72, 52, 16], "slice")
 toggle("reverse", "REVERSE", [992, 72, 52, 16], "slice")
 toggle("pitchfollow", "PITCH", [1048, 72, 52, 16], "slice")
@@ -316,7 +323,8 @@ pad_kind = pad_param("live.tab", "Pad Source", "Source", [738, 24, 84, 16], "dru
                      num_lines_patching=1, num_lines_presentation=1)
 sound_menu = umenu([826, 24, 274, 16], "padsample")
 fm_menu = umenu([826, 24, 274, 16], "padfm")
-pad_drop = drop([738, 44, 362, 18], "DROP A SAMPLE ON THE SELECTED PAD", "padsample")
+pad_drop = drop([738, 44, 280, 18], "DROP A SAMPLE ON THE SELECTED PAD", "padsample")
+pad_grab, pad_grab_msg = button("GRAB CLIP", [1022, 44, 78, 18], "grab pad", "padsample")
 comment("FM drum: pick a starting point above, then shape it", [738, 46, 362, 14], 8.0, group="padfm")
 
 def pad_dial(field, label, lo, hi, init, x, group, exp=1.0, unit=""):
@@ -617,6 +625,10 @@ wire(dl, 0, bash, 0)
 pl = obj("prepend pad load -1", 2, 1)
 wire(pad_drop, 0, pl, 0)
 wire(pl, 0, bash, 0)
+clip_js = obj("js bash_clip.js", 1, 1)
+wire(slice_grab_msg, 0, clip_js, 0)
+wire(pad_grab_msg, 0, clip_js, 0)
+wire(clip_js, 0, bash, 0)
 
 # the VOICE / MOD page and the view switcher
 pagep = obj("prepend page", 2, 1)

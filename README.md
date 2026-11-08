@@ -41,6 +41,7 @@ Build on a Mac: `./scripts/build-mac.sh` (add `--install` to install it for you)
 
 ## History
 
+- **1.2.6** - GRAB CLIP: click an audio clip in Live, then GRAB CLIP to load it into the slicer (with its tempo, if warped) or the selected drum pad. The drop zones are proper Live drop targets.
 - **1.2.5** - Warp on in the starting patch too.
 - **1.2.4** - A freshly added device always starts with Sync and Seq On on, and the slicer's Pitch and Reverse off.
 - **1.2.3** - Sessions reopen as they were saved: the saved state is kept in shorter chunks, nothing is saved until the set's own state has loaded, and every device also keeps a backup copy (by a hidden State ID) that brings it back if Live doesn't. Live's tempo shows in the Tempo box while synced.
