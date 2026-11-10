@@ -1923,6 +1923,58 @@ static void testSessionRecall()
     }
 }
 
+static void testFills()
+{
+    // Fill every 2 bars, 1 bar long: the second bar of each pair is a random fill in place of the pattern
+    auto bars = [] (int engine, int every, int vary, int len)
+    {
+        Instrument in; in.prepare (48000.0, 512);
+        in.command ("midiout", { 1.0 });
+        in.command ("param", { std::string ("engine"), (double) engine });
+        in.command ("param", { std::string ("density"), 0.9 });
+        in.command ("param", { std::string ("autofill"), (double) every });
+        in.command ("param", { std::string ("filllen"), (double) len });
+        in.command ("param", { std::string ("fillvary"), (double) vary });
+        Transport tp; tp.hostAvailable = true; tp.hostPlaying = true; tp.hostBpm = 120.0;
+        std::vector<float> l (480), r (480);
+        Engine::MidiNote buf[256];
+        std::vector<std::vector<int>> out (8);
+        for (int b = 0; b < 1600; ++b)
+        {
+            in.process (l.data(), r.data(), 480, tp); tp.hostPpq += 0.02;
+            const int n = in.takeMidi (buf, 256);
+            for (int i = 0; i < n; ++i) if (buf[i].velocity > 0) out[(size_t) (b / 200)].push_back (buf[i].note);
+        }
+        return out;
+    };
+    for (int engine : { 0, 2 })
+    {
+        const auto plain = bars (engine, 0, 0, 2);
+        const auto same  = bars (engine, 1, 0, 2);
+        const auto fresh = bars (engine, 1, 1, 2);
+        CHECK (same[0] == plain[0] && same[2] == plain[2]);         // no fill: the pattern
+        CHECK (same[1] != plain[1] && ! same[1].empty());            // fill bars: something else
+        CHECK (same[1] == same[3] && same[3] == same[5]);            // Same: the same fill every time
+        CHECK (fresh[1] != fresh[3] || fresh[3] != fresh[5]);        // New: a new one
+        if (engine == 2)
+        {
+            bool toms = false;
+            for (int nt : same[1]) toms = toms || nt == drumBaseNote + 6 || nt == drumBaseNote + 7 || nt == drumBaseNote + 11;
+            CHECK (toms);
+        }
+    }
+    // the FILL button: fills while it's on
+    {
+        Instrument in; in.prepare (48000.0, 512);
+        in.command ("param", { std::string ("fill"), 1.0 });
+        Transport tp; tp.hostAvailable = true; tp.hostPlaying = true; tp.hostBpm = 120.0;
+        std::vector<float> l (480), r (480);
+        bool filling = false;
+        for (int b = 0; b < 50; ++b) { in.process (l.data(), r.data(), 480, tp); tp.hostPpq += 0.02; filling = filling || in.engine().isFilling(); }
+        CHECK (filling);
+    }
+}
+
 int main()
 {
     {
@@ -1966,6 +2018,7 @@ int main()
     testScaleAwareness();
     testExportAndSwitching();
     testSessionRecall();
+    testFills();
     std::printf ("%d checks, %d failures\n", checks, failures);
     return failures == 0 ? 0 : 1;
 }

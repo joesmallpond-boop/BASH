@@ -41,6 +41,7 @@ Build on a Mac: `./scripts/build-mac.sh` (add `--install` to install it for you)
 
 ## History
 
+- **1.3.0** - Fills that work in every mode: FILL plays a random fill while it's on; "every" puts one at the end of every 1-16 bars; "length" sets how long (1 beat to 2 bars); Same / Vary picks the same fill each time or a new one. Drum fills roll the snare and run down the toms, slicer fills stutter, synth fills run up the key.
 - **1.2.6** - GRAB CLIP: click an audio clip in Live, then GRAB CLIP to load it into the slicer (with its tempo, if warped) or the selected drum pad. The drop zones are proper Live drop targets.
 - **1.2.5** - Warp on in the starting patch too.
 - **1.2.4** - A freshly added device always starts with Sync and Seq On on, and the slicer's Pitch and Reverse off.

@@ -4,6 +4,7 @@
 // on a clock that follows the host (Ableton) or runs on its own. Pure C++, no framework,
 // so it runs the same inside the Max for Live device and in the unit tests.
 
+#include <climits>
 #include "bash/Drums.h"
 #include "bash/Modulation.h"
 #include "bash/MachineSynth.h"
@@ -46,8 +47,10 @@ namespace bash
         SequencerParams   seq;
         int               rateIndex = 1;
         bool              stepMode = false;   // step sequencer instead of the generative one
-        bool              fill = false;       // Fill latched
-        int               autoFillBars = 0;   // 0 off, else the last bar of every N is a fill
+        bool              fill = false;       // Fill latched: fills while it's on
+        int               autoFillBars = 0;   // 0 off, else a fill at the end of every N bars
+        float             fillBeats = 2.0f;   // how long each fill lasts
+        bool              fillNew = true;     // a new fill each time (else the same one every time)
         bool              midiThru = true;    // notes in play the voice (except into the Arpeggiator)
         int               midiSlices = 16;    // BASH! Sequencer, Slices target: how many slices to play (no sample there)
 
@@ -222,6 +225,21 @@ namespace bash
         SpinMutex midiMutex;
         std::array<MidiNote, 512> midiQueue {};
         int midiCount = 0;
+        // fills: random hits that replace the pattern for a while (see Engine::runFill)
+        struct FillHit { double at; int note, slice, velocity; bool on, accent; };
+        std::array<FillHit, 256> fillQ {};
+        int    fillQn = 0;
+        double fillLastPos = -1.0;
+        int64_t fillNext = INT64_MIN;
+        int    fillNote = 36;
+        void runFill (Settings& ts, double pos0, double inc, int n, size_t seqFrom);
+        void fillStep (const Settings& ts, int64_t step, int k, int fillSteps, int64_t cycle);
+        void flushFill (bool sendOffs);
+    public:
+        bool isFilling() const { return fillNow.load(); }
+    private:
+        std::atomic<bool> fillNow { false };
+
         struct PendingOff { int note; double samplesLeft; };
         std::array<PendingOff, 64> pendingOffs {};
         int pendingCount = 0;

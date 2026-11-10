@@ -1,3 +1,4 @@
+#include <climits>
 #include "bash/Engine.h"
 
 #include <algorithm>
@@ -314,6 +315,164 @@ namespace bash
         }
     }
 
+    // ---- fills ------------------------------------------------------------------------------------
+    // While a fill plays, the pattern's notes make way for random hits: drum rolls running down the
+    // toms, stuttering slices, or a run of notes in the key, with ratchets and a rising velocity.
+    // "Same" plays the same fill every time; "New" a different one each time (both follow the
+    // pattern's seed, so a new pattern brings new fills).
+
+    void Engine::flushFill (bool sendOffs)
+    {
+        if (sendOffs)
+            for (int i = 0; i < fillQn; ++i)
+                if (! fillQ[(size_t) i].on)
+                {
+                    NoteEvent e;
+                    e.sampleOffset = 0;
+                    e.noteOn = false;
+                    e.note = fillQ[(size_t) i].note;
+                    e.slice = fillQ[(size_t) i].slice;
+                    events.push_back (e);
+                }
+        fillQn = 0;
+        fillLastPos = -1.0;
+        fillNext = INT64_MIN;
+        fillNow.store (false);
+    }
+
+    void Engine::fillStep (const Settings& ts, int64_t step, int k, int fillSteps, int64_t cycle)
+    {
+        uint64_t seed;
+        {
+            std::lock_guard<SpinMutex> g (pat.mutex());
+            seed = pat.getSeed() ^ 0xF111F111ull;
+        }
+        const int64_t occurrence = (ts.fillNew && ! ts.fill && cycle > 0) ? (step >= 0 ? step / cycle : (step - cycle + 1) / cycle)
+                                 : (ts.fillNew && ts.fill) ? step / std::max (1, fillSteps) : 0;
+        const uint64_t base = hash3 (seed, (uint64_t) occurrence, 0x5EED);
+        auto rnd = [&] (uint64_t salt) { return unitFloat (base, (uint64_t) k, salt); };
+        const float t = fillSteps > 1 ? (float) k / (float) (fillSteps - 1) : 1.0f;   // how far into the fill
+
+        if (k > 0 && rnd (1) < 0.12f) return;                                     // a breath
+        int ratchet = 1;
+        const float rr = rnd (2);
+        if (rr < 0.08f + 0.22f * t) ratchet = rnd (3) < 0.5f ? 3 : 4;
+        else if (rr < 0.3f + 0.35f * t) ratchet = 2;
+        const int vel = std::clamp ((int) std::lround (64.0f + 60.0f * t * (0.75f + 0.25f * rnd (4))), 1, 127);
+        const bool accent = rnd (5) < 0.25f + 0.4f * t;
+
+        int note = ts.seq.baseNote, slice = 0;
+        if (ts.engine == EngineType::Drums)
+        {
+            // snare rolls, kicks, claps and the toms running from high to low
+            const float x = rnd (6);
+            int pad;
+            if (x < 0.36f)      pad = 1;                                             // snare
+            else if (x < 0.52f) pad = 0;                                             // kick
+            else if (x < 0.84f) pad = t < 0.34f ? 11 : t < 0.67f ? 7 : 6;           // toms, high -> low
+            else if (x < 0.93f) pad = 4;                                             // clap
+            else                pad = 8;                                             // rim
+            note = drumBaseNote + pad;
+        }
+        else if (ts.engine == EngineType::Slicer)
+        {
+            const uint32_t count = ts.seq.sliceCount;
+            if (count == 0) return;
+            slice = (int) uniformInt (base, (uint64_t) k, 7, count);
+            if (ratchet == 1 && rnd (8) < 0.35f) ratchet = 2 + (int) uniformInt (base, (uint64_t) k, 9, 3);   // stutters
+        }
+        else
+        {
+            // a run in the key: steps up and down from the last fill note, leaping an octave near the end
+            if (k == 0) fillNote = ts.seq.baseNote + 12;
+            const int move = (int) uniformInt (base, (uint64_t) k, 10, 7) - 3;
+            fillNote = currentScale.stepFrom (fillNote, move == 0 ? 1 : move);
+            fillNote = std::clamp (fillNote, ts.seq.baseNote - 5, ts.seq.baseNote + 24);
+            note = fillNote + (t > 0.6f && rnd (11) < 0.3f ? 12 : 0);
+            if (! ts.seq.scaleLock) note += rnd (12) < 0.1f ? 1 : 0;
+            note = std::clamp (note, 0, 127);
+        }
+
+        for (int j = 0; j < ratchet; ++j)
+        {
+            const double at = (double) step + (double) j / ratchet;
+            const int v = std::clamp (vel - (ratchet - 1 - j) * 6, 1, 127);
+            if (fillQn < (int) fillQ.size()) fillQ[(size_t) fillQn++] = { at, note, slice, v, true, accent && j == 0 };
+            if (ts.engine != EngineType::Drums && fillQn < (int) fillQ.size())
+                fillQ[(size_t) fillQn++] = { at + 0.8 / ratchet, note, slice, 0, false, false };
+        }
+    }
+
+    void Engine::runFill (Settings& ts, double pos0, double inc, int n, size_t seqFrom)
+    {
+        const double pos1 = pos0 + inc * n;
+        // the transport jumped (start, loop, locate): forget what was queued
+        if (fillLastPos >= 0.0 && std::abs (pos0 - fillLastPos) > 0.5) flushFill (true);
+        fillLastPos = pos1;
+
+        const double stepsPerBeat = allRates()[(size_t) std::clamp (ts.rateIndex, 0, (int) allRates().size() - 1)].stepsPerQuarter;
+        const int fillSteps = std::max (1, (int) std::lround (stepsPerBeat * ts.fillBeats));
+        const int64_t cycle = ts.autoFillBars > 0 ? (int64_t) std::lround (stepsPerBeat * 4.0 * ts.autoFillBars) : 0;
+        auto fillIndex = [&] (int64_t st) -> int   // where step st is in a fill (-1: not in one)
+        {
+            if (ts.fill) return (int) (((st % fillSteps) + fillSteps) % fillSteps);
+            if (cycle <= 0) return -1;
+            const int64_t m = ((st % cycle) + cycle) % cycle;
+            const int64_t len = std::min<int64_t> (fillSteps, cycle);
+            return m >= cycle - len ? (int) (m - (cycle - len)) : -1;
+        };
+
+        const bool any = ts.fill || cycle > 0;
+        if (! any) fillNext = INT64_MIN;
+        if (! any && fillQn == 0) { fillNow.store (false); return; }
+
+        // the pattern makes way: its notes inside a fill don't play (the slicer's note-offs neither,
+        // since the fill's own slices would be cut by them)
+        if (any)
+        {
+            size_t w = seqFrom;
+            for (size_t i = seqFrom; i < events.size(); ++i)
+            {
+                const auto& e = events[i];
+                const int64_t st = (int64_t) std::floor (pos0 + e.sampleOffset * inc + 1e-6);
+                const bool inFill = fillIndex (st) >= 0;
+                const bool drop = inFill && (e.noteOn || ts.engine == EngineType::Slicer);
+                if (! drop) events[w++] = e;
+            }
+            events.resize (w);
+
+            // new fill steps starting in this chunk (counted on from the last one, so rounding in the
+            // song position can't skip or repeat a step)
+            if (fillNext == INT64_MIN || (double) fillNext < pos0 - 2.0 || (double) fillNext > pos1 + 2.0)
+                fillNext = (int64_t) std::ceil (pos0 - 1e-6);
+            for (; (double) fillNext < pos1 - 1e-9; ++fillNext)
+            {
+                const int k = fillIndex (fillNext);
+                if (k >= 0) fillStep (ts, fillNext, k, fillSteps, cycle);
+            }
+            fillNow.store (fillIndex ((int64_t) std::floor (pos0)) >= 0);
+        }
+
+        // play what's due
+        for (int i = 0; i < fillQn;)
+        {
+            const auto h = fillQ[(size_t) i];
+            if (h.at < pos1)
+            {
+                NoteEvent e;
+                e.sampleOffset = std::clamp ((int) ((h.at - pos0) / std::max (1e-12, inc)), 0, std::max (0, n - 1));
+                e.noteOn = h.on;
+                e.note = h.note;
+                e.slice = h.slice;
+                e.velocity = h.velocity;
+                e.accent = h.accent;
+                events.push_back (e);
+                fillQ[(size_t) i] = fillQ[(size_t) --fillQn];
+            }
+            else ++i;
+        }
+    }
+
     void Engine::renderChunk (float* l, float* r, int n, bool run, double ppq, double bpm)
     {
         std::fill (l, l + n, 0.0f);
@@ -374,6 +533,7 @@ namespace bash
         ts.seq.heldCount = heldInCount;
         ts.seq.held = heldIn;
 
+        const size_t seqFrom = events.size();   // events before this came from MIDI in
         if (run && ts.sequencerOn)
         {
             const double spq = allRates()[(size_t) std::clamp (ts.rateIndex, 0, (int) allRates().size() - 1)].stepsPerQuarter;
@@ -392,12 +552,14 @@ namespace bash
                 player.process (ppq * spq, bpm / 60.0 / sr * spq, n, pat, ts.seq, currentScale, events);
                 playIdx.store (player.currentIndex());
             }
+            runFill (ts, ppq * spq, bpm / 60.0 / sr * spq, n, seqFrom);
         }
         else
         {
             player.reset (&events, 0);
             stepPlayer.reset (&events, 0);
             for (auto& lp : lanePos) lp.store (-1);
+            flushFill (true);
         }
         // events from MIDI (offset 0) and the sequencer must stay in time order
         std::stable_sort (events.begin(), events.end(), [] (const NoteEvent& a, const NoteEvent& b) { return a.sampleOffset < b.sampleOffset; });

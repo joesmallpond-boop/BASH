@@ -141,7 +141,9 @@ namespace bash
             f ("jitter", "Jitter", "Jitter", 0.0f, 1.0f, 0.0f, 0);
             t ("scalelock", "Scale Lock", "ScLock", true, 0);
             t ("fill", "Fill", "Fill", false, 0);
-            e ("autofill", "Auto Fill", "AutoFill", { "Off", "2 bars", "4 bars", "8 bars", "16 bars" }, 0, 0);
+            e ("autofill", "Fill Every", "FillEvery", { "Off", "2 bars", "4 bars", "8 bars", "16 bars", "1 bar" }, 0, 0);
+            e ("filllen", "Fill Length", "FillLen", { "1 beat", "2 beats", "1 bar", "2 bars" }, 1, 0);
+            e ("fillvary", "Fill Variation", "FillVary", { "Same", "Vary" }, 1, 0);
             t ("thru", "MIDI Thru", "Thru", true, 0);
             i ("midislices", "Slices", "Slices", 1, 128, 16, 0);   // BASH! Sequencer, Slices target
 
@@ -375,8 +377,11 @@ namespace bash
         q.jitter       = v ("jitter");
         s.rateIndex    = (int) v ("rate");
         s.fill         = v ("fill") > 0.5f;
-        static constexpr int fillBars[] = { 0, 2, 4, 8, 16 };
-        s.autoFillBars = fillBars[std::clamp ((int) v ("autofill"), 0, 4)];
+        static constexpr int fillBars[] = { 0, 2, 4, 8, 16, 1 };
+        static constexpr float fillLen[] = { 1.0f, 2.0f, 4.0f, 8.0f };
+        s.autoFillBars = fillBars[std::clamp ((int) v ("autofill"), 0, 5)];
+        s.fillBeats = fillLen[std::clamp ((int) v ("filllen"), 0, 3)];
+        s.fillNew = v ("fillvary") > 0.5f;
         s.midiThru     = v ("thru") > 0.5f;
         s.midiSlices   = (int) v ("midislices");
 
@@ -1085,6 +1090,8 @@ namespace bash
         set ("scalelock", chance (0.85f) ? 1.0f : 0.0f);
         set ("fill", 0.0f);
         set ("autofill", chance (0.5f) ? 0.0f : 1.0f + pick (4));
+        set ("filllen", pick (3));
+        set ("fillvary", chance (0.5f) ? 1.0f : 0.0f);
 
         // synth
         set ("machine", pick (choices ("machine")));
@@ -1994,9 +2001,9 @@ namespace bash
         std::vector<ExportNote> notes;
         if (param ("mode") > 0.5f)
         {
-            static constexpr int fillBars[] = { 0, 2, 4, 8, 16 };
+            static constexpr int fillBars[] = { 0, 2, 4, 8, 16, 1 };
             auto ctx = stepContextFor (e, uiSeqParams(), scaleNow(), spq, param ("fill") > 0.5f,
-                                       fillBars[std::clamp ((int) param ("autofill"), 0, 4)]);
+                                       fillBars[std::clamp ((int) param ("autofill"), 0, 5)]);
             std::lock_guard<SpinMutex> g2 (eng.stepMutex());
             notes = renderStepNotes (eng.stepPattern(), ctx, steps);
         }
