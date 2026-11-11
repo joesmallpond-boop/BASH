@@ -2072,6 +2072,17 @@ static void testPolyPicksChords()
     CHECK (isPolyMachine ((Machine) (int) in.param ("machine")));
 }
 
+static void testVersionCheck()
+{
+    // an older engine still loaded in Live (externals load once per session) asks for a restart
+    Instrument in; std::string said;
+    in.setEmitter ([&] (const std::string& sel, const Atoms& a) { if (sel == "msg") said = atomStr (a[0]); });
+    in.command ("expect", { std::string (BASH_VERSION_STRING) });
+    CHECK (said.empty());
+    in.command ("expect", { std::string ("0.0.1") });
+    CHECK (said.find ("reopen Live") != std::string::npos);
+}
+
 static void testDuplicate()
 {
     // a duplicated track: the copy comes up exactly like the original, knobs and buttons included,
@@ -2155,6 +2166,7 @@ int main()
     testChordsAndStrum();
     testDuplicate();
     testPolyPicksChords();
+    testVersionCheck();
     std::printf ("%d checks, %d failures\n", checks, failures);
     return failures == 0 ? 0 : 1;
 }

@@ -14,7 +14,7 @@ Layout (169 px tall, like every Live device):
   right   the voice: Synth / Slicer / Drums, or the MOD page (LFOs, Life, 6 mod slots)
   far right  Level, Pan and the output meter
 """
-import json, os, struct, sys
+import json, re, os, struct, sys
 
 PARAMS = json.load(open(sys.argv[1]))
 OUT = sys.argv[2] if len(sys.argv) > 2 else "."
@@ -804,6 +804,12 @@ if VARIANT != "voice":
 fresh = {"full": "freshdefaults seqon 1 sync 1 thru 1 warp 1 pitchfollow 0 reverse 0",
          "voice": "freshdefaults warp 1 pitchfollow 0 reverse 0",
          "seq": "freshdefaults seqon 1 sync 1"}[VARIANT]
+# the device's version: if Live is still running an older bash~ (externals load once per Live session),
+# bash~ asks for Live to be restarted
+VERSION = re.search(r"project\(BASH VERSION ([0-9.]+)", open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "CMakeLists.txt")).read()).group(1)
+expect_msg = msg("expect " + VERSION)
+wire(start, 2, expect_msg, 0)
+wire(expect_msg, 0, bash, 0)
 fresh_msg = msg(fresh)
 wire(start, 2, fresh_msg, 0)
 wire(fresh_msg, 0, bash, 0)

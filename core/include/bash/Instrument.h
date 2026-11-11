@@ -101,6 +101,7 @@ namespace bash
         std::string exportFolder();
         std::string exportName (const char* ext, int bars);
         std::string exportDir;
+        std::string versionWarning;
 
         // the backup save: a file per device, named by a State ID that Live keeps in the set
         std::string stateDir;

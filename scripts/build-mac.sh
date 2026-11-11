@@ -104,7 +104,8 @@ This puts a Kalabash folder in your Live User Library with three devices:
   - BASH! Sequencer  the sequencers, as MIDI for any instrument or Drum Rack
 In Live: Browser > User Library > Kalabash.
 
-Needs Ableton Live 11 or 12 Suite (or Max for Live). Quit Live first.]]></welcome>
+Needs Ableton Live 11 or 12 Suite (or Max for Live).
+Quit Live before installing: Live keeps the old engine loaded until it restarts.]]></welcome>
   <options customize="never" require-scripts="false" hostArchitectures="arm64,x86_64"/>
   <domains enable_localSystem="true"/>
   <choices-outline><line choice="m4l"/></choices-outline>

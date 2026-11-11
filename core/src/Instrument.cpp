@@ -1508,6 +1508,14 @@ namespace bash
             else if (str (0) == "wav") exportWav (bars);
             return;
         }
+        if (sel == "expect")   // the device's version: an older engine still in memory needs Live restarting
+        {
+            const std::string want = str (0);
+            versionWarning = (! want.empty() && want != BASH_VERSION_STRING)
+                ? "Quit and reopen Live to finish updating BASH! (engine " BASH_VERSION_STRING ", device " + want + ")" : "";
+            if (! versionWarning.empty()) msg (versionWarning);
+            return;
+        }
         if (sel == "say") { msg (restOfLine (0)); return; }   // a note from the device's scripts
         if (sel == "exportdir") { setExportFolder (restOfLine (0)); return; }
         if (sel == "dice")      { rollDice(); return; }
@@ -1985,6 +1993,8 @@ namespace bash
             emit ("slices", sl);
         }
         emitFrame();
+
+        if (! versionWarning.empty() && tickCount % 125 == 0) msg (versionWarning);   // every 5 s until Live restarts
 
         // loading: the set's saved state comes in first. If it didn't (or couldn't), the backup file
         // for this device's State ID brings it back. Nothing is saved before this, so a fresh, empty

@@ -41,6 +41,7 @@ Build on a Mac: `./scripts/build-mac.sh` (add `--install` to install it for you)
 
 ## History
 
+- **1.4.2** - If Live is still running an older BASH! engine after an update, the device says so (quit and reopen Live).
 - **1.4.1** - Picking a poly voice switches the sequencer to Chords (Jazz and Strum appear) and gives the voice a patch made for chords, and picking Chords picks a poly voice; the poly voices sit lower so full chords don't clip.
 - **1.4.0** - Poly voices (Poly Saw, Pad, Keys, Organ; 8 voices); the Chords algorithm: progressions in key, with Jazz (plain triads up to rootless 9ths / 11ths / 13ths, sus and altered tones) and Strum; LOOP OUT up to 64 bars; a duplicated device comes up exactly like its original.
 - **1.3.0** - Fills that work in every mode: FILL plays a random fill while it's on; "every" puts one at the end of every 1-16 bars; "length" sets how long (1 beat to 2 bars); Same / Vary picks the same fill each time or a new one. Drum fills roll the snare and run down the toms, slicer fills stutter, synth fills run up the key.
