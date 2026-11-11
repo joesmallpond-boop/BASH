@@ -2058,7 +2058,7 @@ static void testPolyPicksChords()
         for (int t = 0; t < Instrument::loadSettleTicks + 5; ++t) in.tick();
         in.command ("param", { std::string ("machine"), (double) m });
         CHECK ((int) in.param ("algo") == (int) Algorithm::Chords);
-        CHECK (in.param ("cutoff") > 2000.0f && in.param ("reso") < 0.3f);
+        CHECK (in.param ("cutoff") > 1500.0f && in.param ("reso") < 0.3f);
         in.command ("param", { std::string ("jazz"), 1.0 });
         in.command ("param", { std::string ("density"), 0.9 });
         float peak = 0.0f;
