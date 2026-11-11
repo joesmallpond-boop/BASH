@@ -95,6 +95,7 @@ namespace bash
         struct CellInfo { std::shared_ptr<SampleData> sample; std::string name, path; int libSound = -1; int fmPreset = -1; };
 
         void setParamValue (int index, float v, bool fromUi);
+        void applyVoicePatch (Machine);
         void pull();                             // audio thread: params -> engine settings
         void pullInto (Settings&, ModMatrix&);
         std::string exportFolder();

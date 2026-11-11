@@ -444,11 +444,11 @@ static void testMachines()
             rms = std::sqrt (rms / 12000.0);
             CHECK (finite);
             // (an organ's sine drawbars through a high-pass at 1.2 kHz are quiet, rightly)
-            CHECK (rms > (m == (int) Machine::Organ && f != 0 ? 0.0005 : 0.005));
+            CHECK (rms > (m == (int) Machine::Organ && f != 0 ? 0.0001 : 0.002));
             CHECK (peak < 2.0f);
             CHECK (std::abs (out.back()) < 1.0e-3f);   // released to silence
             CHECK (syn.isSilent());
-            if (! (rms > 0.0005)) std::printf ("  silent machine %s filter %d\n", machineName ((Machine) m), f);
+            if (! (rms > 0.0001)) std::printf ("  silent machine %s filter %d\n", machineName ((Machine) m), f);
         }
 
     // poly: three notes sound together, a fourth/fifth steal politely
@@ -2046,6 +2046,32 @@ static void testChordsAndStrum()
     CHECK (e > 1.0e-3);
 }
 
+static void testPolyPicksChords()
+{
+    // picking a poly voice by hand brings Chords and a patch for chords (and the other way round);
+    // a full jazzy chord stays below clipping
+    for (int m = (int) Machine::PolySaw; m <= (int) Machine::Organ; ++m)
+    {
+        Instrument in; in.prepare (48000.0, 512);
+        std::vector<float> l (480), r (480);
+        Transport tp; tp.hostAvailable = true; tp.hostPlaying = true; tp.hostBpm = 120.0;
+        for (int t = 0; t < Instrument::loadSettleTicks + 5; ++t) in.tick();
+        in.command ("param", { std::string ("machine"), (double) m });
+        CHECK ((int) in.param ("algo") == (int) Algorithm::Chords);
+        CHECK (in.param ("cutoff") > 2000.0f && in.param ("reso") < 0.3f);
+        in.command ("param", { std::string ("jazz"), 1.0 });
+        in.command ("param", { std::string ("density"), 0.9 });
+        float peak = 0.0f;
+        for (int b = 0; b < 800; ++b) { in.process (l.data(), r.data(), 480, tp); tp.hostPpq += 0.02; for (float v : l) peak = std::max (peak, std::abs (v)); }
+        CHECK (peak > 0.05f && peak < 1.0f);
+        if (! (peak < 1.0f)) std::printf ("  machine %d peak %.2f\n", m, peak);
+    }
+    Instrument in; in.prepare (48000.0, 512);
+    for (int t = 0; t < Instrument::loadSettleTicks + 5; ++t) in.tick();
+    in.command ("param", { std::string ("algo"), (double) (int) Algorithm::Chords });
+    CHECK (isPolyMachine ((Machine) (int) in.param ("machine")));
+}
+
 static void testDuplicate()
 {
     // a duplicated track: the copy comes up exactly like the original, knobs and buttons included,
@@ -2128,6 +2154,7 @@ int main()
     testFills();
     testChordsAndStrum();
     testDuplicate();
+    testPolyPicksChords();
     std::printf ("%d checks, %d failures\n", checks, failures);
     return failures == 0 ? 0 : 1;
 }

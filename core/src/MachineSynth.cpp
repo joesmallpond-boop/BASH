@@ -292,7 +292,7 @@ namespace bash
                 advance (phase[0], d0); advance (phase[1], d1); advance (phase[2], d2); advance (phase[3], dt * 0.5);
                 noiseState ^= noiseState << 13; noiseState ^= noiseState >> 17; noiseState ^= noiseState << 5;
                 const float air = (float) (int32_t) noiseState / 2147483648.0f;
-                return y * 0.6f + air * t * 0.08f;
+                return y * 0.6f + air * t * 0.025f;
             }
 
             case Machine::Keys:
@@ -352,6 +352,8 @@ namespace bash
             return;
 
         const float invSr     = (float) (1.0 / sr);
+        // chords stack up to 7 voices: the poly machines sit lower so a full chord doesn't clip
+        const float voiceGain = isPolyMachine (p.machine) ? 0.24f : 0.5f;
         // the poly voices keep a natural swell and tail even with acid-style envelope settings
         const float attack  = p.machine == Machine::Pad ? std::max (p.attack, 0.08f) : p.attack;
         const float release = p.machine == Machine::Pad ? std::max (p.release, 0.6f)
@@ -414,7 +416,7 @@ namespace bash
 
             const float accentGain = isAccent ? 1.0f + 0.5f * p.accent * accentEnv : 1.0f;
             const float y = std::tanh (filtered * driveAmt) * driveNorm;
-            out[i] += y * amp * velocityGain * accentGain * 0.5f;
+            out[i] += y * amp * velocityGain * accentGain * voiceGain;
         }
     }
 

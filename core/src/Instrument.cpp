@@ -558,6 +558,52 @@ namespace bash
         if (s.id == "warp" || s.id == "sync" || s.id == "tempo") updateWarp (false);
         if (s.id == "engine") { emitPads(); emitWave(); }
         if (s.id == "keylock" && v > 0.5f && lastLiveRoot >= 0) keyFromLive (lastLiveRoot, lastLiveMask);
+
+        // picking a poly voice or Chords by hand (not a set loading, the dice or undo): the two go
+        // together, and the voice gets a patch that suits chords
+        if (fromUi && loadPhaseDone && ! restoring)
+        {
+            const int chords = (int) Algorithm::Chords;
+            if (s.id == "machine")
+            {
+                const bool polyNow = isPolyMachine ((Machine) (int) v), polyBefore = isPolyMachine ((Machine) (int) old);
+                if (polyNow) applyVoicePatch ((Machine) (int) v);
+                else if (polyBefore) applyVoicePatch ((Machine) (int) v);   // back to the acid patch
+                if (polyNow && param ("mode") < 0.5f && (int) param ("algo") != chords && (int) param ("algo") != (int) Algorithm::Arpeggiator)
+                    setParamValue (paramIndex ("algo"), (float) chords, false);
+            }
+            if (s.id == "algo" && (int) v == chords && engineType() == EngineType::Synth && ! isPolyMachine ((Machine) (int) param ("machine")))
+            {
+                setParamValue (paramIndex ("machine"), (float) (int) Machine::PolySaw, false);
+                applyVoicePatch (Machine::PolySaw);
+            }
+        }
+    }
+
+    void Instrument::applyVoicePatch (Machine m)
+    {
+        // cutoff reso envmod decay drive  attack decay sustain release  accent
+        struct Patch { float cutoff, reso, envmod, decay, drive, atk, adec, sus, rel, accent, character = -1.0f, timbre = -1.0f; };
+        Patch p;
+        switch (m)
+        {
+            case Machine::PolySaw: p = { 3200.0f, 0.18f, 0.25f, 0.9f, 0.08f, 0.008f, 1.2f, 0.75f, 0.45f, 0.2f, 0.4f, 0.3f }; break;
+            case Machine::Pad:     p = { 1800.0f, 0.12f, 0.15f, 1.8f, 0.04f, 0.45f, 2.0f, 1.0f, 1.6f, 0.1f, 0.4f, 0.2f }; break;
+            case Machine::Keys:    p = { 6000.0f, 0.05f, 0.10f, 1.2f, 0.10f, 0.002f, 1.8f, 0.35f, 0.6f, 0.2f, 0.5f, 0.35f }; break;
+            case Machine::Organ:   p = { 5000.0f, 0.05f, 0.00f, 1.0f, 0.12f, 0.006f, 0.5f, 1.0f, 0.12f, 0.0f, 0.5f, 0.4f }; break;
+            default:
+            {
+                // the acid patch (the parameters' own defaults)
+                auto d = [] (const char* id) { return paramSpecs()[(size_t) paramIndex (id)].def; };
+                p = { d ("cutoff"), d ("reso"), d ("envmod"), d ("decay"), d ("drive"), d ("aatk"), d ("adec"), d ("asus"), d ("arel"), d ("accent") };
+            }
+        }
+        auto set = [this] (const char* id, float v) { setParamValue (paramIndex (id), v, false); };
+        set ("cutoff", p.cutoff); set ("reso", p.reso); set ("envmod", p.envmod); set ("decay", p.decay); set ("drive", p.drive);
+        set ("aatk", p.atk); set ("adec", p.adec); set ("asus", p.sus); set ("arel", p.rel);
+        if (isPolyMachine (m)) set ("accent", p.accent);
+        if (p.character >= 0.0f) set ("wave", p.character);
+        if (p.timbre >= 0.0f) set ("timbre", p.timbre);
     }
 
     void Instrument::emitParam (const std::string& id, float v)
@@ -1153,6 +1199,12 @@ namespace bash
         set ("adec", skew (0.05f, 2.0f, 1.5f));
         set ("asus", u());
         set ("arel", skew (0.005f, 1.2f, 2.0f));
+        // a poly voice gets a patch that suits it (and usually chords)
+        if (isPolyMachine ((Machine) (int) param ("machine")))
+        {
+            applyVoicePatch ((Machine) (int) param ("machine"));
+            if (chance (0.75f)) set ("algo", (float) (int) Algorithm::Chords);
+        }
 
         // slicer
         set ("slicemode", pick (choices ("slicemode")));
