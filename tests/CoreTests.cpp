@@ -432,20 +432,23 @@ static void testMachines()
             MachineSynth syn; syn.prepare (48000.0);
             MachineVoice::Params p; p.machine = (Machine) m; p.filterType = (FilterType) f;
             p.cutoff = 1200.0f; p.character = 0.6f; p.timbre = 0.7f; p.resonance = 0.9f;
-            std::vector<float> out (24000, 0.0f);
+            // the poly voices keep a longer natural tail
+            const int tail = isPolyMachine ((Machine) m) ? 96000 : 12000;
+            std::vector<float> out ((size_t) (12000 + tail), 0.0f);
             syn.noteOn (45, 110, true, false);
             syn.render (out.data(), 0, 12000, p);
             syn.noteOff (45);
-            syn.render (out.data(), 12000, 12000, p);
+            syn.render (out.data(), 12000, tail, p);
             double rms = 0.0; float peak = 0.0f; bool finite = true;
             for (int i = 0; i < 12000; ++i) { rms += out[i] * out[i]; peak = std::max (peak, std::abs (out[i])); finite = finite && std::isfinite (out[i]); }
             rms = std::sqrt (rms / 12000.0);
             CHECK (finite);
-            CHECK (rms > 0.005);
+            // (an organ's sine drawbars through a high-pass at 1.2 kHz are quiet, rightly)
+            CHECK (rms > (m == (int) Machine::Organ && f != 0 ? 0.0005 : 0.005));
             CHECK (peak < 2.0f);
-            CHECK (std::abs (out[23999]) < 1.0e-3f);   // released to silence
+            CHECK (std::abs (out.back()) < 1.0e-3f);   // released to silence
             CHECK (syn.isSilent());
-            if (! (rms > 0.005)) std::printf ("  silent machine %s filter %d\n", machineName ((Machine) m), f);
+            if (! (rms > 0.0005)) std::printf ("  silent machine %s filter %d\n", machineName ((Machine) m), f);
         }
 
     // poly: three notes sound together, a fourth/fifth steal politely
@@ -1975,6 +1978,110 @@ static void testFills()
     }
 }
 
+static void testChordsAndStrum()
+{
+    // Chords: in key, richer with Jazz
+    Scale sc (0, 0);
+    auto avgNotes = [&] (float jazz, int& outOfRange)
+    {
+        Pattern pat; pat.setSeed (777);
+        SequencerParams p; p.algorithm = Algorithm::Chords; p.density = 0.5f; p.jazz = jazz; p.type = 0.0f;
+        int total = 0, chords = 0;
+        for (uint32_t i = 0; i < 256; ++i)
+        {
+            const auto s = pat.step (i, p, sc);
+            if (! s.active) continue;
+            ++chords; total += 1 + s.chordExtra;
+            if (s.note < 0 || s.note > 127) ++outOfRange;
+            for (int c = 0; c < s.chordExtra; ++c) if (s.chord[(size_t) c] < 0 || s.chord[(size_t) c] > 127) ++outOfRange;
+        }
+        return chords > 0 ? (double) total / chords : 0.0;
+    };
+    int bad = 0;
+    const double plain = avgNotes (0.0f, bad), jazzy = avgNotes (1.0f, bad);
+    CHECK (bad == 0);
+    CHECK (plain >= 2.9 && plain <= 3.1);     // triads
+    CHECK (jazzy > 4.0);                      // 7ths, 9ths, 13ths over a bass root
+
+    // Strum: the chord's notes arrive one after another; every note still ends
+    Instrument in; in.prepare (48000.0, 512);
+    in.command ("midiout", { 1.0 });
+    in.command ("param", { std::string ("algo"), (double) (int) Algorithm::Chords });
+    in.command ("param", { std::string ("jazz"), 1.0 });
+    in.command ("param", { std::string ("strum"), 1.0 });
+    in.command ("param", { std::string ("density"), 0.7 });
+    Transport tp; tp.hostAvailable = true; tp.hostPlaying = true; tp.hostBpm = 120.0;
+    std::vector<float> l (480), r (480);
+    Engine::MidiNote buf[256];
+    std::map<int, int> held;
+    int maxPerBlock = 0, ons = 0, blocksWithOns = 0;
+    for (int b = 0; b < 800; ++b)
+    {
+        if (b == 700) tp.hostPlaying = false;
+        in.process (l.data(), r.data(), 480, tp); if (tp.hostPlaying) tp.hostPpq += 0.02;
+        const int n = in.takeMidi (buf, 256);
+        int blockOns = 0;
+        for (int i = 0; i < n; ++i)
+        {
+            if (buf[i].velocity > 0) { ++held[buf[i].note]; ++blockOns; ++ons; }
+            else if (held[buf[i].note] > 0) --held[buf[i].note];
+        }
+        maxPerBlock = std::max (maxPerBlock, blockOns);
+        if (blockOns > 0) ++blocksWithOns;
+    }
+    int stuck = 0; for (auto& [nn, c] : held) stuck += c;
+    CHECK (ons > 20);
+    CHECK (maxPerBlock <= 3);                 // strummed: not all at once (10 ms blocks, 45 ms apart)
+    CHECK (stuck == 0);
+
+    // the poly voices sound chords
+    Instrument poly; poly.prepare (48000.0, 512);
+    poly.command ("param", { std::string ("machine"), (double) (int) Machine::Keys });
+    poly.command ("param", { std::string ("seqon"), 0.0 });
+    poly.command ("param", { std::string ("thru"), 1.0 });
+    for (int nt : { 48, 52, 55, 59 }) poly.command ("note", { (double) nt, 100.0 });
+    double e = 0.0;
+    Transport none;
+    for (int b = 0; b < 40; ++b) { poly.process (l.data(), r.data(), 480, none); for (float v : l) e += (double) v * v; }
+    CHECK (e > 1.0e-3);
+}
+
+static void testDuplicate()
+{
+    // a duplicated track: the copy comes up exactly like the original, knobs and buttons included,
+    // whether Live hands it the original's State ID or not
+    std::vector<float> l (512), r (512); Transport tp;
+    auto run = [&] (Instrument& in, int ticks) { for (int t = 0; t < ticks; ++t) { in.process (l.data(), r.data(), 512, tp); in.tick(); } };
+    Instrument a; a.prepare (48000.0, 512);
+    std::map<int, Atoms> chunks; int id = 0;
+    a.setEmitter ([&] (const std::string& sel, const Atoms& v)
+    {
+        if (sel == "state") chunks[(int) atomNum (v[0])] = v;
+        if (sel == "stateid") id = (int) atomNum (v[0]);
+    });
+    a.command ("param", { std::string ("engine"), 2.0 });
+    a.command ("param", { std::string ("cutoff"), 1234.0 });
+    a.command ("param", { std::string ("density"), 0.33 });
+    a.command ("param", { std::string ("sync"), 0.0 });
+    a.command ("dice", {});
+    run (a, Instrument::loadSettleTicks + 30);
+    CHECK (id > 0);
+    for (int withId = 0; withId < 2; ++withId)
+    {
+        Instrument b; b.prepare (48000.0, 512);
+        int bid = 0;
+        b.setEmitter ([&] (const std::string& sel, const Atoms& v) { if (sel == "stateid") bid = (int) atomNum (v[0]); });
+        if (withId) b.command ("stateid", { (double) id });
+        for (auto& [k, v] : chunks) b.command ("restore", v);
+        run (b, Instrument::loadSettleTicks + 30);
+        int same = 0;
+        for (const auto& spec : paramSpecs()) same += a.param (spec.id) == b.param (spec.id) ? 1 : 0;
+        CHECK (same == (int) paramSpecs().size());
+        CHECK (bid > 0 && bid != id);
+        CHECK (b.saveState() == a.saveState());
+    }
+}
+
 int main()
 {
     {
@@ -2019,6 +2126,8 @@ int main()
     testExportAndSwitching();
     testSessionRecall();
     testFills();
+    testChordsAndStrum();
+    testDuplicate();
     std::printf ("%d checks, %d failures\n", checks, failures);
     return failures == 0 ? 0 : 1;
 }

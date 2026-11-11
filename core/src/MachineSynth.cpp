@@ -49,6 +49,10 @@ namespace bash
             case Machine::Vo:            return "VO";
             case Machine::PulseInterval: return "Pulse-Interval";
             case Machine::Noise:         return "Noise";
+            case Machine::PolySaw:       return "Poly Saw";
+            case Machine::Pad:           return "Pad";
+            case Machine::Keys:          return "Keys";
+            case Machine::Organ:         return "Organ";
             default:                     return "?";
         }
     }
@@ -64,6 +68,10 @@ namespace bash
             case Machine::Vo:            return "VOWEL";
             case Machine::PulseInterval: return "INTERVAL";
             case Machine::Noise:         return "RESO";
+            case Machine::PolySaw:       return "DETUNE";
+            case Machine::Pad:           return "MOVEMENT";
+            case Machine::Keys:          return "TINE";
+            case Machine::Organ:         return "DRAWBARS";
             default:                     return "CHARACTER";
         }
     }
@@ -79,6 +87,10 @@ namespace bash
             case Machine::Vo:            return "SHIFT";
             case Machine::PulseInterval: return "PW";
             case Machine::Noise:         return "COLOUR";
+            case Machine::PolySaw:       return "SUB";
+            case Machine::Pad:           return "AIR";
+            case Machine::Keys:          return "BARK";
+            case Machine::Organ:         return "ROTARY";
             default:                     return "TIMBRE";
         }
     }
@@ -111,6 +123,7 @@ namespace bash
         for (size_t i = 0; i < phase.size(); ++i) phase[i] = (double) i * 0.137;   // decorrelated SuperWave starts
         modPhase = lfoPhase = 0.0;
         fmFeedback = 0.0f;
+        modEnv = keyEnv = 0.0f;
         coeffCountdown = 0;
     }
 
@@ -127,6 +140,12 @@ namespace bash
             ampStage = Stage::Attack;     // retrigger from the current level: no click
         }
         velocityGain = 0.55f + 0.45f * (float) std::clamp (velocity, 1, 127) / 127.0f;
+        if (! glideFromHeld)
+        {
+            modEnv = 0.4f + 0.6f * (float) std::clamp (velocity, 1, 127) / 127.0f;
+            keyEnv = 1.0f;
+            drift = ((float) ((counter * 2654435761u) % 1000u) / 1000.0f - 0.5f) * 0.004f;   // +-0.2%
+        }
         note = n;
         gate = true;
         startedAt = ++counter;
@@ -251,6 +270,63 @@ namespace bash
                 return y * 0.55f;
             }
 
+            case Machine::PolySaw:
+            {
+                const double d = c * 0.012;   // up to ~20 cents apart
+                const double dA = dt * (1.0 + d + drift), dB = dt * (1.0 - d + drift);
+                const float y = sawBl (phase[0], dA) + sawBl (phase[1], dB);
+                const float sub = pulseBl (phase[2], dt * 0.5, 0.5);
+                advance (phase[0], dA); advance (phase[1], dB); advance (phase[2], dt * 0.5);
+                return y * 0.45f + sub * t * 0.5f;
+            }
+
+            case Machine::Pad:
+            {
+                advance (lfoPhase, (0.25 + 0.5 * c) / sr);
+                const double wob = std::sin (twoPi * lfoPhase);
+                const double d = 0.004 + 0.01 * c;
+                const double d0 = dt * (1.0 + drift + d * wob * 0.3), d1 = dt * (1.0 - d), d2 = dt * (1.0 + d);
+                float y = sawBl (phase[0], d0) * 0.4f + sawBl (phase[1], d1) * 0.3f + sawBl (phase[2], d2) * 0.3f;
+                const double pw = 0.5 + 0.35 * c * std::sin (twoPi * lfoPhase * 0.7 + 1.0);
+                y += pulseBl (phase[3], dt * 0.5, pw) * 0.35f;
+                advance (phase[0], d0); advance (phase[1], d1); advance (phase[2], d2); advance (phase[3], dt * 0.5);
+                noiseState ^= noiseState << 13; noiseState ^= noiseState >> 17; noiseState ^= noiseState << 5;
+                const float air = (float) (int32_t) noiseState / 2147483648.0f;
+                return y * 0.6f + air * t * 0.08f;
+            }
+
+            case Machine::Keys:
+            {
+                // two-operator FM electric piano: a 1:1 "bark" pair and a high, fast-fading tine
+                const float invSr = (float) (1.0 / sr);
+                modEnv *= std::exp (-invSr / 0.35f);
+                keyEnv *= std::exp (-invSr / 2.5f);
+                const float bark = (float) std::sin (twoPi * modPhase) * (0.4f + 2.6f * t) * modEnv;
+                const float body = (float) std::sin (twoPi * phase[0] + bark);
+                const float tineMod = (float) std::sin (twoPi * phase[2]) * 2.0f * modEnv * modEnv;
+                const float tine = (float) std::sin (twoPi * phase[1] + tineMod) * c * modEnv * 0.5f;
+                advance (phase[0], dt); advance (modPhase, dt); advance (phase[1], std::min (0.45, dt * 4.0)); advance (phase[2], std::min (0.45, dt * 14.0));
+                return (body * 0.8f + tine) * (0.35f + 0.65f * keyEnv);
+            }
+
+            case Machine::Organ:
+            {
+                // drawbars 16', 8', 4', 2 2/3', 2' and 1': Character sweeps from mellow to full
+                advance (lfoPhase, (5.5 + 1.2 * t) / sr);
+                const double vib = 1.0 + 0.004 * t * std::sin (twoPi * lfoPhase);
+                static constexpr double harm[6] = { 0.5, 1.0, 2.0, 3.0, 4.0, 8.0 };
+                const float bars[6] = { 0.8f, 1.0f, 0.3f + 0.7f * c, 0.6f * c, 0.5f * c, 0.4f * c * c };
+                float y = 0.0f;
+                for (int h = 0; h < 6; ++h)
+                {
+                    const double dh = dt * harm[h] * vib;
+                    if (dh < 0.45) y += (float) std::sin (twoPi * phase[(size_t) h]) * bars[h];
+                    advance (phase[(size_t) h], std::min (0.45, dh));
+                }
+                const float amTrem = 1.0f - 0.15f * t * (float) (0.5 + 0.5 * std::sin (twoPi * lfoPhase));
+                return y * 0.3f * amTrem;
+            }
+
             case Machine::Noise:
             {
                 noiseState ^= noiseState << 13; noiseState ^= noiseState >> 17; noiseState ^= noiseState << 5;
@@ -276,9 +352,13 @@ namespace bash
             return;
 
         const float invSr     = (float) (1.0 / sr);
-        const float attackInc = invSr / std::max (0.0005f, p.attack);
+        // the poly voices keep a natural swell and tail even with acid-style envelope settings
+        const float attack  = p.machine == Machine::Pad ? std::max (p.attack, 0.08f) : p.attack;
+        const float release = p.machine == Machine::Pad ? std::max (p.release, 0.6f)
+                            : isPolyMachine (p.machine) ? std::max (p.release, 0.15f) : p.release;
+        const float attackInc = invSr / std::max (0.0005f, attack);
         const float decCoef   = std::exp (-invSr / std::max (0.002f, p.ampDecay * 0.35f));
-        const float relCoef   = std::exp (-invSr / std::max (0.002f, p.release * 0.35f));
+        const float relCoef   = std::exp (-invSr / std::max (0.002f, release * 0.35f));
         const float sustain   = std::clamp (p.sustain, 0.0f, 1.0f);
         const float decayTime = std::max (0.01f, p.decay * (isAccent ? 0.5f : 1.0f));
         const float envCoef   = std::exp (-invSr / decayTime);

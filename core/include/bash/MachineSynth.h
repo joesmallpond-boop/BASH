@@ -1,8 +1,8 @@
 #pragma once
 // BASH! core — the machine synth. Pick a "machine" (oscillator model), shape it
 // with a shared 24 dB multimode filter, envelopes, drive, accent and glide.
-// Up to 4 voices so the Counterpoint algorithm can play chords; mono with
-// legato glide for acid lines.
+// Up to 8 voices for chords (Chords / Counterpoint, step lanes, the poly machines);
+// mono with legato glide for acid lines.
 
 #include <array>
 #include <cstdint>
@@ -18,8 +18,14 @@ namespace bash
         Vo,             // vowel formants
         PulseInterval,  // two pulses at an interval
         Noise,          // resonant pitched noise
+        // poly voices (always polyphonic: chords, pads, keys)
+        PolySaw,        // two detuned saws + a sub: the classic poly synth
+        Pad,            // drifting saws and a moving pulse, slow to swell and fade
+        Keys,           // FM electric piano: tine and bark
+        Organ,          // drawbar organ with a rotary wobble
         count
     };
+    inline bool isPolyMachine (Machine m) { return m == Machine::PolySaw || m == Machine::Pad || m == Machine::Keys || m == Machine::Organ; }
     const char* machineName (Machine);
     const char* machineCharacterName (Machine);   // what the Character knob does
     const char* machineTimbreName (Machine);      // what the Timbre knob does
@@ -80,6 +86,8 @@ namespace bash
         std::array<double, 7> phase {};
         double modPhase = 0.0, lfoPhase = 0.0;
         float  fmFeedback = 0.0f;
+        float  modEnv = 0.0f, keyEnv = 0.0f;   // Keys: tine brightness, natural decay
+        float  drift = 0.0f;                   // Pad / PolySaw: a little per-voice pitch drift
         uint32_t noiseState = 0x12345678u;
 
         Stage  ampStage = Stage::Idle;
@@ -103,7 +111,7 @@ namespace bash
     class MachineSynth
     {
     public:
-        static constexpr int maxVoices = 4;
+        static constexpr int maxVoices = 8;
 
         void prepare (double sampleRate)   { for (auto& v : voices) v.prepare (sampleRate); }
         void reset()                       { for (auto& v : voices) v.reset(); }

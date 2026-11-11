@@ -177,6 +177,67 @@ namespace bash
                 break;
             }
 
+            case Algorithm::Chords:
+            {
+                // A four-chord progression in the key (one of a few classic shapes, picked by the seed),
+                // a chord per bar, half bar or beat as Type rises. Density: long chords -> busy stabs.
+                static constexpr int progressions[][4] = {
+                    { 0, 5, 3, 4 }, { 0, 4, 5, 3 }, { 1, 4, 0, 0 }, { 5, 3, 0, 4 },
+                    { 0, 3, 4, 3 }, { 0, 2, 5, 3 }, { 3, 4, 2, 5 }, { 0, 5, 1, 4 } };
+                const float j = std::clamp (p.jazz, 0.0f, 1.0f);
+                const uint32_t chordLen = t < 0.34f ? 16u : t < 0.67f ? 8u : 4u;
+                const uint32_t ci = i / chordLen, inChord = i % chordLen;
+                const auto& prog = progressions[uniformInt (seed, 0, salt::harmony, 8)];
+                int degree = prog[ci % 4];
+                if (unitFloat (seed, ci, salt::harmonyChaos) < t * 0.35f) degree = pickDegree (unitFloat (seed, ci, salt::harmony + 3));
+                if (j > 0.5f && ci % 4 == 3 && unitFloat (seed, ci, salt::harmony + 9) < j - 0.3f) degree = 4;   // a V to turn round
+
+                // rhythm: the chord's first step always; more stabs as Density rises
+                const bool first = inChord == 0;
+                s.active = first ? density > 0.05f
+                                 : rhythmPriority (chordGrid, seed, i, t, 0.3f, salt::chordRhythm, salt::rhythm) < (density - 0.35f) * 1.5f;
+                const float sustain = std::clamp (1.0f - density, 0.15f, 1.0f);
+                s.gate = std::clamp (p.gate * 2.0f * (float) (chordLen - inChord) * sustain, 0.25f, (float) (chordLen - inChord));
+
+                // the voicing: stacked thirds in the key, richer with Jazz
+                const int root = scale.stepFrom (p.baseNote + 12, degree);
+                const int center = p.baseNote + 19;
+                int degs[7]; int nd = 0;
+                degs[nd++] = 0; degs[nd++] = 2; degs[nd++] = 4;
+                auto r = [&] (uint64_t k) { return unitFloat (seed, ci * 31u + (uint32_t) k, salt::chordExtra); };
+                if (r (1) < j * 1.5f) degs[nd++] = 6;                       // 7th
+                if (j > 0.3f && r (2) < j * 1.1f) degs[nd++] = 8;           // 9th
+                if (j > 0.55f && r (3) < j) degs[nd++] = r (4) < 0.6f ? 12 : 10;   // 13th / 11th
+                if (r (5) < j * 0.35f) degs[1] = r (6) < 0.5f ? 3 : 1;      // sus4 / sus2
+                int notes[7]; int nn = 0;
+                for (int k = 0; k < nd; ++k) notes[nn++] = scale.stepFrom (root, degs[k]);
+                if (j > 0.82f && nn > 3 && r (7) < (j - 0.8f) * 3.0f)       // an altered tone: b9 or #11
+                    notes[nn - 1] += r (8) < 0.5f ? -1 : 1;
+
+                // rootless above a bass root (from about halfway), and a drop-2 spread
+                const bool rootless = j > 0.45f && nn >= 4 && r (9) < j;
+                int upper[7]; int nu = 0;
+                for (int k = rootless ? 1 : 0; k < nn; ++k)
+                {
+                    int x = notes[k];
+                    while (x < center - 5) x += 12;
+                    while (x >= center + 9) x -= 12;
+                    upper[nu++] = x;
+                }
+                std::sort (upper, upper + nu);
+                nu = (int) (std::unique (upper, upper + nu) - upper);
+                if (j > 0.35f && nu >= 4 && r (10) < j) { upper[nu - 2] -= 12; std::sort (upper, upper + nu); }
+
+                int bass = root;
+                while (bass > p.baseNote + 7) bass -= 12;
+                if (rootless || j > 0.2f) { s.note = bass; for (int k = 0; k < nu && k < maxChordNotes - 1; ++k) s.chord[(size_t) k] = upper[k]; s.chordExtra = std::min (nu, maxChordNotes - 1); }
+                else { s.note = upper[0]; for (int k = 1; k < nu; ++k) s.chord[(size_t) k - 1] = upper[k]; s.chordExtra = nu - 1; }
+
+                s.accent = first && unitFloat (seed, i, salt::accent) < 0.3f;
+                s.slide  = false;
+                break;
+            }
+
             case Algorithm::CoreAcidV1:
             case Algorithm::CoreAcidV2:
             default:
@@ -214,7 +275,7 @@ namespace bash
         }
 
         // An imported motif replaces the structured layer; Type still morphs away from it.
-        if (! motif.empty() && p.algorithm != Algorithm::Counterpoint && p.algorithm != Algorithm::Arpeggiator)
+        if (! motif.empty() && p.algorithm != Algorithm::Counterpoint && p.algorithm != Algorithm::Arpeggiator && p.algorithm != Algorithm::Chords)
         {
             const auto& m = motif[(size_t) (i % (uint32_t) motif.size())];
             if (unitFloat (seed, i, salt::motifChaos) >= t)
@@ -253,8 +314,8 @@ namespace bash
             const uint32_t n  = p.sliceCount;
             const uint32_t ws = std::min (p.windowStart, n - 1);
             const uint32_t wz = std::clamp<uint32_t> (p.windowSize, 1u, std::min (8u, n - ws));
-            int hits[maxChordNotes]; int count = 0;
-            for (uint32_t r = 0; r < wz && count < maxChordNotes; ++r)
+            int hits[4]; int count = 0;   // up to 4 drum hits per step
+            for (uint32_t r = 0; r < wz && count < 4; ++r)
             {
                 const float jitter = unitFloat (seed, i * 8u + r, salt::grooveJitter);
                 const float structured = std::clamp (roles[r][i % 16] + (jitter - 0.5f) * 0.2f, 0.0f, 0.999f);
@@ -529,22 +590,24 @@ namespace bash
             lastIndex = idx;
             lastBoundary = b;
 
-            if (p.algorithm == Algorithm::Counterpoint || (p.drumTrack && p.sliceMode == SliceMode::Groove))
+            if (p.algorithm == Algorithm::Counterpoint || p.algorithm == Algorithm::Chords || (p.drumTrack && p.sliceMode == SliceMode::Groove))
             {
                 const int at = offsetAt (start);
                 if (heldNote >= 0) { out.push_back ({ at, false, heldNote, 0, false, false }); heldNote = -1; heldSlides = false; }
                 if (s.active)
                 {
                     releasePoly (0.0, posStart, stepsPerSample, numSamples, out, 0, at);
-                    out.push_back ({ at, true, s.note, s.velocity, false, s.accent, s.slice, 0 });
+                    out.push_back ({ at, true, s.note, s.velocity, false, s.accent, s.slice, 0, 0 });
                     polyHeld.push_back ({ s.note, start + s.gate, 0 });
+                    const int chordVel = p.algorithm == Algorithm::Chords ? 6 : 12;
+                    int strum = 1;
                     for (int c = 0; c < s.chordExtra; ++c)
                     {
                         const int cn = s.chord[(size_t) c];
                         bool dup = cn == s.note;
                         for (int d = 0; d < c; ++d) dup = dup || s.chord[(size_t) d] == cn;
                         if (dup) continue;
-                        out.push_back ({ at, true, cn, std::max (1, s.velocity - 12), false, s.accent, s.slice, 0 });
+                        out.push_back ({ at, true, cn, std::max (1, s.velocity - chordVel), false, s.accent, s.slice, 0, strum++ });
                         polyHeld.push_back ({ cn, start + s.gate, 0 });
                     }
                 }
@@ -664,6 +727,7 @@ namespace bash
             case Algorithm::Counterpoint:  return "Counterpoint";
             case Algorithm::Arpeggiator:   return "Arpeggiator";
             case Algorithm::DedicatedBass: return "Dedicated Bass";
+            case Algorithm::Chords:        return "Chords";
             default:                       return "?";
         }
     }

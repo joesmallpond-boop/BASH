@@ -301,7 +301,8 @@ namespace bash
             case EngineType::Synth:
             default:
             {
-                synth.setPolyphonic (ts.stepMode || ts.seq.algorithm == Algorithm::Counterpoint);   // step lanes can play chords
+                synth.setPolyphonic (ts.stepMode || ts.seq.algorithm == Algorithm::Counterpoint || ts.seq.algorithm == Algorithm::Chords
+                                     || isPolyMachine (ts.voice.machine));   // chords, step lanes, the poly voices
                 if (e.noteOn)
                 {
                     synth.noteOn (e.note, e.velocity, e.accent, e.legato);
@@ -561,6 +562,55 @@ namespace bash
             for (auto& lp : lanePos) lp.store (-1);
             flushFill (true);
         }
+        // Strum: a chord's notes come in one after another (up to ~45 ms apart), held back across
+        // blocks when they must be; a note's off never overtakes its own delayed on
+        {
+            const double gap = std::clamp (ts.strum, 0.0f, 1.0f) * 0.045 * sr;
+            for (int i = 0; i < strumQn;)
+            {
+                auto& q = strumQ[(size_t) i];
+                if (q.samplesLeft < n)
+                {
+                    NoteEvent e = q.e;
+                    e.sampleOffset = (int) std::max (0.0, q.samplesLeft);
+                    events.push_back (e);
+                    strumQ[(size_t) i] = strumQ[(size_t) --strumQn];
+                }
+                else { q.samplesLeft -= n; ++i; }
+            }
+            if (gap > 0.0 || strumQn > 0)
+            {
+                // where this block's delayed note-ons land (an off of the same note must come after)
+                struct Landing { int note, from; double at; };
+                std::array<Landing, 64> landed {};
+                int nl = 0;
+                for (const auto& e : events)
+                    if (e.noteOn && e.strumIndex > 0 && gap > 0.0 && nl < (int) landed.size())
+                        landed[(size_t) nl++] = { e.note, e.sampleOffset, e.sampleOffset + e.strumIndex * gap };
+                size_t w = 0;
+                for (size_t i = 0; i < events.size(); ++i)
+                {
+                    NoteEvent e = events[i];
+                    double delay = 0.0;
+                    if (e.noteOn && e.strumIndex > 0 && gap > 0.0) delay = e.strumIndex * gap;
+                    else if (! e.noteOn)
+                    {
+                        for (int k = 0; k < strumQn; ++k)
+                            if (strumQ[(size_t) k].e.noteOn && strumQ[(size_t) k].e.note == e.note)
+                                delay = std::max (delay, strumQ[(size_t) k].samplesLeft + 1.0 - e.sampleOffset + n);
+                        for (int k = 0; k < nl; ++k)
+                            if (landed[(size_t) k].note == e.note && e.sampleOffset > landed[(size_t) k].from && landed[(size_t) k].at >= e.sampleOffset)
+                                delay = std::max (delay, landed[(size_t) k].at + 1.0 - e.sampleOffset);
+                    }
+                    e.strumIndex = 0;
+                    const double at = e.sampleOffset + delay;
+                    if (at < n) { e.sampleOffset = (int) at; events[w++] = e; }
+                    else if (strumQn < (int) strumQ.size()) strumQ[(size_t) strumQn++] = { at - n, e };
+                }
+                events.resize (w);
+            }
+        }
+
         // events from MIDI (offset 0) and the sequencer must stay in time order
         std::stable_sort (events.begin(), events.end(), [] (const NoteEvent& a, const NoteEvent& b) { return a.sampleOffset < b.sampleOffset; });
 

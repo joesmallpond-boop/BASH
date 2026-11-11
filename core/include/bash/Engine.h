@@ -50,6 +50,7 @@ namespace bash
         bool              fill = false;       // Fill latched: fills while it's on
         int               autoFillBars = 0;   // 0 off, else a fill at the end of every N bars
         float             fillBeats = 2.0f;   // how long each fill lasts
+        float             strum = 0.0f;       // 0..1: a chord's notes one after another (up to ~45 ms apart)
         bool              fillNew = true;     // a new fill each time (else the same one every time)
         bool              midiThru = true;    // notes in play the voice (except into the Arpeggiator)
         int               midiSlices = 16;    // BASH! Sequencer, Slices target: how many slices to play (no sample there)
@@ -239,6 +240,10 @@ namespace bash
         bool isFilling() const { return fillNow.load(); }
     private:
         std::atomic<bool> fillNow { false };
+
+        struct Strummed { double samplesLeft; NoteEvent e; };
+        std::array<Strummed, 128> strumQ {};
+        int strumQn = 0;
 
         struct PendingOff { int note; double samplesLeft; };
         std::array<PendingOff, 64> pendingOffs {};

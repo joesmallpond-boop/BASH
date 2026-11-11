@@ -112,6 +112,9 @@ namespace bash
         void writeStateFile (const std::string& text);
         bool readStateFile();
         void claimStateId (int id);
+        void copyFromSource();
+        Instrument* copySource = nullptr;
+        std::string restoredText;
         void emit (const std::string& s, const Atoms& a) { if (emitFn) emitFn (s, a); }
         void emitParam (const std::string& id, float v);
         void msg (const std::string& text)     { emit ("msg", { text }); }

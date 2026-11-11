@@ -25,6 +25,7 @@ namespace bash
         Counterpoint,     // chords (stream A) + complementary bass (stream B)
         Arpeggiator,      // only the notes currently held on MIDI input
         DedicatedBass,    // rhythmically locked, driving low end
+        Chords,           // chord progressions in key (Jazz: richer voicings; Strum in the engine)
         count
     };
 
@@ -61,13 +62,14 @@ namespace bash
         bool      drumTrack   = false;  // slices are drum cells; note = 36 + cell
         float     swing       = 0.0f;   // 0..0.75: delays every second step
         float     jitter      = 0.0f;   // 0..1: seeded random lateness per step (humanise)
+        float     jazz        = 0.0f;   // Chords: 0 plain triads .. 1 rootless 9ths / 11ths / 13ths, sus and altered tones
 
         // arpeggiator input: notes currently held on MIDI in (ascending)
         std::array<int, 16> held {};
         int       heldCount   = 0;
     };
 
-    constexpr int maxChordNotes = 4;
+    constexpr int maxChordNotes = 7;
 
     struct StepData
     {
@@ -169,6 +171,7 @@ namespace bash
         bool accent       = false;
         int  slice        = 0;
         int  stream       = 0;      // 0 = main / chords, 1 = Counterpoint bass
+        int  strumIndex   = 0;      // a chord's notes, low to high (0 = the first): Strum spreads them out
     };
 
     class TrackPlayer

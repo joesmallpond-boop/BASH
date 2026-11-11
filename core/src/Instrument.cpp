@@ -139,6 +139,8 @@ namespace bash
             i ("octave", "Octave", "Oct", 0, 6, 2, 0);
             f ("swing", "Swing", "Swing", 0.0f, 0.75f, 0.0f, 0);
             f ("jitter", "Jitter", "Jitter", 0.0f, 1.0f, 0.0f, 0);
+            f ("jazz", "Jazz", "Jazz", 0.0f, 1.0f, 0.3f, 0);
+            f ("strum", "Strum", "Strum", 0.0f, 1.0f, 0.2f, 0);
             t ("scalelock", "Scale Lock", "ScLock", true, 0);
             t ("fill", "Fill", "Fill", false, 0);
             e ("autofill", "Fill Every", "FillEvery", { "Off", "2 bars", "4 bars", "8 bars", "16 bars", "1 bar" }, 0, 0);
@@ -228,6 +230,24 @@ namespace bash
     }
 
     // ---- life cycle ---------------------------------------------------------------------
+    namespace
+    {
+        // every BASH! in this Live set (they share one Max) and the State ID each one owns
+        struct Registered { Instrument* inst; int id; };
+        std::mutex idMutex;
+        std::vector<Registered>& registry() { static std::vector<Registered> r; return r; }
+        bool idOwned (int id, const Instrument* except)
+        {
+            for (auto& r : registry()) if (r.id == id && r.inst != except) return true;
+            return false;
+        }
+        Registered* entryFor (const Instrument* who)
+        {
+            for (auto& r : registry()) if (r.inst == who) return &r;
+            return nullptr;
+        }
+    }
+
     Instrument::Instrument()
         : values (paramSpecs().size())
     {
@@ -240,21 +260,16 @@ namespace bash
         restoring = false;
         dirty = false;
         pull();
-    }
-
-    namespace
-    {
-        // State IDs in use by the BASH! devices loaded in this Live set (they share one Max)
-        std::mutex idMutex;
-        std::vector<int>& liveIds() { static std::vector<int> ids; return ids; }
+        std::lock_guard<std::mutex> g (idMutex);
+        registry().push_back ({ this, 0 });
     }
 
     Instrument::~Instrument()
     {
         if (warpThread.joinable()) warpThread.join();
         std::lock_guard<std::mutex> g (idMutex);
-        auto& ids = liveIds();
-        ids.erase (std::remove (ids.begin(), ids.end(), stateId), ids.end());
+        auto& reg = registry();
+        reg.erase (std::remove_if (reg.begin(), reg.end(), [this] (const Registered& r) { return r.inst == this; }), reg.end());
     }
 
     std::string Instrument::stateFile (int id)
@@ -276,29 +291,54 @@ namespace bash
     void Instrument::claimStateId (int id)
     {
         // a State ID arrives from the set. If another BASH! already has it, this one is a copy
-        // (duplicated track / device): it loads the same state, then takes an ID of its own.
+        // (duplicated track / device): it takes everything from that one (the knobs and buttons too),
+        // then an ID of its own.
         std::lock_guard<std::mutex> g (idMutex);
-        auto& ids = liveIds();
-        ids.erase (std::remove (ids.begin(), ids.end(), stateId), ids.end());
-        needNewId = std::find (ids.begin(), ids.end(), id) != ids.end();
+        auto* me = entryFor (this);
+        if (me == nullptr) { registry().push_back ({ this, 0 }); me = &registry().back(); }
+        copySource = nullptr;
+        for (auto& r : registry())
+            if (r.id == id && r.inst != this) copySource = r.inst;
+        needNewId = copySource != nullptr;
         stateId = id;
-        if (! needNewId) ids.push_back (id);
+        me->id = needNewId ? 0 : id;
     }
 
     void Instrument::newStateId()
     {
         {
             std::lock_guard<std::mutex> g (idMutex);
-            auto& ids = liveIds();
             int id = 0;
-            while (id == 0 || std::find (ids.begin(), ids.end(), id) != ids.end())
+            while (id == 0 || idOwned (id, this))
                 id = 1 + (int) (nextRandom() % 16000000ull);
             stateId = id;
-            ids.push_back (id);
+            auto* me = entryFor (this);
+            if (me == nullptr) registry().push_back ({ this, id }); else me->id = id;
         }
         needNewId = false;
         emit ("stateid", { (double) stateId });   // the device keeps it in a hidden, saved parameter
         dirty = true; dirtyAt = tickCount; lastSaved.clear();
+    }
+
+    void Instrument::copyFromSource()
+    {
+        // a duplicate: the original's parameters exactly as they are now (shown on the device too,
+        // so Live keeps them in the set)
+        std::vector<float> v;
+        {
+            std::lock_guard<std::mutex> g (idMutex);
+            Instrument* src = nullptr;
+            if (copySource != nullptr && entryFor (copySource) != nullptr) src = copySource;
+            else if (! restoredText.empty())
+                for (auto& r : registry())
+                    if (r.inst != this && r.inst->lastSaved == restoredText) { src = r.inst; break; }
+            copySource = nullptr;
+            if (src == nullptr) return;
+            for (auto& x : src->values) v.push_back (x.load());
+        }
+        for (size_t i = 0; i < v.size() && i < values.size(); ++i)
+            if (values[i].load() != v[i]) setParamValue ((int) i, v[i], false);
+        needNewId = true;
     }
 
     void Instrument::writeStateFile (const std::string& text)
@@ -375,6 +415,7 @@ namespace bash
         q.windowSize   = (uint32_t) std::max (1, (int) v ("winsize"));
         q.swing        = v ("swing");
         q.jitter       = v ("jitter");
+        q.jazz         = v ("jazz");
         s.rateIndex    = (int) v ("rate");
         s.fill         = v ("fill") > 0.5f;
         static constexpr int fillBars[] = { 0, 2, 4, 8, 16, 1 };
@@ -382,6 +423,7 @@ namespace bash
         s.autoFillBars = fillBars[std::clamp ((int) v ("autofill"), 0, 5)];
         s.fillBeats = fillLen[std::clamp ((int) v ("filllen"), 0, 3)];
         s.fillNew = v ("fillvary") > 0.5f;
+        s.strum = v ("strum");
         s.midiThru     = v ("thru") > 0.5f;
         s.midiSlices   = (int) v ("midislices");
 
@@ -580,6 +622,7 @@ namespace bash
         q.windowSize   = (uint32_t) std::max (1, (int) param ("winsize"));
         q.swing        = param ("swing");
         q.jitter       = param ("jitter");
+        q.jazz         = param ("jazz");
         const auto e = engineType();
         if (e == EngineType::Slicer && playing != nullptr) q.sliceCount = (uint32_t) eng.slices().size();
         if (e == EngineType::Drums) { q.sliceCount = numCells; q.drumTrack = true; }
@@ -1092,6 +1135,8 @@ namespace bash
         set ("autofill", chance (0.5f) ? 0.0f : 1.0f + pick (4));
         set ("filllen", pick (3));
         set ("fillvary", chance (0.5f) ? 1.0f : 0.0f);
+        set ("jazz", u());
+        set ("strum", chance (0.5f) ? 0.0f : 0.6f * u());
 
         // synth
         set ("machine", pick (choices ("machine")));
@@ -1444,7 +1489,7 @@ namespace bash
                 lastSaved = text;
                 emitAll();
             }
-            if (! text.empty()) restoredOk = true;
+            if (! text.empty()) { restoredOk = true; restoredText = text; }
             restoreChunks.assign ((size_t) stateChunks, {});
             return;
         }
@@ -1899,6 +1944,8 @@ namespace bash
             if (! restoredOk && readStateFile()) { dirty = true; dirtyAt = tickCount; lastSaved.clear(); }   // and back into the set
             if (fresh)
                 for (const auto& [i, v] : freshDefaults) setParamValue (i, v, false);   // the starting patch (shown on the device too)
+            else if (needNewId || stateId <= 0)
+                copyFromSource();   // a duplicated device: exactly like its original
             if (needNewId || stateId <= 0) newStateId();
         }
 
@@ -2073,9 +2120,12 @@ namespace bash
         tp.hostAvailable = true;
         tp.hostPlaying = true;
         tp.hostBpm = bpm;
-        // twice round: the second pass carries the first one's tails, so the loop joins up
+        // twice round: the second pass carries the first one's tails, so the loop joins up (the
+        // first pass only needs the last bar or so, which keeps 64-bar loops quick)
+        const int64_t barLen = (int64_t) std::llround (4.0 * 60.0 / bpm * rate);
+        const int64_t warmFrom = std::max<int64_t> (0, len - 2 * barLen) / block * block;
         for (int pass = 0; pass < 2; ++pass)
-            for (int64_t pos = 0; pos < len; pos += block)
+            for (int64_t pos = pass == 0 ? warmFrom : 0; pos < len; pos += block)
             {
                 const int n = (int) std::min<int64_t> (block, len - pos);
                 tp.hostPpq = (double) pos * bpm / 60.0 / rate;
